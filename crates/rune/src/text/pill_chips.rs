@@ -96,7 +96,7 @@ pub(crate) fn pill_chips(
             } else {
                 trail.map_or(line_end, |t| t.x + t.width - margin)
             };
-            if asc == 0.0 {
+            if asc < size * scale * 0.25 {
                 (asc, desc) = (size * scale * 0.95, size * scale * 0.25);
             }
             let base = origin[1] + m.baseline;
