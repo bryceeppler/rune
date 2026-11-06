@@ -166,6 +166,10 @@ impl TextSystem {
                 let mut h = scale.round().max(1.0);
                 for item in line.items() {
                     if let PositionedLayoutItem::GlyphRun(gr) = item {
+                        let run = gr.run().text_range();
+                        if run.end <= a || b <= run.start {
+                            continue;
+                        }
                         let fm = gr.run().font_metrics();
                         strike_off = if fm.strikethrough_offset != 0.0 {
                             fm.strikethrough_offset
