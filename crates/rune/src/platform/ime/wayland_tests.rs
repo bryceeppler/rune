@@ -40,3 +40,11 @@ fn nothing_arrives_while_the_input_method_is_off() {
     session.commit_string(Some("x".into()));
     assert!(session.done(4).is_empty());
 }
+
+#[test]
+fn review_batch_keeps_both_preedit_and_commit_independent_of_event_order() {
+    let mut s = after_a_reset();
+    s.preedit(Some("next".into()), 4, 4);
+    s.commit_string(Some("typed".into()));
+    assert_eq!(s.done(3), [Ime::Preedit(String::new(), None), Ime::Commit("typed".into()), Ime::Preedit("next".into(), Some((4,4)))]);
+}

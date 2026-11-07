@@ -29,18 +29,20 @@ pub(super) struct Session {
     since: u32,
     /// The caret's rect, surface points.
     area: Option<[i32; 4]>,
+    /// The batch's pending preedit and commit, each its own double-buffered state.
     preedit: Option<(String, Option<(usize, usize)>)>,
     commit: Option<String>,
 }
 
 impl Session {
-    /// A `done` event: the batch it closes, as the runtime's events, unless it answers a
-    /// session that ended.
+    /// A `done` event applies the batch it closes, as the runtime's events, in the protocol's
+    /// order: the old preedit goes, the commit goes in, then the new preedit (empty unless the
+    /// batch sent one). Every pending value then resets. Nothing, if it answers a session that
+    /// ended.
     pub(super) fn done(&mut self, serial: u32) -> Vec<Ime> {
         let (preedit, commit) = (self.preedit.take(), self.commit.take());
         if !self.enabled || serial < self.since { return Vec::new(); }
         let mut events = Vec::new();
-        // An empty batch clears the preedit; a commit replaces it.
         if commit.is_some() || preedit.is_none() { events.push(Ime::Preedit(String::new(), None)); }
         events.extend(commit.map(Ime::Commit));
         events.extend(preedit.map(|(text, cursor)| Ime::Preedit(text, cursor)));
@@ -55,7 +57,6 @@ impl Session {
     }
 
     pub(super) fn commit_string(&mut self, text: Option<String>) {
-        self.preedit = None;
         self.commit = text;
     }
 
