@@ -79,6 +79,7 @@ impl<T: 'static> AnyHost for Overlay<T> {
             match self.rt.shell_request.take() {
                 Some(crate::el::Shell::Close) => self.hide(),
                 Some(crate::el::Shell::Quit) => event_loop.exit(),
+                Some(crate::el::Shell::RequestQuit) => crate::window::quitting::request(),
                 None => {}
             }
         }

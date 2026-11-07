@@ -358,6 +358,7 @@ use commit::{Measured, Measurement, unwrapped_width};
 pub struct Runtime<S: 'static> {
     pub state: S,
     pub(crate) on_focus: Option<fn(&mut S, bool, &mut Tx)>,
+    pub(crate) closing: crate::close_request::Closing<S>,
     /// `App::on_ime` and the composition it has open.
     pub(crate) app_ime: app_ime::AppIme<S>,
     view: fn(&S, &mut Cx<S>) -> El,
@@ -1015,6 +1016,7 @@ impl<S: 'static> Runtime<S> {
             window_focused: None,
             keys_lost: false,
             on_focus: None,
+            closing: Default::default(),
             app_ime: Default::default(),
             live_subscriptions: Vec::new(),
             live_dirty: false,

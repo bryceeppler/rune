@@ -1,8 +1,14 @@
 //! Building and running the event loop every native window shares.
 #[cfg(not(target_arch = "wasm32"))]
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 #[cfg(not(target_arch = "wasm32"))]
-use winit::event_loop::{ControlFlow, EventLoop};
+use winit::application::ApplicationHandler;
+#[cfg(not(target_arch = "wasm32"))]
+use winit::event::{StartCause, WindowEvent};
+#[cfg(not(target_arch = "wasm32"))]
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+#[cfg(not(target_arch = "wasm32"))]
+use winit::window::WindowId;
 
 use crate::app::App;
 use crate::tooling::Args;
@@ -77,15 +83,47 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
     #[cfg(target_os = "macos")]
     crate::platform::app_icon::launched();
     let proxy = event_loop.create_proxy();
-    let mut windows = Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default() };
+    super::quitting::connect(proxy.clone());
+    #[cfg(all(unix, not(target_os = "ios"), not(target_os = "android")))]
+    {
+        let proxy = proxy.clone();
+        crate::platform::quit::on_sigterm(move || { let _ = proxy.send_event(WakeEvent::SessionEnd); });
+    }
+    let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None }));
+    #[cfg(target_os = "windows")]
+    {
+        let windows = Rc::downgrade(&windows);
+        crate::platform::quit::on_session_end(move || {
+            match windows.upgrade().as_deref().map(RefCell::try_borrow_mut) {
+                Some(Ok(mut windows)) => windows.end_session(),
+                Some(Err(_)) => eprintln!("rune: the session ended inside an event; on_close did not run"),
+                None => {}
+            }
+        });
+    }
     crate::open_url::incoming::prepare();
-    let result = event_loop.run_app(&mut windows);
+    let result = event_loop.run_app(&mut Handler(windows));
     // The windows' interaction timing queued its last rollups as they closed.
     crate::tooling::interaction::flush();
     crate::render::discard_prewarm();
     crate::clipboard::shutdown(); // Also cover an event-loop error before `exiting`.
     crate::platform::ready_signal::clear();
     result.map_err(|error| format!("run: {error}"))
+}
+
+/// The loop's handler, shared so that what Windows sends inside a window procedure
+/// (`quit::on_session_end`) reaches the windows between events.
+#[cfg(not(target_arch = "wasm32"))]
+struct Handler(Rc<RefCell<Windows>>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ApplicationHandler<WakeEvent> for Handler {
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) { self.0.borrow_mut().new_events(event_loop, cause); }
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) { self.0.borrow_mut().resumed(event_loop); }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WakeEvent) { self.0.borrow_mut().user_event(event_loop, event); }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) { self.0.borrow_mut().window_event(event_loop, id, event); }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) { self.0.borrow_mut().about_to_wait(event_loop); }
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) { self.0.borrow_mut().exiting(event_loop); }
 }
 
 #[test]

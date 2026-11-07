@@ -47,6 +47,7 @@ pub struct App<S: 'static> {
     pub(crate) standard_menus: bool,
     pub(crate) keep_running: bool,
     pub(crate) on_close: Option<fn(&mut S, &mut Tx)>,
+    pub(crate) on_close_request: Option<crate::close_request::Hook<S>>,
     pub(crate) on_focus: Option<fn(&mut S, bool, &mut Tx)>,
     pub(crate) on_ime: Option<fn(&mut S, &crate::Ime, &mut Tx) -> bool>,
     pub(crate) on_reopen: Option<fn(&mut S, bool, &mut Tx) -> bool>,
@@ -90,6 +91,7 @@ impl<S: 'static> App<S> {
             standard_menus: false,
             keep_running: false,
             on_close: None,
+            on_close_request: None,
             on_focus: None,
             on_ime: None,
             on_reopen: None,
@@ -343,7 +345,8 @@ impl<S: 'static> App<S> {
 
     /// Runs whenever the window closes (close button, `Tx::close_window`, `AppHandle::close`,
     /// macOS Quit from the menu, Cmd-Q or the Dock), before it goes: flush drafts, stop previews.
-    /// Its `Tx::quit` quits.
+    /// It runs after `on_close_request` proceeds, and is the app's last, synchronous chance when
+    /// the system ends it without waiting. Its `Tx::quit` quits.
     pub fn on_close(mut self, f: fn(&mut S, &mut Tx)) -> Self {
         self.on_close = Some(f);
         self

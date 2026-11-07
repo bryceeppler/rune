@@ -15,6 +15,7 @@ pub(crate) mod main_queue;
 #[cfg(all(target_os = "linux", feature = "dbus"))]
 pub(crate) mod portal_appearance;
 pub(crate) mod preferences;
+pub(crate) mod quit;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod ready_signal;
 pub(crate) mod reopen;

@@ -43,6 +43,8 @@ struct Desk {
     /// Output origin in global points, and points to pixels.
     origin: (f32, f32),
     scale: f32,
+    /// A quit waiting on windows' answers, one per member.
+    quitting: Option<Vec<crate::CloseAnswer>>,
 }
 
 impl Desk {
@@ -76,9 +78,34 @@ impl Desk {
         self.members[i].visible() && !self.members[i].click_through()
     }
 
-    fn apply(&mut self, i: usize, changes: Changes) {
+    fn apply(&mut self, i: usize, changes: Changes, t: f64) {
         if changes.front && self.members[i].visible() { self.front(i); }
         if changes.keys && self.can_key(i) { self.focus(Some(i), true); }
+        if changes.quit { self.quit(t); }
+    }
+
+    /// The app was asked to quit: every window's `App::on_close_request` is asked, as macOS
+    /// does for Quit. A quit already waiting takes this one in.
+    fn quit(&mut self, t: f64) {
+        if self.quitting.is_none() { self.quitting = Some(self.members.iter_mut().map(|m| m.ask_quit()).collect()); }
+        self.settle_quit(t);
+    }
+
+    /// Collects the answers that arrived; once every window proceeds, each closes as its close
+    /// button would and the run prints `rune-quit`.
+    fn settle_quit(&mut self, t: f64) {
+        let Some(answers) = &mut self.quitting else { return };
+        for (answer, m) in answers.iter_mut().zip(&mut self.members) {
+            if *answer == crate::CloseAnswer::Pending { *answer = m.settle_quit().unwrap_or(crate::CloseAnswer::Proceed); }
+        }
+        let verdict = crate::close_request::all_of(answers.iter().copied());
+        if verdict == crate::CloseAnswer::Pending { return; }
+        self.quitting = None;
+        for m in &mut self.members { m.withdraw_quit(); }
+        if verdict == crate::CloseAnswer::Proceed {
+            for m in &mut self.members { m.end(); }
+            println!("rune-quit {}", json!({ "t": t }));
+        }
     }
 
     /// A hidden key window hands the keyboard to the topmost visible one.
@@ -100,8 +127,9 @@ impl Desk {
         for _ in 0..PASSES {
             for i in 0..self.members.len() {
                 let changes = self.members[i].drain(desktop, t);
-                self.apply(i, changes);
+                self.apply(i, changes, t);
             }
+            self.settle_quit(t);
             self.settle_key();
             if !self.members.iter().any(|m| m.pending()) { return; }
         }
@@ -210,7 +238,7 @@ impl Desk {
         self.drain(desktop, t);
         if let Some(i) = crate::platform::reopen::target(&candidates(self)) {
             let changes = self.members[i].reopen();
-            self.apply(i, changes);
+            self.apply(i, changes, t);
         }
     }
 
@@ -270,7 +298,7 @@ pub(crate) fn run(windows: Vec<AnyWindowSpec>, selected: usize, args: Args, acce
     let n = members.len();
     let mut desk = Desk {
         members, z: (0..n).collect(), key: None, active: true, hover: None, pressed: None, files: None,
-        origin: (primary[0], primary[1]), scale,
+        origin: (primary[0], primary[1]), scale, quitting: None,
     };
     let members = &desk.members;
     desk.z.sort_by_key(|&i| members[i].on_top());
@@ -357,6 +385,7 @@ pub(crate) fn run(windows: Vec<AnyWindowSpec>, selected: usize, args: Args, acce
                 Kind::Mark(_) => {}
                 Kind::Focus(focused) => desk.focus(desk.key, *focused),
                 Kind::Reopen => desk.reopen(accessory, &desktop, real_t),
+                Kind::Quit => desk.quit(real_t),
                 Kind::Shortcut(shortcut) => fire(&desk, |m| m.shortcut(shortcut)).unwrap_or_else(|e| die(&format!("script shortcut: {e}"))),
                 Kind::Menu(item) => fire(&desk, |m| m.menu(item)).unwrap_or_else(|e| die(&format!("script menu: {e}"))),
                 Kind::PopupMenu(picked) => {
