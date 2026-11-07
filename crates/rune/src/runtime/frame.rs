@@ -51,6 +51,8 @@ impl<S: 'static> Runtime<S> {
         // Every focus gain, even one a hide without blur left unreported.
         if focused { self.keys_lost = false; }
         if self.window_focused != Some(focused) {
+            // The app hears the blur with the composition's text in place.
+            if !focused { self.cancel_composition(); }
             // Refocused, the pointer where it was hovers again; blurred, it waits for a move.
             if focused && self.window_focused == Some(false) { self.hover_paused = false; }
             self.window_focused = Some(focused);

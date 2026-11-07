@@ -25,8 +25,9 @@ pub(super) fn navigates(ev: &KeyEvent) -> bool {
         && matches!(ev.key, Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Home | Key::End | Key::PageUp | Key::PageDown)
 }
 
-/// Pushes focus (and a secure flag) into an input's app-owned editor and mirrors it back.
-fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::States<'_>, focused: bool) -> bool {
+/// Pushes focus (and a secure flag) into an input's app-owned editor and mirrors it back. A field
+/// without focus drops its preedit, unless it is a finished composition still to commit (`kept`).
+fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::States<'_>, focused: bool, kept: bool) -> bool {
     let Some(access) = &input.access else {
         input.edit.focused = focused;
         return false;
@@ -44,9 +45,9 @@ fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::Sta
         edit.set_revealed(revealed);
         changed = true;
     }
-    if edit.focused != focused || (!focused && edit.preedit.is_some()) {
+    if edit.focused != focused || (!focused && !kept && edit.preedit.is_some()) {
         edit.focused = focused;
-        if !focused { edit.clear_preedit(); }
+        if !focused && !kept { edit.clear_preedit(); }
         edit.break_history_group();
         changed = true;
     }
@@ -166,6 +167,7 @@ impl<S: 'static> Runtime<S> {
         crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) }
     }
     pub(super) fn set_focus(&mut self, path: Option<String>, keyboard: bool) -> bool {
+        let finished = self.finish_composition_off(path.as_deref());
         self.input_click.on_focus_change(path.as_deref());
         if self.focused != path { self.ime_area = None; self.ime_reset = true; self.blur_links(); self.hover_focus = false; }
         // Tabbing away or into a field takes the selection's keyboard; a hovered row doesn't.
@@ -176,14 +178,16 @@ impl<S: 'static> Runtime<S> {
         {
             self.clear_text_selection();
         }
-        let mut changed = self.focused != path && self.physical_focus_lost();
+        let mut changed = finished | (self.focused != path && self.physical_focus_lost());
         for n in &mut self.nodes {
             if let Some(input) = &mut n.input {
-                changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(n.path.as_str()));
+                let kept = self.app_ime.awaits(&input.edit);
+                changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(n.path.as_str()), kept);
             }
         }
         for (p, input) in &mut self.virtual_inputs {
-            changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(p.as_str()));
+            let kept = self.app_ime.awaits(&input.edit);
+            changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(p.as_str()), kept);
         }
         self.focused = path;
         if self.focused.is_some() {
@@ -191,7 +195,6 @@ impl<S: 'static> Runtime<S> {
         }
         self.keyboard_focus = keyboard;
         self.sync_side_focus();
-        self.close_composition_off_focus();
         changed
     }
     pub(super) fn sync_requested_focus(&mut self, nodes: &mut Vec<Node>) -> bool {
