@@ -448,3 +448,22 @@ fn the_answer_to_a_deactivation_drops_though_its_finish_waits_for_queued_input()
     assert_eq!(rt.state.a.text, "かな");
     assert_eq!(rt.state.changed, ["a"]);
 }
+
+#[test]
+fn a_close_request_asks_the_app_with_the_composition_committed() {
+    let mut rt = composing_in_a();
+    rt.on_close_request(|s, request, _| { s.changed.push(if s.a.text == "か" { "saved か" } else { "saved without it" }); request.proceed(); });
+    assert_eq!(rt.request_close(crate::CloseKind::Window), crate::CloseAnswer::Proceed);
+    assert_eq!(rt.state.changed, ["a", "saved か"]);
+}
+
+#[test]
+fn a_close_request_waits_for_input_queued_before_it_then_commits() {
+    let mut rt = composing_in_a();
+    rt.on_close_request(|s, request, _| { s.changed.push(if s.a.text == "かな" { "saved かな" } else { "saved early" }); request.proceed(); });
+    rt.ime(Ime::Preedit("かな".into(), None));
+    assert_eq!(rt.request_close(crate::CloseKind::Window), crate::CloseAnswer::Pending);
+    rt.frame(0.0);
+    assert_eq!(rt.settle_close(crate::CloseKind::Window), Some(crate::CloseAnswer::Proceed));
+    assert_eq!(rt.state.changed, ["a", "saved かな"]);
+}

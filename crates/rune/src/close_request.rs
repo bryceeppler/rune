@@ -145,6 +145,8 @@ impl<S: 'static> Runtime<S> {
     /// pending request stays in flight for `settle_close`; while it does, another request of
     /// this kind joins it rather than asking again.
     pub fn request_close(&mut self, kind: CloseKind) -> CloseAnswer {
+        // A composition open in the window commits first, so the app saves what it shows.
+        self.cancel_composition();
         if self.closing.hook.is_none() { return CloseAnswer::Proceed; }
         if self.closing.slot(kind).is_none() { self.ask_close(kind); }
         self.settle_close(kind).unwrap_or(CloseAnswer::Pending)
