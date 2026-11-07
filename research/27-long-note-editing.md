@@ -102,20 +102,26 @@ last line isn't rasterized until it's scrolled into view.
 An edit reshapes one block (0.03 to 0.6 ms). What's left grows with the number of blocks:
 building, diffing and laying out every field each commit, about 2.2 ms at 1,600 fields.
 
+## Done: one layout per paragraph
+
+A text of several hard paragraphs now lays out one Parley layout per paragraph, cached under that paragraph's text, spans, pills and block, and stacks them in a `TextLayout` (`text/paragraphs.rs`).
+An edit's stack starts from the last one built, so only the paragraphs it touches are laid out.
+Carets, hits, line moves, selection boxes, decorations, pills, glyphs and accessibility lines go through the stack, and its tests check each against one layout of the same text.
+A paragraph's first line lands where one layout puts it; with line heights off the pixel grid (a heading, or 1.5x), a wrapped paragraph's later lines can sit a device pixel off one layout's, because each paragraph rounds its own lines.
+Right-to-left text, unsorted spans and centred lines without a wrap width still lay out whole.
+
+Measured typing into a notes app's long note (40 KB, 3,091 lines) on Linux with an NVIDIA GPU, five alternating runs a side, the `perf` build pinned to the performance cores: a typed character's frame went from 31.6 ms to 3.1 ms at p95 (2.95 to 3.50), and 30.8 to 2.46 ms at p50.
+Shaping fell from 27.7 ms to 0.04 ms of it.
+Of the 2.4 ms left (median CPU), the app's own change handler takes about 1.1 ms, and Rune's share is about 1.2 ms, all of it still walking the note: the field's rich spans rebuilt from its whole text once a view (about 0.2 ms), the stack rebuilt over every paragraph (about 0.15 ms), the edit itself in `TextEdit` (about 0.17 ms), and block decorations over every line (about 0.05 ms).
+
 ## What's left, and a plan
 
-- **Typing in one field: whole-note reshape (12 ms at 50 KB).** Lay out each hard paragraph
-  (text between `\n`s) as its own Parley layout, cached under that paragraph's text, spans and
-  style, and stack them under a composite layout with a line index. An edit then reshapes one
-  paragraph. It's a large change: caret geometry, hit-testing, selection boxes, decorations,
-  pills, block indents, elision and the glyph walk all take one `parley::Layout` today, and all
-  would go through the composite.
 - **Undo depth.** Store each step as its changed byte range (the removed and inserted text)
   plus the small mark, block and soft-break lists, so a step costs its edit, not the note;
   check an undo still applies by length and a hash rather than comparing full copies.
-- **Per-commit work proportional to the note** (about 0.3 ms at 200 KB, outside text shaping):
-  the whole text is hashed for the layout cache and copied into the view on each rebuild.
-  Small; it goes away with paragraph layouts.
+- **Per-commit work proportional to the note.**
+  The whole text is still hashed for the layout cache and copied into the view on each rebuild, a field's rich spans are rebuilt from its whole text, a stack is rebuilt over every paragraph, and block decorations walk every line.
+  Each is a fraction of a millisecond at 40 KB; together they are Rune's 1.2 ms above.
 - **Many blocks.** `El::virtualize` would make a block-per-field note's commits independent of
   its length, but in a first try a focused field inside a virtualized stack reported its caret
   (`ElementInfo::caret`, which caret-follow also uses) away from its row, and a field revealed
