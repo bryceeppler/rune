@@ -153,7 +153,16 @@ impl<S: 'static> Runtime<S> {
         let path = self.focused.clone()?;
         let s = self.env.scale;
         let n = self.node(&path)?;
-        let (mut spec, w) = (n.text.clone()?, n.target[2] - n.target[0] - n.inset[0] - n.inset[2]);
+        let w = n.target[2] - n.target[0] - n.inset[0] - n.inset[2];
+        // The field drew its text at its target width: the layout it holds is the one keys move in.
+        if let Some(l) = &n.text_layout
+            && n.elided.is_none()
+            && n.text.as_ref().is_some_and(|t| !t.redacted)
+            && w == (n.local.w - n.inset[0] - n.inset[2]).max(0.0)
+        {
+            return Some(l.clone());
+        }
+        let mut spec = n.text.clone()?;
         spec.replace_content(n.input.as_ref()?.edit.display().0);
         Some(self.text.layout_for_spec(&spec, s, spec.wrap.then_some(w * s), line_alignment(&spec)))
     }
