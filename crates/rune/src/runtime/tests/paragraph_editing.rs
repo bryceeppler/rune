@@ -59,7 +59,7 @@ fn press(rt: &mut Runtime<TextEdit>, key: Key, mods: Mods) {
 
 fn type_text(rt: &mut Runtime<TextEdit>, s: &str) {
     for c in s.chars() {
-        press(rt, Key::Text(c.to_string().into()), Mods::default());
+        press(rt, Key::Text(c.to_string()), Mods::default());
     }
 }
 
