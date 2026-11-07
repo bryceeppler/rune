@@ -88,7 +88,7 @@ fn pill_edge(layout: &Layout<Ink>, at: usize, y: f32) -> Option<f32> {
     Some(lead.x)
 }
 
-fn line_for_offset(layout: &Layout<Ink>, offset: f32) -> Option<(usize, parley::Line<'_, Ink>)> {
+pub(super) fn line_for_offset(layout: &Layout<Ink>, offset: f32) -> Option<(usize, parley::Line<'_, Ink>)> {
     if offset < 0.0 {
         return Some((0, layout.get(0)?));
     }
@@ -106,8 +106,18 @@ fn line_for_offset(layout: &Layout<Ink>, offset: f32) -> Option<(usize, parley::
 /// end of the document when a line starts or ends with an inline box, or folds a trailing box's
 /// width into the following cluster).
 pub(crate) fn cursor_from_point(layout: &Layout<Ink>, x: f32, y: f32) -> parley::editing::Cursor {
+    cursor_from_point_in(layout, x, y, plain(layout))
+}
+
+/// Whether `layout` has no pills and no indented lines, so Parley's own hit test holds for it.
+pub(super) fn plain(layout: &Layout<Ink>) -> bool {
+    layout.inline_boxes().next().is_none() && layout.lines().all(|l| l.metrics().inline_min_coord == 0.0)
+}
+
+/// [`cursor_from_point`] in a layout that is one of a text's: `plain` when the whole text is.
+pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: bool) -> parley::editing::Cursor {
     use parley::{BreakReason, editing::Cursor, layout::Affinity};
-    if layout.inline_boxes().next().is_none() && layout.lines().all(|l| l.metrics().inline_min_coord == 0.0) {
+    if plain {
         return Cursor::from_point(layout, x, y);
     }
     if layout.len() == 0 {

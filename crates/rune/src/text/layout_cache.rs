@@ -28,8 +28,11 @@ pub(super) struct Entry<T> {
 
 impl<T> Entry<T> {
     pub(super) fn new(value: T, used: u32, text_len: usize, shape: u64) -> Self {
-        let cost = (text_len * LAYOUT_PER_BYTE + LAYOUT_BASE).min(u32::MAX as usize) as u32;
-        Entry { value, used, cost, shape }
+        Self::with_cost(value, used, text_len * LAYOUT_PER_BYTE + LAYOUT_BASE, shape)
+    }
+
+    pub(super) fn with_cost(value: T, used: u32, bytes: usize, shape: u64) -> Self {
+        Entry { value, used, cost: bytes.min(u32::MAX as usize) as u32, shape }
     }
 }
 
@@ -85,9 +88,19 @@ impl TextSystem {
         let g = self.generation;
         if !self.superseded.is_empty() {
             let gone = &self.superseded;
+            self.stacks.cache.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.layouts.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.elisions.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.superseded.clear();
+        }
+        // A layout something else still holds (a node's text, a paragraph of a kept stack) costs
+        // nothing to keep, and its text laid out again finds it.
+        for e in self.stacks.cache.values_mut().filter(|e| Rc::strong_count(&e.value) > 1) {
+            e.used = g;
+        }
+        evict(&mut self.stacks.cache, g);
+        for e in self.layouts.values_mut().filter(|e| Rc::strong_count(&e.value) > 1) {
+            e.used = g;
         }
         evict(&mut self.layouts, g);
         let layouts = &self.layouts;

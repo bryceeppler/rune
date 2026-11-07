@@ -13,7 +13,7 @@ impl CeilTo for f32 {
 
 /// How far a single-line field's text shifts left (device px) so its caret stays inside
 /// `visible` device px. Unfocused fields rest at their start, like a native text field.
-pub(super) fn single_line_scroll(scrolls: &mut HashMap<String, f32>, path: &str, inp: &crate::el::InputSpec, content: &str, layout: &Layout<Ink>, s: f32, visible: f32) -> f32 {
+pub(super) fn single_line_scroll(scrolls: &mut HashMap<String, f32>, path: &str, inp: &crate::el::InputSpec, content: &str, layout: &TextLayout, s: f32, visible: f32) -> f32 {
     if !inp.edit.focused {
         scrolls.remove(path);
         return 0.0;
@@ -24,10 +24,9 @@ pub(super) fn single_line_scroll(scrolls: &mut HashMap<String, f32>, path: &str,
 }
 
 /// [`single_line_scroll`] for a focused field, from its previous shift `prev` in points.
-pub(super) fn single_line_offset(prev: f32, inp: &crate::el::InputSpec, content: &str, layout: &Layout<Ink>, s: f32, visible: f32) -> f32 {
+pub(super) fn single_line_offset(prev: f32, inp: &crate::el::InputSpec, content: &str, layout: &TextLayout, s: f32, visible: f32) -> f32 {
     let caret_w = (1.5 * s).round();
-    let caret = Cursor::from_byte_index(layout, caret_index(&inp.edit, content), Affinity::Downstream);
-    let cx = crate::text::cursor_geometry(&caret, layout, 1.5 * s).x0 as f32;
+    let cx = layout.caret_box(caret_index(&inp.edit, content), 1.5 * s).x0 as f32;
     let mut scroll = prev * s;
     if cx - scroll > visible - caret_w {
         scroll = cx - visible + caret_w;
@@ -57,7 +56,7 @@ pub(super) fn line_alignment(spec: &TextSpec) -> parley::Alignment {
 /// The rectangle a text node's laid-out lines cover inside its drawn box `r` (logical points),
 /// and the layout origin its glyphs are placed from. Lines aligned inside a wrap width count
 /// from their own offsets, so the rect hugs the text rather than the box.
-pub(super) fn text_extent(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, r: [f32; 4], scale: f32) -> (MRect, [f32; 2]) {
+pub(super) fn text_extent(n: &Node, spec: &TextSpec, layout: &TextLayout, r: [f32; 4], scale: f32) -> (MRect, [f32; 2]) {
     let (x0, x1) = (r[0] + n.inset[0], r[0] + r[2] - n.inset[2]);
     let (lo, hi) = layout.lines().map(|l| (l.metrics().offset, l.metrics().advance))
         .fold((f32::MAX, 0.0f32), |(lo, hi), (offset, advance)| (lo.min(offset), hi.max(offset + advance)));
@@ -65,7 +64,7 @@ pub(super) fn text_extent(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, r: [f
     let origin = [text_x(spec, x0, x1, layout.full_width() / scale), r[1] + n.inset[1]];
     let x = origin[0] + lo / scale;
     (MRect::new(x, origin[1], ((hi - lo) / scale).min(x1 - x).max(0.0),
-        (layout_height(layout, spec.style, scale) / scale).min(r[3] - n.inset[1] - n.inset[3])), origin)
+        (layout.box_height(spec.style, scale) / scale).min(r[3] - n.inset[1] - n.inset[3])), origin)
 }
 
 /// Where a `width`-wide text line starts between `x0` and `x1`. Wrapped text aligns each line
@@ -195,13 +194,13 @@ fn spec_elide_keys(spec: &TextSpec, scale: f32, mode: u8, param: usize, max_w: f
 /// `spec`'s content cut to fit `max_w` device px with an ellipsis, keeping as many whole
 /// graphemes as fit at the start, the end or both ends (half each) as its `elide` says.
 /// Whitespace graphemes beside the ellipsis are dropped whole.
-pub(super) fn truncated(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w: f32) -> (Rc<Layout<Ink>>, Elision) {
+pub(super) fn truncated(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w: f32) -> (TextLayout, Elision) {
     use unicode_segmentation::UnicodeSegmentation;
     let keys = spec_elide_keys(spec, scale, 0, spec.elide as usize, max_w, parley::Alignment::Start);
     if let Some((_, key)) = keys
         && let Some(hit) = text.get_elision(key)
     {
-        return (hit.layout, Elision { head: hit.head, tail: hit.tail });
+        return (hit.layout.into(), Elision { head: hit.head, tail: hit.tail });
     }
     let content = spec.content.as_str();
     let bounds: Vec<usize> = content.grapheme_indices(true).map(|(i, _)| i).chain([content.len()]).collect();
@@ -261,7 +260,7 @@ pub(super) fn truncated(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_
             crate::text::CachedElision { layout: layout.clone(), head: e.head, tail: e.tail },
         );
     }
-    (layout, e)
+    (layout.into(), e)
 }
 
 /// Drops the text layouts of the last commit's nodes this pass flattened again (`nodes`, laid
@@ -360,8 +359,8 @@ pub(super) fn compute_layout(taffy: &mut LayoutEngine, root: SlotId, room: Size<
 }
 
 /// The height (device px) of `l` as `spec` shows it: its first `max_lines` lines when set.
-pub(super) fn clamped_height(l: &Layout<Ink>, spec: &TextSpec, scale: f32) -> f32 {
-    let full = layout_height(l, spec.style, scale);
+pub(super) fn clamped_height(l: &TextLayout, spec: &TextSpec, scale: f32) -> f32 {
+    let full = l.box_height(spec.style, scale);
     match spec.max_lines.checked_sub(1).and_then(|last| l.lines().nth(last)).filter(|_| l.len() > spec.max_lines) {
         Some(line) => line.metrics().block_max_coord.ceil().min(full),
         None => full,
@@ -369,15 +368,15 @@ pub(super) fn clamped_height(l: &Layout<Ink>, spec: &TextSpec, scale: f32) -> f3
 }
 
 /// The advance of the last line `l` shows when clamped to `lines`, in device px.
-pub(super) fn last_line_width(l: &Layout<Ink>, lines: usize) -> f32 {
-    l.lines().take(lines).last().map_or(0.0, |line| line.metrics().advance - line.metrics().hanging_advance)
+pub(super) fn last_line_width(l: &TextLayout, lines: usize) -> f32 {
+    l.line(lines.min(l.len()).saturating_sub(1)).filter(|_| lines > 0).map_or(0.0, |line| line.metrics().advance - line.metrics().hanging_advance)
 }
 
 /// `spec`'s content wrapped at `max_w` device px and cut after `spec.max_lines` lines, "…"
 /// ending the last with as many whole graphemes before it as fit within `max_w`, a word that
 /// wraps or overflows included. None when `full` (the uncut layout) already fits.
 /// Whitespace and line breaks before the ellipsis are dropped.
-pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w: f32, full: &Layout<Ink>) -> Option<(Rc<Layout<Ink>>, Elision)> {
+pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w: f32, full: &TextLayout) -> Option<(TextLayout, Elision)> {
     use unicode_segmentation::UnicodeSegmentation;
     let lines = spec.max_lines;
     if lines == 0 || full.len() <= lines && last_line_width(full, lines) <= max_w + 0.5 {
@@ -388,12 +387,12 @@ pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w:
     if let Some((_, key)) = keys
         && let Some(hit) = text.get_elision(key)
     {
-        return Some((hit.layout, Elision { head: hit.head, tail: hit.tail }));
+        return Some((hit.layout.into(), Elision { head: hit.head, tail: hit.tail }));
     }
     let content = spec.content.as_str();
     // The cut falls in the last shown line or the next, whose first word may fill the last.
-    let start = full.lines().nth(lines.min(full.len()).max(1) - 1)?.text_range().start.min(content.len());
-    let end = full.lines().nth(lines).map_or(content.len(), |l| l.text_range().end.min(content.len()));
+    let start = full.line(lines.min(full.len()).max(1) - 1)?.text_range().start.min(content.len());
+    let end = full.line(lines).map_or(content.len(), |l| l.text_range().end.min(content.len()));
     let bounds: Vec<usize> = content[start..end].grapheme_indices(true).map(|(i, _)| start + i).chain([end]).collect();
     let blank = |g: usize| content[bounds[g]..bounds[g + 1]].chars().all(char::is_whitespace);
     let cut = |mut k: usize| {
@@ -415,7 +414,7 @@ pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w:
             text.layout_blocks_inner(&str_buf, &span_buf, &spec.blocks, &[], spec.style, scale, Some(max_w), align, spec.wrap_anywhere, true)
         }
     };
-    let fits = |l: &Layout<Ink>| l.len() <= lines && last_line_width(l, lines) <= max_w + 0.5;
+    let fits = |l: &Rc<Layout<Ink>>| l.len() <= lines && last_line_width(&l.clone().into(), lines) <= max_w + 0.5;
     let (mut lo, mut hi) = (0usize, bounds.len() - 1);
     let mut best: Option<(usize, Rc<Layout<Ink>>, Elision)> = None;
     while lo < hi {
@@ -444,5 +443,5 @@ pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w:
             crate::text::CachedElision { layout: layout.clone(), head: e.head, tail: e.tail },
         );
     }
-    Some((layout, e))
+    Some((layout.into(), e))
 }

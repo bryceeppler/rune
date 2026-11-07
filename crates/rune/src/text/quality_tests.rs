@@ -142,7 +142,7 @@ fn pill_chips_keep_room_and_never_overlap_at_wraps() {
         let max = width as f32 * scale;
         let layout = text.layout_blocks(content, &[], &[], &pills, style, scale, Some(max), Alignment::Start);
         let (mut chips, mut icons) = (Vec::new(), Vec::new());
-        pill_chips(&layout, &pills, 14.0, scale, [0.0, 0.0], Color::BLACK, &mut chips, &mut icons);
+        pill_chips(&layout.clone().into(), &pills, 14.0, scale, [0.0, 0.0], Color::BLACK, &mut chips, &mut icons);
         assert_eq!(chips.len(), 3, "each pill draws one chip at width {width}");
         assert_eq!(icons.len(), 1);
         let (_, px, at, _) = icons[0];
@@ -203,7 +203,7 @@ fn a_pill_wider_than_its_line_wraps_inside_it() {
         let max = width as f32 * scale;
         let layout = text.layout_blocks(&content, &[], &[], &pills, style, scale, Some(max), Alignment::Start);
         let (mut chips, mut icons) = (Vec::new(), Vec::new());
-        pill_chips(&layout, &pills, 14.0, scale, [0.0, 0.0], Color::BLACK, &mut chips, &mut icons);
+        pill_chips(&layout.clone().into(), &pills, 14.0, scale, [0.0, 0.0], Color::BLACK, &mut chips, &mut icons);
         let rows: Vec<_> = layout.lines().filter(|l| { let r = l.text_range(); r.start < pills[0].end as usize && (pills[0].start as usize) < r.end }).collect();
         assert!(rows.len() >= 2, "the label wraps at width {width}");
         assert_eq!(chips.len(), rows.len(), "one chip per line at width {width}");

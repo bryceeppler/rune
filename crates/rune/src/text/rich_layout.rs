@@ -117,9 +117,9 @@ impl TextSystem {
         scale: f32,
         max_width: Option<f32>,
         align: Alignment,
-    ) -> Rc<Layout<Ink>> {
+    ) -> TextLayout {
         let shape = spec.shape_key(scale);
-        self.layout_keyed(shape, &spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, scale, max_width, align, spec.wrap_anywhere, !spec.redacted)
+        self.layout_text(shape, &spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, scale, max_width, align, spec.wrap_anywhere, !spec.redacted)
     }
 }
 

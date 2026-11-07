@@ -97,6 +97,41 @@ impl TextSystem {
         self.coords_scratch = coords;
     }
 
+    /// Glyph quads for the lines of `layout` that meet `band` (the text's y in device px, before
+    /// `k`), its top-left at `origin`, magnified `k` times, drawn in `inks`: the element's colour
+    /// and the text's spans. `cached` keeps each layout's glyphs for the frames after
+    /// ([`Self::glyphs_in_band_cached`]); a secret's glyphs aren't kept.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn text_glyphs(
+        &mut self,
+        layout: &TextLayout,
+        (color, spans): (Color, &[Span]),
+        origin: [f32; 2],
+        k: f32,
+        bytes: bool,
+        band: std::ops::Range<f32>,
+        cached: bool,
+        out: &mut Vec<GlyphQuad>,
+    ) {
+        for piece in layout.pieces_in_band(band.clone()) {
+            self.set_glyph_inks(color, piece.spans(spans));
+            let from = out.len();
+            let at = [origin[0], origin[1] + piece.y * k];
+            let band = band.start - piece.y..band.end - piece.y;
+            if cached {
+                self.glyphs_in_band_cached(piece.layout, at, k, bytes, band, out);
+            } else {
+                self.glyphs_in_band(piece.layout, at, k, bytes, band, out);
+            }
+            for q in &mut out[from..] {
+                q.ink = piece.ink(q.ink);
+                if bytes {
+                    q.byte += piece.start as u32;
+                }
+            }
+        }
+    }
+
     /// Glyph quads for the grapheme at byte `at` of a shaped run, with the run's top-left at
     /// `origin` (device px). Only that grapheme's glyphs are visited. `_scale` is unused (the
     /// run holds its scale); it stays for source compatibility.

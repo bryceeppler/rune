@@ -73,6 +73,7 @@ impl TextSystem {
     pub(super) fn drop_shaped(&mut self) {
         self.layouts.clear();
         self.shapes.clear();
+        self.stacks = Default::default();
         self.superseded.clear();
         self.elisions.clear();
         self.runs.clear();

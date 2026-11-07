@@ -213,7 +213,7 @@ impl<S: 'static> Runtime<S> {
                         && let Some(l) = &n.text_layout
                     {
                         let width = (n.target[2] - n.target[0] - n.inset[0] - n.inset[2]) * scale;
-                        h = (h - crate::text::stream_height_lag(l, width, scale)).max(0.0);
+                        h = (h - l.stream_height_lag(width, scale)).max(0.0);
                     }
                 }
                 let (duration, glide) = (tx.motion.map_or(0.0, |m| m.duration * 1.15), nodes[j].glide.map(|s| (s, self.fold_limit(id))));

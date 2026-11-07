@@ -1,0 +1,246 @@
+use super::*;
+use crate::edit::Block;
+
+const STYLE: TextStyle = TextStyle::new(15.5, 400.0).lh(25.0);
+
+/// A Markdown-like note as an editor draws it: a title, headings, bold that runs over a line
+/// break, inline and fenced code, list items, quotes, a checklist pill, blank lines, a wrapping
+/// paragraph and a hidden syntax mark.
+struct Note {
+    text: String,
+    spans: Vec<Span>,
+    blocks: Vec<Block>,
+    pills: Vec<PillChip>,
+}
+
+fn note(paragraphs: usize, trailing_newline: bool) -> Note {
+    let mut text = String::from("A note\n");
+    let mut spans = vec![Span::new(0, 6).size(26.0).weight(700.0)];
+    let mut blocks = vec![Block::Paragraph];
+    let mut pills = Vec::new();
+    let mut line = |text: &mut String, s: &str, block: Block| {
+        text.push_str(s);
+        text.push('\n');
+        blocks.push(block);
+    };
+    for i in 0..paragraphs {
+        let at = text.len();
+        line(&mut text, &format!("Para {i} with **bold"), Block::Paragraph);
+        line(&mut text, "over lines** and `code`", Block::Paragraph);
+        spans.push(Span::new(at + 7 + format!("{i}").len(), at + 9 + format!("{i}").len()).size(0.01).color(Color::TRANSPARENT));
+        spans.push(Span::new(at + 9 + format!("{i}").len(), text.len() - 15).weight(600.0));
+        let code = text.len() - 6;
+        spans.push(Span::new(code, code + 4).mono().bg(Color::WHITE, 2.0));
+        let at = text.len();
+        line(&mut text, &format!("- [ ] task {i}"), Block::Bullet(0));
+        pills.push(PillChip { start: at as u32 + 2, end: at as u32 + 5, icon: None, bg: None, fg: None });
+        line(&mut text, &format!("> quote {i} lazily"), Block::Quote);
+        spans.push(Span::new(text.len() - 7, text.len() - 1).underline(Color::WHITE));
+        line(&mut text, "```", Block::Code);
+        line(&mut text, &format!("fn code_{i}() {{}}"), Block::Code);
+        line(&mut text, "```", Block::Code);
+        line(&mut text, "", Block::Paragraph);
+        line(&mut text, &format!("Wrapping {i}: the quick brown fox jumps over the lazy dog again and again until the line wraps twice."), Block::Paragraph);
+    }
+    if !trailing_newline {
+        text.pop();
+    }
+    let spans = flatten_spans(&spans);
+    Note { text, spans, blocks, pills }
+}
+
+fn lay_out(ts: &mut TextSystem, n: &Note, scale: f32, width: Option<f32>) -> (Rc<Layout<Ink>>, TextLayout) {
+    let whole = ts.layout_blocks(&n.text, &n.spans, &n.blocks, &n.pills, STYLE, scale, width, Alignment::Start);
+    let stacked = ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, scale, width, Alignment::Start, false, true);
+    assert!(stacked.pieces().count() > 1, "the note stacks");
+    (whole, stacked)
+}
+
+/// Each glyph run of a line: its x, baseline, ink, size and glyphs, by bits.
+fn runs(line: &parley::Line<'_, Ink>, dy: f32, ink: impl Fn(u16) -> u16) -> Vec<(u32, u32, u16, u32, Vec<(u32, u32, u32)>)> {
+    line.items().filter_map(|item| match item {
+        PositionedLayoutItem::GlyphRun(gr) => Some((
+            gr.offset().to_bits(),
+            (gr.baseline() + dy).to_bits(),
+            ink(gr.style().brush.0),
+            gr.run().font_size().to_bits(),
+            gr.glyphs().map(|g| (g.id, g.x.to_bits(), g.advance.to_bits())).collect(),
+        )),
+        PositionedLayoutItem::InlineBox(b) => Some((b.x.to_bits(), (b.y + dy).to_bits(), u16::MAX, b.width.to_bits(), Vec::new())),
+    }).collect()
+}
+
+/// Boxes as their users read them, in f32: Parley sums a selection's x in f64 along a path that
+/// differs by where the selection starts, a few millionths of a pixel apart.
+fn f32_boxes(boxes: Vec<(parley::BoundingBox, usize)>) -> Vec<([f32; 4], usize)> {
+    boxes.into_iter().map(|(b, i)| ([b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32], i)).collect()
+}
+
+/// At 1x and 2x, where its line heights are whole pixels, a stacked note's lines are the lines
+/// of one layout of it: text, break, metrics, glyphs, inks and pill boxes, bit for bit.
+#[test]
+fn a_stacked_text_lays_out_line_for_line_as_one_layout() {
+    for trailing in [false, true] {
+        let n = note(12, trailing);
+        for (scale, width) in [(2.0, Some(700.0)), (1.0, Some(350.0)), (2.0, None)] {
+            let mut ts = TextSystem::default();
+            let (whole, stacked) = lay_out(&mut ts, &n, scale, width);
+            assert_eq!(stacked.len(), whole.len());
+            assert_eq!(stacked.height().to_bits(), whole.height().to_bits());
+            assert_eq!(stacked.full_width().to_bits(), whole.full_width().to_bits());
+            let mut lines = whole.lines().enumerate();
+            for p in stacked.pieces() {
+                for j in 0..p.lines {
+                    let (i, w) = lines.next().unwrap();
+                    let line = stacked.line(i).unwrap();
+                    assert_eq!(line.text_range(), w.text_range(), "line {i} at {scale}x");
+                    assert_eq!(line.break_reason(), w.break_reason());
+                    assert_eq!(line.metrics(), *w.metrics(), "line {i} at {scale}x");
+                    assert_eq!(runs(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), runs(&w, 0.0, |k| k), "line {i} at {scale}x");
+                }
+            }
+            assert!(lines.next().is_none());
+            assert_eq!(stacked.lines().count(), whole.len());
+        }
+    }
+}
+
+/// Carets, hits, line edges, Up and Down, clusters and selection boxes come out of a stacked
+/// note as they do from one layout of it, including at and across paragraph breaks.
+#[test]
+fn caret_hit_and_selection_queries_match_one_layout() {
+    let styled = note(4, true);
+    let plain = Note { spans: Vec::new(), blocks: Vec::new(), pills: Vec::new(), ..note(4, false) };
+    for n in [styled, plain] {
+        queries_match(&n);
+    }
+}
+
+fn queries_match(n: &Note) {
+    let mut ts = TextSystem::default();
+    let (whole, stacked) = lay_out(&mut ts, n, 2.0, Some(700.0));
+    let len = n.text.len();
+    let bytes: Vec<usize> = (0..=len).filter(|&b| n.text.is_char_boundary(b)).collect();
+    for &b in &bytes {
+        let cur = parley::editing::Cursor::from_byte_index(&whole, b, parley::layout::Affinity::Downstream);
+        assert_eq!(stacked.caret_box(b, 3.0), cursor_geometry(&cur, &whole, 3.0), "caret at {b}");
+        for end in [false, true] {
+            assert_eq!(stacked.line_edge(b, end), line_edge(&whole, b, end), "line edge at {b}");
+        }
+        for down in [false, true] {
+            assert_eq!(stacked.move_line(b, down), move_line(&whole, b, down), "move {down} from {b}");
+        }
+        let cluster = parley::Cluster::from_byte_index(&whole, b).map(|c| (c.text_range(), c.is_hard_line_break()));
+        assert_eq!(stacked.cluster_at(b), cluster, "cluster at {b}");
+    }
+    let (w, h) = (stacked.full_width() + 40.0, stacked.height() + 60.0);
+    for yi in -2..=(h / 7.0) as i32 {
+        for xi in -1..=(w / 37.0) as i32 {
+            let (x, y) = (xi as f32 * 37.0, yi as f32 * 7.0);
+            let cur = cursor_from_point(&whole, x, y);
+            assert_eq!(stacked.hit(x, y), (cur.index(), cur.affinity()), "hit at ({x}, {y})");
+        }
+    }
+    for (k, &a) in bytes.iter().enumerate().step_by(5) {
+        for &b in bytes[k..].iter().step_by(11) {
+            for pill in [false, true] {
+                assert_eq!(f32_boxes(stacked.range_boxes(a, b, pill)), f32_boxes(range_boxes(&whole, a, b, pill)), "boxes {a}..{b}");
+            }
+        }
+    }
+}
+
+/// With line heights off the pixel grid (1.5x here), each paragraph's first line still lands
+/// on one layout's line, and a wrapped paragraph's later lines land within a pixel of it.
+#[test]
+fn paragraphs_start_on_one_layouts_lines_off_the_pixel_grid() {
+    let n = note(8, false);
+    let mut ts = TextSystem::default();
+    let (whole, stacked) = lay_out(&mut ts, &n, 1.5, Some(520.0));
+    assert_eq!(stacked.len(), whole.len());
+    let starts: Vec<usize> = stacked.pieces().map(|p| p.start).collect();
+    let mut off = 0;
+    for (i, w) in whole.lines().enumerate() {
+        let (a, b) = (stacked.line(i).unwrap().metrics(), *w.metrics());
+        let dy = (a.block_min_coord - b.block_min_coord).abs();
+        if starts.contains(&w.text_range().start) {
+            assert_eq!(a, b, "a paragraph's first line, line {i}");
+        } else {
+            assert!(dy <= 1.0, "line {i} is {dy} px off");
+            off += (dy > 0.0) as usize;
+        }
+    }
+    assert!(off > 0, "some wrapped line rounds on its own");
+}
+
+/// An edit reshapes the paragraph it touches; Return makes two and joining two makes one.
+/// Undoing it reshapes nothing: the old paragraph is still cached.
+#[test]
+fn an_edit_reshapes_only_the_paragraphs_it_touches() {
+    let n = note(20, true);
+    let mut ts = TextSystem::default();
+    let lay = |ts: &mut TextSystem, text: &str| {
+        let before = ts.shaped;
+        ts.layout_text(None, text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        ts.end_commit();
+        ts.shaped - before
+    };
+    lay(&mut ts, &n.text);
+    let at = n.text.find("task 7").unwrap();
+    let typed = format!("{}x{}", &n.text[..at], &n.text[at..]);
+    assert_eq!(lay(&mut ts, &typed), 1, "typing");
+    let split = format!("{}\n{}", &n.text[..at], &n.text[at..]);
+    assert_eq!(lay(&mut ts, &split), 2, "Return");
+    let joined = n.text.replacen("\n> quote 3", "> quote 3", 1);
+    assert_eq!(lay(&mut ts, &joined), 1, "Backspace at a paragraph's start");
+    assert_eq!(lay(&mut ts, &n.text), 0, "undo");
+}
+
+/// A stack keeps its paragraphs cached across commits that don't use it, however many other
+/// texts come and go, so the next keystroke after a pause reshapes one paragraph.
+#[test]
+fn a_kept_stack_keeps_its_paragraphs_through_idle_commits() {
+    let n = note(20, true);
+    let mut ts = TextSystem::default();
+    let held = ts.layout_text(None, &n.text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    ts.end_commit();
+    for i in 0..40 {
+        ts.layout_rich(&format!("{i} {}", "filler words ".repeat(400)), &[], STYLE, 2.0, Some(700.0));
+        ts.end_commit();
+    }
+    let before = ts.shaped;
+    let at = n.text.find("task 9").unwrap();
+    let typed = format!("{}x{}", &n.text[..at], &n.text[at..]);
+    ts.layout_text(None, &typed, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    assert_eq!(ts.shaped - before, 1);
+    drop(held);
+}
+
+/// New families or a new language lay a stacked text out again in them.
+#[test]
+fn new_fonts_lay_stacks_out_again() {
+    let n = note(3, true);
+    let mut ts = TextSystem::default();
+    let lay = |ts: &mut TextSystem| ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    let before = lay(&mut ts);
+    assert!(ts.set_language(parley::fontique::Language::parse("ja").ok()));
+    let shaped = ts.shaped;
+    let after = lay(&mut ts);
+    assert_ne!(before.id(), after.id());
+    assert!(ts.shaped > shaped, "its paragraphs shaped again");
+}
+
+/// Text with right-to-left characters, unsorted spans or one paragraph lays out whole.
+#[test]
+fn texts_that_cannot_stack_lay_out_whole() {
+    let mut ts = TextSystem::default();
+    let mut pieces = |text: &str, spans: &[Span]| {
+        ts.layout_text(None, text, spans, &[], &[], STYLE, 2.0, None, Alignment::Start, false, true).pieces().count()
+    };
+    assert_eq!(pieces("one\ntwo", &[]), 2);
+    assert_eq!(pieces("one\n", &[]), 1);
+    assert_eq!(pieces("one\nשלום", &[]), 1);
+    assert_eq!(pieces("one\ntwo", &[Span::new(4, 7), Span::new(0, 3)]), 1);
+    let centred = ts.layout_text(None, "one\ntwo", &[], &[], &[], STYLE, 2.0, None, Alignment::Center, false, true);
+    assert_eq!(centred.pieces().count(), 1, "unwrapped centred lines centre on the widest");
+}

@@ -6,7 +6,7 @@ use super::*;
 /// first to its line's end and the rest from the line's start.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pill_chips(
-    layout: &Layout<Ink>,
+    layout: &TextLayout,
     pills: &[PillChip],
     size: f32,
     scale: f32,
@@ -15,10 +15,29 @@ pub(crate) fn pill_chips(
     out: &mut Vec<PaintedDeco>,
     icons: &mut Vec<(&'static Icon, u32, [f32; 2], Option<Color>)>,
 ) {
-    if pills.is_empty() {
-        return;
+    for piece in layout.pieces() {
+        let pills = piece.pills(pills);
+        if !pills.is_empty() {
+            chips(piece.layout, piece.start, pills, size, scale, [origin[0], origin[1] + piece.y], bg, out, icons);
+        }
     }
+}
+
+/// [`pill_chips`] for one layout whose text starts at byte `start` of the text `pills` index.
+#[allow(clippy::too_many_arguments)]
+fn chips(
+    layout: &Layout<Ink>,
+    start: usize,
+    pills: &[PillChip],
+    size: f32,
+    scale: f32,
+    origin: [f32; 2],
+    bg: Color,
+    out: &mut Vec<PaintedDeco>,
+    icons: &mut Vec<(&'static Icon, u32, [f32; 2], Option<Color>)>,
+) {
     let pm = PillMetrics::new(size);
+    let local = |at: u32| (at as usize).saturating_sub(start);
     for line in layout.lines() {
         let m = line.metrics();
         let boxes: Vec<parley::PositionedInlineBox> = line
@@ -33,7 +52,7 @@ pub(crate) fn pill_chips(
             boxes.iter().filter(|b| b.id & 1 == 0).map(|b| (((b.id & !PILL_BOX) >> 1) as usize, Some(b))).collect();
         let text = line.text_range();
         for (i, p) in pills.iter().enumerate() {
-            let inside = (p.start as usize) < text.start && text.start < p.end as usize;
+            let inside = local(p.start) < text.start && text.start < local(p.end);
             if inside && !starts.iter().any(|s| s.0 == i) {
                 starts.push((i, None));
             }
@@ -47,7 +66,7 @@ pub(crate) fn pill_chips(
             for item in line.items() {
                 if let PositionedLayoutItem::GlyphRun(gr) = item {
                     let r = gr.run().text_range();
-                    if r.start < pill.end as usize && (pill.start as usize) < r.end {
+                    if r.start < local(pill.end) && local(pill.start) < r.end {
                         let fm = gr.run().font_metrics();
                         (asc, desc) = (asc.max(fm.ascent), desc.max(fm.descent.abs()));
                         gr_x0 = gr_x0.min(gr.offset());

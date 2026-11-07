@@ -74,7 +74,7 @@ impl<S: 'static> Runtime<S> {
         let [x, y, w, h] = self.laid_out(nodes, j);
         let s = self.env.scale;
         let [ox, oy] = links::origin(n, spec, layout, [x, y, x + w, y + h], s, 1.0);
-        for (bb, _) in crate::text::range_boxes(layout, a, b, true) {
+        for (bb, _) in layout.range_boxes(a, b, true) {
             let (x0, y0) = (ox + bb.x0 as f32 / s, oy + bb.y0 as f32 / s);
             out.push([x0, y0, (bb.x1 - bb.x0) as f32 / s, (bb.y1 - bb.y0) as f32 / s]);
         }

@@ -27,7 +27,7 @@ fn texts_carry_one_shape_key_that_names_their_cached_layout() {
         assert_eq!(s.shape_key(1.0), None, "a key at another scale isn't reused");
         let keyed = rt.text.layout_for_spec(&s, 2.0, Some(300.0), parley::Alignment::Start);
         let unkeyed = rt.text.layout_blocks_inner(&s.content, &s.spans, &s.blocks, &s.pills, s.style, 2.0, Some(300.0), parley::Alignment::Start, s.wrap_anywhere, true);
-        assert!(Rc::ptr_eq(&keyed, &unkeyed), "{key}");
+        assert!(Rc::ptr_eq(keyed.as_whole().unwrap(), &unkeyed), "{key}");
     }
     assert_eq!(spec(&rt, "cased").content, "CASED");
     assert_eq!(spec(&rt, "secret").shape, None, "secure text keeps no content-derived key");
@@ -41,5 +41,5 @@ fn replacing_a_texts_content_drops_its_key() {
     s.replace_content("Other words".into());
     assert_eq!(s.shape_key(2.0), None);
     let l = rt.text.layout_for_spec(&s, 2.0, None, parley::Alignment::Start);
-    assert!(Rc::ptr_eq(&l, &rt.text.layout_rich("Other words", &[], s.style, 2.0, None)));
+    assert!(Rc::ptr_eq(l.as_whole().unwrap(), &rt.text.layout_rich("Other words", &[], s.style, 2.0, None)));
 }

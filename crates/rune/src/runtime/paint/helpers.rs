@@ -8,7 +8,7 @@ pub(super) fn emit_block_decorations(
     images: &mut crate::pixels::ImageAtlas,
     glyph_scratch: &mut Vec<crate::text::GlyphQuad>,
     spec: &TextSpec,
-    layout: &Layout<Ink>,
+    layout: &TextLayout,
     origin: [f32; 2],
     (x0, x1): (f32, f32),
     s: f32,
@@ -204,9 +204,7 @@ pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bo
     // The text scales with its box, so the caret does too.
     let mut x = text_x(spec, x0, x1, (layout.full_width() * scale).ceil());
     if input.single_line { x -= single_line_scroll(scrolls, &n.path, input, &spec.content, layout, s, (x1 - x0) / scale.max(1e-4)) * scale; }
-    let ci = caret_index(e, &spec.content);
-    let cur = Cursor::from_byte_index(layout, ci, Affinity::Downstream);
-    let bb = crate::text::cursor_geometry(&cur, layout, 1.5 * s);
+    let bb = layout.caret_box(caret_index(e, &spec.content), 1.5 * s);
     let (cx, cy) = (x + bb.x0 as f32 * scale, r[1] + ins[1] + bb.y0 as f32 * scale);
     let h = (if bb.y1 > bb.y0 { (bb.y1 - bb.y0) as f32 } else { spec.style.line_px() * s }) * scale;
     let (caret_x, caret_w) = if (scale - 1.0).abs() <= 1e-5 {

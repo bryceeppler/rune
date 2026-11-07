@@ -53,6 +53,8 @@ mod layout_cache;
 mod macos;
 pub use macos::smoothing::ApplePipeline;
 mod measure;
+mod paragraphs;
+pub use paragraphs::TextLayout;
 mod pill_chips;
 mod rich_layout;
 mod run;
@@ -139,6 +141,7 @@ pub struct TextSystem {
     shapes: HashMap<u64, u64>,
     /// Shapings whose text was edited this commit (see [`Self::supersede`]).
     superseded: FxHashSet<u64>,
+    stacks: paragraphs::Stacks,
     elisions: Cache<CachedElision>,
     runs: Cache<Rc<RunLayout>>,
     generation: u32,
@@ -278,6 +281,7 @@ impl TextSystem {
             layouts: Default::default(),
             shapes: Default::default(),
             superseded: Default::default(),
+            stacks: Default::default(),
             elisions: Default::default(),
             runs: Default::default(),
             generation: 0,

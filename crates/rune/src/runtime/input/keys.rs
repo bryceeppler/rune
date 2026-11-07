@@ -44,7 +44,7 @@ impl<S: 'static> Runtime<S> {
             })
         {
             let layout = self.focused_layout();
-            if self.with_focused(|e| e.key(ev, layout.as_deref()), one) {
+            if self.with_focused(|e| e.key(ev, layout.as_ref()), one) {
                 return true;
             }
         }
@@ -67,7 +67,7 @@ impl<S: 'static> Runtime<S> {
                 if copies && e.is_rich() && !e.is_secure() {
                     html = Some(e.selected_html()).filter(|h| !h.is_empty());
                 }
-                e.key(ev, layout.as_deref())
+                e.key(ev, layout.as_ref())
             }, one);
             if let Some(html) = html
                 && let Some(text) = one.copy.as_ref().filter(|w| !w.is_secret()).map(|w| w.content().text().to_owned())
@@ -149,7 +149,7 @@ impl<S: 'static> Runtime<S> {
         true
     }
 
-    pub(super) fn focused_layout(&mut self) -> Option<Rc<Layout<Ink>>> {
+    pub(super) fn focused_layout(&mut self) -> Option<TextLayout> {
         let path = self.focused.clone()?;
         let s = self.env.scale;
         let n = self.node(&path)?;

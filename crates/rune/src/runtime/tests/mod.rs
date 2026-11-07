@@ -17,6 +17,7 @@ mod layout_rows;
 mod loop_sleep;
 mod no_motion;
 mod one_snap;
+mod paragraph_editing;
 mod picture_scale;
 mod pointer_drag;
 mod pointer_hit;

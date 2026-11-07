@@ -16,7 +16,7 @@ pub(super) struct LinkState {
 
 /// Where node `n`'s text starts inside its border box `rect` (points, x0 y0 x1 y1), its text
 /// drawn `k` times its size.
-pub(super) fn origin(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, rect: [f32; 4], s: f32, k: f32) -> [f32; 2] {
+pub(super) fn origin(n: &Node, spec: &TextSpec, layout: &TextLayout, rect: [f32; 4], s: f32, k: f32) -> [f32; 2] {
     let x = text_x(spec, rect[0] + n.inset[0] * k, rect[2] - n.inset[2] * k, (layout.full_width() * k).ceil() / s);
     [x, rect[1] + n.inset[1] * k]
 }
@@ -34,9 +34,9 @@ fn layout_len(n: &Node, spec: &TextSpec) -> usize {
 }
 
 /// Line boxes of bytes `start..end` in layout device px, with each box's line index.
-fn boxes(layout: &Layout<Ink>, len: usize, start: u32, end: u32) -> Vec<(parley::BoundingBox, usize)> {
+fn boxes(layout: &TextLayout, len: usize, start: u32, end: u32) -> Vec<(parley::BoundingBox, usize)> {
     let (a, b) = ((start as usize).min(len), (end as usize).min(len));
-    crate::text::range_boxes(layout, a, b, false)
+    layout.range_boxes(a, b, false)
 }
 
 /// The link paints to draw this frame, by byte range, with the resting span's `bg_pad`.
@@ -50,23 +50,16 @@ impl LinkFx {
     }
 
     /// Backgrounds and underlines (device px, layout top-left at `origin`).
-    pub(super) fn decos(&self, layout: &Layout<Ink>, len: usize, s: f32, origin: [f32; 2], out: &mut Vec<PaintedDeco>) {
+    pub(super) fn decos(&self, layout: &TextLayout, len: usize, s: f32, origin: [f32; 2], out: &mut Vec<PaintedDeco>) {
         for &(a, b, p, bg_pad, has_rings) in &self.0 {
             for (bb, line) in boxes(layout, len, a, b) {
                 let (x0, w) = (origin[0] + bb.x0 as f32, (bb.x1 - bb.x0) as f32);
                 if p.bg.is_some() || p.ring.is_some() {
                     let pad = bg_pad * s;
                     let (mut y0, mut y1) = ((origin[1] + bb.y0 as f32).round(), (origin[1] + bb.y1 as f32).round());
-                    if let Some(l) = layout.get(line) {
+                    if let Some(l) = layout.line(line) {
                         let base = origin[1] + l.metrics().baseline;
-                        let (mut asc, mut desc) = (0.0f32, 0.0f32);
-                        for run in l.runs() {
-                            let r = run.text_range();
-                            if r.start < b as usize && (a as usize) < r.end {
-                                let fm = run.font_metrics();
-                                (asc, desc) = (asc.max(fm.ascent), desc.max(fm.descent.abs()));
-                            }
-                        }
+                        let (asc, desc) = l.ink_extent(a as usize, b as usize);
                         if asc > 0.0 || desc > 0.0 {
                             y0 = (base - asc - 1.0 * s).round();
                             y1 = (base + desc + 1.0 * s).round();
@@ -106,9 +99,9 @@ impl LinkFx {
                         out.push(PaintedDeco { deco: Deco { rect, color: p.bg.unwrap_or(Color::TRANSPARENT), radius: 4.0 * s }, ring, byte: b.saturating_sub(1) });
                     }
                 }
-                if let (Some(c), Some(l)) = (p.underline, layout.get(line)) {
+                if let (Some(c), Some(l)) = (p.underline, layout.line(line)) {
                     let y = (origin[1] + l.metrics().baseline + 2.0 * s).round();
-                    let (x0, x1) = crate::text::underline_edges(&l, origin[0], bb.x0 as f32, bb.x1 as f32);
+                    let (x0, x1) = crate::text::underline_edges(l.parley(), origin[0], bb.x0 as f32, bb.x1 as f32);
                     let w = x1 - x0;
                     if let Some(d) = out.iter_mut().find(|d| {
                         d.radius == 0.0

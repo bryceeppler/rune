@@ -220,7 +220,7 @@ impl<S: 'static> Runtime<S> {
                     if let Some((_, _)) = &e.preedit
                         && let (_, Some((pa, pb))) = e.display()
                     {
-                        for (bb, _) in crate::text::range_boxes(layout, pa, pb, false) {
+                        for (bb, _) in layout.range_boxes(pa, pb, false) {
                             self.instances.push(rect_inst(
                                 [origin[0] + bb.x0 as f32 * tk, origin[1] + bb.y1 as f32 * tk - s, (bb.x1 - bb.x0) as f32 * tk, s],
                                 premul(color, o, srgb),
@@ -330,11 +330,8 @@ impl<S: 'static> Runtime<S> {
                 };
                 let bytes = reveal.is_some() || !link_fx.is_empty() || has_hl_fg;
                 // A secret's glyphs aren't kept past the frame that draws them.
-                if spec.redacted || n.input.as_ref().is_some_and(|i| i.edit.is_secure()) {
-                    self.text.glyphs_in_band(layout, r_origin, raster, bytes, band, &mut self.glyph_scratch);
-                } else {
-                    self.text.glyphs_in_band_cached(layout, r_origin, raster, bytes, band, &mut self.glyph_scratch);
-                }
+                let cached = !spec.redacted && !n.input.as_ref().is_some_and(|i| i.edit.is_secure());
+                self.text.text_glyphs(layout, (color, &spec.spans), r_origin, raster, bytes, band, cached, &mut self.glyph_scratch);
                 tk / raster
             };
             self.text.set_glide([0.0; 2]);

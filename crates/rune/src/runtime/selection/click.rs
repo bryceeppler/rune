@@ -77,16 +77,16 @@ impl InputClick {
     }
 }
 
-fn hit(e: &crate::edit::TextEdit, l: &Layout<Ink>, x: f32, y: f32, s: f32, single: bool) -> Hit {
+fn hit(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single: bool) -> Hit {
     let h = (l.height() - 1e-3).max(0.0);
     let ys = if single || x < 0.0 { (y * s).clamp(0.0, h) } else { (y * s).max(0.0) };
-    let cur = crate::text::cursor_from_point(l, x * s, ys);
-    let caret = e.model_index(cur.index());
-    let cluster = if cur.affinity() == Affinity::Upstream
-        && let Some(cl) = cur.index().checked_sub(1).and_then(|b| parley::Cluster::from_byte_index(l, b))
-        && !cl.is_hard_line_break()
+    let (index, affinity) = l.hit(x * s, ys);
+    let caret = e.model_index(index);
+    let cluster = if affinity == Affinity::Upstream
+        && let Some((cluster, hard_break)) = index.checked_sub(1).and_then(|b| l.cluster_at(b))
+        && !hard_break
     {
-        e.model_index(cl.text_range().start)
+        e.model_index(cluster.start)
     } else {
         caret
     };
