@@ -130,7 +130,8 @@ impl<S: 'static> Runtime<S> {
     /// commits in the editor it began in, which keeps focus, once the input that arrived before
     /// has run. The platform's input method resets.
     pub fn cancel_composition(&mut self) {
-        if self.queue.is_empty() {
+        let composing = self.app_ime.open.is_some() || self.queue.iter().any(|a| matches!(a, Action::Ime(..)));
+        if self.queue.is_empty() || !composing {
             self.finish_composition();
         } else if !self.queue.iter().any(|a| matches!(a, Action::ImeStep(ImeStep::Finish))) {
             self.queue.push(Action::ImeStep(ImeStep::Finish));
