@@ -28,8 +28,8 @@ pub(super) fn position(event_loop: &ActiveEventLoop, at: Placement, options: &Ov
     let (mut top, mut bottom) = (origin.y, origin.y + area.height as i32);
     // Inside the taskbar and app bars of whichever Windows display it's on.
     #[cfg(target_os = "windows")]
-    if let Some(work) = crate::platform::win32::work_area(&monitor) {
-        (top, bottom) = work;
+    if let Some([_, y, _, height]) = crate::platform::win32::work_area(&monitor) {
+        (top, bottom) = (y, y + height);
     }
     let y = match at.edge {
         ScreenEdge::Top => top + px(at.margin),

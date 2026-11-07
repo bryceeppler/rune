@@ -47,6 +47,8 @@ mod event_loop;
 mod events;
 mod file_drop;
 pub(crate) mod frame;
+pub(crate) mod geometry;
+pub use geometry::{WindowGeometry, WindowState};
 mod handle;
 pub use handle::WindowHandle;
 use handle::native_window_number;
@@ -98,6 +100,9 @@ pub(crate) enum WakeEvent {
     #[cfg_attr(not(all(unix, not(target_os = "ios"), not(target_os = "android"))), allow(dead_code))]
     SessionEnd,
 }
+
+/// `App::on_geometry`'s hook.
+pub(crate) type OnGeometry<S> = fn(&mut S, &WindowGeometry, &mut Tx) -> bool;
 
 /// What `Windows` needs of a host, whatever its state type: an app window or an overlay.
 pub(crate) trait AnyHost {
@@ -360,6 +365,10 @@ struct Host<S: 'static> {
     keep_running: bool,
     on_close: Option<fn(&mut S, &mut Tx)>,
     on_reopen: Option<fn(&mut S, bool, &mut Tx) -> bool>,
+    on_geometry: Option<OnGeometry<S>>,
+    geometry: geometry::Watch,
+    /// `App::restore_geometry`, until the window it opens is created.
+    restore: Option<WindowGeometry>,
     /// Its place among the windows receiving links (`App::on_open_url`).
     _open_urls: Option<crate::open_url::incoming::Listening>,
     /// When it last hid, in `reopen::stamp` order.
@@ -433,7 +442,7 @@ impl<S: 'static> Host<S> {
             let _ = proxy.send_event(WakeEvent::App(slot));
         });
         let (open, keep_running, on_close, release_gpu) = (app.open, app.keep_running, app.on_close, app.release_gpu);
-        let (on_reopen, on_close_request) = (app.on_reopen, app.on_close_request);
+        let (on_reopen, on_close_request, on_geometry, restore) = (app.on_reopen, app.on_close_request, app.on_geometry, app.restore_geometry.take());
         #[cfg(target_os = "macos")]
         let present_log = args.trace.as_ref().map(|_| Arc::default());
         let mut app = app;
@@ -513,6 +522,9 @@ impl<S: 'static> Host<S> {
             keep_running,
             on_close,
             on_reopen,
+            on_geometry,
+            geometry: Default::default(),
+            restore,
             _open_urls: None,
             hidden_at: None,
             release_gpu,
@@ -767,11 +779,14 @@ impl<S: 'static> Host<S> {
     fn try_create(&mut self, event_loop: &ActiveEventLoop, token: Option<String>, focus: bool) -> Result<(), String> {
         // A released window reopens at the height its content reached while it was gone.
         let built = self.shown && self.build_for_show();
+        let restored = self.restored_frame(event_loop);
+        if let Some((_, size)) = restored { self.spec.size = size; }
         let size = self.args.size.unwrap_or(self.spec.size);
         let launcher = self.launcher();
         let visible = !launcher && (self.started || self.options.visible);
         #[allow(unused_mut)]
         let mut attrs = self.options.attributes(self.rt.window_title.current().unwrap_or(self.spec.title), size, self.spec.min_size, visible).with_active(focus);
+        if let Some((Some(position), _)) = restored { attrs = attrs.with_position(position); }
         #[cfg(target_os = "macos")]
         if self.macos_window.nonactivating_panel { attrs = attrs.with_visible(false).with_active(false); }
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
@@ -979,6 +994,8 @@ impl<S: 'static> Host<S> {
         });
         if launcher { self.win.as_mut().unwrap().first_frame.prepare(); }
         self.apply_placement(event_loop);
+        self.restore_state();
+        self.geometry.dirty = true;
         #[cfg(target_os = "macos")]
         if visible && let Some(w) = &self.win && w.native.panel.is_some() { w.show(focus); }
         if let Some(created) = self.on_created.take() { created(self.native_handle.clone()); }
