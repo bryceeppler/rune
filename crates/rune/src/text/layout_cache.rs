@@ -28,8 +28,11 @@ pub(super) struct Entry<T> {
 
 impl<T> Entry<T> {
     pub(super) fn new(value: T, used: u32, text_len: usize, shape: u64) -> Self {
-        let cost = (text_len * LAYOUT_PER_BYTE + LAYOUT_BASE).min(u32::MAX as usize) as u32;
-        Entry { value, used, cost, shape }
+        Self::with_cost(value, used, text_len * LAYOUT_PER_BYTE + LAYOUT_BASE, shape)
+    }
+
+    pub(super) fn with_cost(value: T, used: u32, bytes: usize, shape: u64) -> Self {
+        Entry { value, used, cost: bytes.min(u32::MAX as usize) as u32, shape }
     }
 }
 
@@ -44,11 +47,14 @@ const LAYOUT_BASE: usize = 2048;
 /// labels or 48 KB of paragraphs.
 pub(super) const STALE_BYTES: usize = 3 << 20;
 
+/// Whether an entry `used` in a commit is one of the last two at commit `g`.
+pub(super) fn fresh(g: u32, used: u32) -> bool { g.wrapping_sub(used) < 2 }
+
 /// Drops what `cache` hasn't used in the last two commits once it outgrows [`STALE_BYTES`],
 /// least recently used first. A view's layouts all share the commit it was last shown in, so
 /// that commit's are kept while the budget lasts rather than all dropped together.
 fn evict<T>(cache: &mut Cache<T>, g: u32) {
-    let stale = |used: u32| g.wrapping_sub(used) >= 2;
+    let stale = |used: u32| !fresh(g, used);
     let total: usize = cache.values().filter(|e| stale(e.used)).map(|e| e.cost as usize).sum();
     if total <= STALE_BYTES {
         return;
@@ -85,9 +91,16 @@ impl TextSystem {
         let g = self.generation;
         if !self.superseded.is_empty() {
             let gone = &self.superseded;
+            self.stacks.cache.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.layouts.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.elisions.retain(|_, e| e.used == g || !gone.contains(&e.shape));
             self.superseded.clear();
+        }
+        self.stacks.end_commit(g);
+        // A layout something else still holds (a node's text, a paragraph of a kept stack) costs
+        // nothing to keep, and its text laid out again finds it.
+        for e in self.layouts.values_mut().filter(|e| Rc::strong_count(&e.value) > 1) {
+            e.used = g;
         }
         evict(&mut self.layouts, g);
         let layouts = &self.layouts;

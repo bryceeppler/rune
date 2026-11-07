@@ -993,7 +993,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
         .into_iter()
         .map(|(start, end, _)| crate::text::PillChip { start, end, icon: None, bg: None, fg: None })
         .collect();
-    let layout = ts.layout_blocks(&w.text, &[], w.blocks(), &chips, style, 2.0, Some(220.0), parley::Alignment::Start);
+    let layout: crate::text::TextLayout = ts.layout_blocks(&w.text, &[], w.blocks(), &chips, style, 2.0, Some(220.0), parley::Alignment::Start).into();
     assert!(layout.len() >= 3, "wrapped into {} lines", layout.len());
     // Caret at end of line 0 ("hello world "), press Down onto the pill line: snaps to a pill edge on line 1, never jumps to EOF.
     w.set_caret(11);
@@ -1018,7 +1018,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
         .collect();
     let ime_layout = ts.layout_blocks(&disp, &[], &[Block::Paragraph], &p_chips, style, 2.0, None, parley::Alignment::Start);
     let (mut decos, mut icons) = (Vec::new(), Vec::new());
-    crate::text::pill_chips(&ime_layout, &p_chips, 14.0, 2.0, [0.0, 0.0], Color::BLACK, &mut decos, &mut icons);
+    crate::text::pill_chips(&ime_layout.clone().into(), &p_chips, 14.0, 2.0, [0.0, 0.0], f32::NEG_INFINITY..f32::INFINITY, Color::BLACK, &mut decos, &mut icons);
     let boxes = crate::text::range_boxes(&ime_layout, pa, pb, false);
     assert_eq!(boxes.len(), 1);
     assert!(boxes[0].0.x0 as f32 >= decos[0].rect[0] + decos[0].rect[2] - 0.5, "preedit box {:?} overlaps chip {:?}", boxes[0].0, decos[0].rect);
@@ -1028,7 +1028,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
         let pc = [crate::text::PillChip { start, end, icon: None, bg: None, fg: None }];
         let l = ts.layout_blocks(txt, &[], &[Block::Paragraph], &pc, style, 2.0, None, parley::Alignment::Start);
         let (mut d, mut ic) = (Vec::new(), Vec::new());
-        crate::text::pill_chips(&l, &pc, 14.0, 2.0, [0.0, 0.0], Color::BLACK, &mut d, &mut ic);
+        crate::text::pill_chips(&l.into(), &pc, 14.0, 2.0, [0.0, 0.0], f32::NEG_INFINITY..f32::INFINITY, Color::BLACK, &mut d, &mut ic);
         assert_eq!(d.len(), 1, "{txt:?}");
         assert!(d[0].rect[2] > 8.0, "chip for {txt:?} has width {}", d[0].rect[2]);
     }

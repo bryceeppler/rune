@@ -18,7 +18,8 @@ fn secure_input_masks_layout_inspector_and_unicode_pointer_indices() {
     assert_eq!(n.text.as_ref().unwrap().content, "•••");
     let path = n.path.clone();
     let layout = rt.focused_layout().unwrap();
-    let caret = Cursor::from_byte_index(&layout, 6, Affinity::Downstream).geometry(&layout, 1.0);
+    let layout = layout.as_whole().unwrap();
+    let caret = parley::editing::Cursor::from_byte_index(layout, 6, parley::layout::Affinity::Downstream).geometry(layout, 1.0);
     rt.queue.push(Action::Focus(path, caret.x0 as f32 + 0.1, ((caret.y0 + caret.y1) * 0.5) as f32));
     rt.frame(0.0);
     assert_eq!(rt.state.focus, 3);
@@ -109,7 +110,7 @@ fn secure_revealed_display_does_not_survive_in_layout_or_raster_caches() {
     assert!(!rt.is_selectable(i), "selectable cannot opt secure input into text selection");
     assert_eq!(n.text.as_ref().unwrap().content, "sensitive fixture");
     assert!(n.text.as_ref().unwrap().source.is_none(), "case conversion is ignored on inputs");
-    assert_eq!(Rc::strong_count(n.text_layout.as_ref().unwrap()), 1, "only the node owns the shaped run");
+    assert_eq!(Rc::strong_count(n.text_layout.as_ref().unwrap().as_whole().unwrap()), 1, "only the node owns the shaped run");
     assert_eq!(rt.text.cached_layout_count(), cached, "measurement and paint leave no cached run");
     assert!(rt.node_caches.is_empty(), "an unfocused secret also disables ancestor raster caches");
     assert!(rt.text.atlas.resident_caches.is_empty());
@@ -118,7 +119,7 @@ fn secure_revealed_display_does_not_survive_in_layout_or_raster_caches() {
     rt.set_focus(Some(path), true);
     rt.frame(0.0);
     let layout = rt.focused_layout().unwrap();
-    assert_eq!(Rc::strong_count(&layout), 1, "input hit testing also bypasses the layout cache");
+    assert_eq!(Rc::strong_count(layout.as_whole().unwrap()), 1, "input hit testing also bypasses the layout cache");
     drop(layout);
     let mut tx = Tx::default();
     // Application key-up hooks may observe their own events, but Rune must not keep
@@ -340,7 +341,7 @@ fn secure_multiline_conceal_snaps_geometry_scroll_and_bypasses_caches() {
     }
     let secret = rt.nodes.iter().find(|n| n.key.as_deref() == Some("secret")).unwrap();
     assert_eq!(secret.text_layout.as_ref().unwrap().len(), 1);
-    assert_eq!(Rc::strong_count(secret.text_layout.as_ref().unwrap()), 1);
+    assert_eq!(Rc::strong_count(secret.text_layout.as_ref().unwrap().as_whole().unwrap()), 1);
     assert_eq!(rt.text.cached_layout_count(), 0);
     assert!(rt.ime_area.is_none());
     let info = elements.iter().find(|e| e.key.as_deref() == Some("secret")).unwrap();
@@ -506,7 +507,7 @@ fn secure_label_masks_reveals_conceals_and_never_leaks_plaintext() {
         for key in ["single", "trunc", "multi", "clamped"] {
             let i = rt.nodes.iter().position(|n| n.key.as_deref() == Some(key)).unwrap();
             let path = rt.nodes[i].path.clone();
-            assert_eq!(Rc::strong_count(rt.nodes[i].text_layout.as_ref().unwrap()), 1, "{key} layout owned only by node");
+            assert_eq!(Rc::strong_count(rt.nodes[i].text_layout.as_ref().unwrap().as_whole().unwrap()), 1, "{key} layout owned only by node");
             assert!(!rt.is_selectable(i), "{key} must not be selectable");
             assert!(!rt.selection_menu(&path, 5.0, 5.0), "{key} must not offer Copy menu");
             let info = rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap();

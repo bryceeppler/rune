@@ -205,8 +205,7 @@ impl<S: 'static> Runtime<S> {
             (rect.x + rect.w).min(clip[2]).min(self.viewport.0), (rect.y + rect.h).min(clip[3]).min(self.viewport.1)];
         if rect.w <= 0.0 || clip[2] <= clip[0] || clip[3] <= clip[1] { return; }
         self.glyph_scratch.clear();
-        self.text.set_glyph_inks(spec.color, &[]);
-        self.text.glyphs_for_layout(layout, scale, [origin[0] * scale, origin[1] * scale], false, &mut self.glyph_scratch);
+        self.text.text_glyphs(layout, (spec.color, &[]), [origin[0] * scale, origin[1] * scale], 1.0, false, f32::NEG_INFINITY..f32::INFINITY, false, &mut self.glyph_scratch);
         let color = spec.color;
         let srgb = self.srgb_blend;
         // Colour glyphs live in the image atlas, which may move them before the flight ends.

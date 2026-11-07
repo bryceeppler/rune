@@ -112,6 +112,7 @@ fn el_flatten_reusable(e: &El) -> bool {
 /// Precomputes `shape` on plain, non-input, non-cased text specs at `scale` while the freshly
 /// built subtree is still uniquely owned, so flattening never has to copy a shared `TextSpec`.
 fn prekey_text_shapes(el: &mut El, scale: f32) {
+    el.sync_input_rich();
     if el.input.is_none()
         && let Some(t) = &el.text
         && !t.redacted

@@ -105,11 +105,11 @@ fn point_in_cluster(rt: &Runtime<Form>, key: &str, byte: usize, frac: f32) -> (f
     let n = rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap();
     let l = n.text_layout.as_ref().unwrap();
     let s = rt.env.scale;
-    let cl = parley::Cluster::from_byte_index(l, byte).unwrap();
+    let piece = l.pieces().rfind(|p| p.start <= byte).unwrap();
+    let cl = parley::Cluster::from_byte_index(piece.layout, byte - piece.start).unwrap();
     let x0 = cl.visual_offset().unwrap();
     let adv = cl.advance();
-    let cur = Cursor::from_byte_index(l, byte, Affinity::Downstream);
-    let bb = crate::text::cursor_geometry(&cur, l, 1.0);
+    let bb = l.caret_box(byte, 1.0);
     let r = rect_of(rt, key);
     (
         r[0] + n.inset[0] + (x0 + adv * frac) / s,
@@ -352,7 +352,7 @@ fn right_half_of_char_and_pill_trailing_padding_select_the_hit_word_and_pill() {
 
     // In "pills" ("@maya hello" where 0..5 is a pill), find the trailing inline box of "@maya".
     let n = rt.nodes.iter().find(|n| n.key.as_deref() == Some("pills")).unwrap();
-    let l = n.text_layout.as_ref().unwrap();
+    let l = n.text_layout.as_ref().unwrap().as_whole().unwrap();
     let s = rt.env.scale;
     let line = l.get(0).unwrap();
     let trail = line

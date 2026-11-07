@@ -21,7 +21,7 @@ pub(crate) struct Line {
 }
 
 /// `content`'s lines from `layout` (device px at `s`), placed from `origin` in points.
-pub(crate) fn lines(layout: &Layout<Ink>, content: &str, s: f32, origin: [f32; 2]) -> Vec<Line> {
+pub(crate) fn lines(layout: &crate::text::TextLayout, content: &str, s: f32, origin: [f32; 2]) -> Vec<Line> {
     let mut out = Vec::new();
     for line in layout.lines() {
         let m = line.metrics();
@@ -30,9 +30,10 @@ pub(crate) fn lines(layout: &Layout<Ink>, content: &str, s: f32, origin: [f32; 2
         let (mut lengths, mut positions, mut widths, mut word_starts) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut x = m.offset;
         let mut at = range.start;
-        for run in line.runs() {
+        for run in line.parley().runs() {
             for cluster in run.clusters() {
                 let r = cluster.text_range();
+                let r = line.byte(r.start)..line.byte(r.end);
                 if r.start < at || r.end > range.end || r.is_empty() { continue; }
                 // Bytes a cluster skipped (an ignorable) join the character before.
                 if r.start > at && let Some(last) = lengths.last_mut() { *last = (*last as usize + r.start - at).min(255) as u8; }
@@ -151,7 +152,7 @@ impl<S: 'static> Runtime<S> {
     /// walk's shift).
     pub(super) fn a11y_lines(&self, i: usize) -> Option<Vec<Line>> {
         let n = &self.nodes[i];
-        let (spec, layout) = (n.text.as_deref()?, n.text_layout.as_deref()?);
+        let (spec, layout) = (n.text.as_deref()?, n.text_layout.as_ref()?);
         if n.elided.is_some() { return None; }
         let content = self.a11y_drawn_text(i)?;
         if content.len() > RUN_MAX_BYTES { return None; }

@@ -1,9 +1,8 @@
 //! Keys, IME and paste on a [`TextEdit`].
 
-use parley::Layout;
 
 use super::*;
-use crate::text::Ink;
+use crate::text::TextLayout;
 
 impl TextEdit {
     fn insert_newline(&mut self, block_for_new_line: Block, soft: bool) {
@@ -50,7 +49,7 @@ impl TextEdit {
     }
 
     /// Applies one key. `layout` is the field's layout for the current text (device px).
-    pub fn key(&mut self, ev: &KeyEvent, layout: Option<&Layout<Ink>>) -> EditOutcome {
+    pub fn key(&mut self, ev: &KeyEvent, layout: Option<&TextLayout>) -> EditOutcome {
         let mut out = EditOutcome::default();
         if matches!(ev.key, Key::Modifier { .. }) { return out; }
         self.sync_invariants();
@@ -229,7 +228,7 @@ impl TextEdit {
                 let i = if m.cmd || (self.secure && !self.revealed) {
                     if down { n } else { 0 }
                 } else if let Some(l) = layout {
-                    match crate::text::move_line(l, self.display_index(self.focus), down) {
+                    match l.move_line(self.display_index(self.focus), down) {
                         Some(j) => {
                             let j = self.model_index(j);
                             if j == self.focus { if down { n } else { 0 } } else { j }
@@ -298,12 +297,12 @@ impl TextEdit {
         self.record_change(before, false);
     }
 
-    fn line_edge(&self, layout: Option<&Layout<Ink>>, end: bool) -> usize {
+    fn line_edge(&self, layout: Option<&TextLayout>, end: bool) -> usize {
         if self.secure && !self.revealed {
             return if end { self.text.len() } else { 0 };
         }
         if let Some(l) = layout {
-            return self.model_index(crate::text::line_edge(l, self.display_index(self.focus), end));
+            return self.model_index(l.line_edge(self.display_index(self.focus), end));
         }
         if end {
             self.text[self.focus..].find('\n').map_or(self.text.len(), |i| self.focus + i)

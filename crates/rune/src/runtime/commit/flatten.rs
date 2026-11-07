@@ -311,7 +311,7 @@ pub(super) fn flatten_with_buf(
 
 #[allow(clippy::too_many_arguments)]
 fn flatten_owned(
-    el: El,
+    mut el: El,
     parent: Option<usize>,
     path_buf: &mut String,
     index: usize,
@@ -329,6 +329,7 @@ fn flatten_owned(
     {
         return (slot, false);
     }
+    el.sync_input_rich();
     let record_built = parent_sx.is_none().then(|| {
         let built = el.memo_built.as_ref().filter(|b| b.reusable && memo_reuse::same_root_el(&el, b))?;
         let (inherited, hover_within) = memo_reuse::inherited_for(parent, nodes, motion, in_row, scale);
@@ -575,7 +576,10 @@ fn flatten_ref(
         apply_scroll_x_child(style.to_mut(), sx);
     }
     let mut text = el.text.clone();
-    let input = el.input.clone();
+    let mut input = el.input.clone();
+    if let (Some(i), Some(t)) = (&mut input, &mut text) {
+        crate::el::sync_rich(i, t);
+    }
     let (measure, secure_measure) = prepare_text(&mut text, input.as_deref(), scale);
     let inert = el.inert || parent.is_some_and(|p| nodes[p].inert);
     let vis = el.vis.clone();

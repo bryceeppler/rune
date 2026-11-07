@@ -45,24 +45,32 @@ impl TextSystem {
     /// Backgrounds and underlines for `spans` (device px, layout top-left at `origin`). Touching
     /// runs with the same background merge into one rounded rect.
     pub fn decorations(&self, layout: &Layout<Ink>, spans: &[Span], scale: f32, origin: [f32; 2], out: &mut Vec<Deco>) {
-        self.decorations_into(layout, spans, &[], scale, origin, out);
+        self.decorations_into(layout, 0, spans, &[], scale, origin, out);
     }
 
-    /// [`Self::decorations`], plus inset border `rings` (`(start_byte, end_byte, color, width_pt)`).
+    /// [`Self::decorations`] for the layouts of `layout` that meet `band` (its y, device px),
+    /// plus inset border `rings` (`(start_byte, end_byte, color, width_pt)`).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn decorations_with_rings(
         &self,
-        layout: &Layout<Ink>,
+        layout: &TextLayout,
         spans: &[Span],
         rings: &[(u32, u32, Color, f32)],
         scale: f32,
         origin: [f32; 2],
+        band: std::ops::Range<f32>,
         out: &mut Vec<PaintedDeco>,
     ) {
-        self.decorations_into(layout, spans, rings, scale, origin, out);
+        for piece in layout.pieces_in_band(band) {
+            self.decorations_into(piece.layout, piece.start, piece.spans(spans), rings, scale, [origin[0], origin[1] + piece.y], out);
+        }
     }
 
+    /// The decorations of one layout whose text starts at byte `start` of the text `spans`
+    /// and `rings` index.
+    #[allow(clippy::too_many_arguments)]
     fn decorations_into<D: Decoration>(
-        &self, layout: &Layout<Ink>, spans: &[Span], rings: &[(u32, u32, Color, f32)],
+        &self, layout: &Layout<Ink>, start: usize, spans: &[Span], rings: &[(u32, u32, Color, f32)],
         scale: f32, origin: [f32; 2], out: &mut Vec<D>,
     ) {
         if spans.iter().all(|s| s.bg.is_none() && s.underline.is_none()) {
@@ -98,7 +106,7 @@ impl TextSystem {
                     // Touching runs with the same background and ring on one line (a span split by
                     // style, or inline code and its padding spaces in the body font) share one rect,
                     // as tall as its widest run, so a thin run in another font doesn't poke out as a sliver.
-                    let byte = (gr.run().text_range().end as u32).min(s.end).saturating_sub(1);
+                    let byte = ((gr.run().text_range().end + start) as u32).min(s.end).saturating_sub(1);
                     let merge = last_bg.is_some_and(|i: usize| {
                         let (d, old_ring) = out[i].paint();
                         d.color == bg && old_ring == ring
@@ -132,7 +140,7 @@ impl TextSystem {
     /// Strikethrough lines for `strikes` (`(start_byte, end_byte, color)`) in device px.
     pub(crate) fn strike_decorations(
         &self,
-        layout: &Layout<Ink>,
+        layout: &TextLayout,
         spans: &[Span],
         strikes: &[(u32, u32, Option<Color>)],
         default_color: Color,
@@ -155,19 +163,19 @@ impl TextSystem {
                     .and_then(|sp| sp.color)
             });
             let color = span_color.unwrap_or(default_color);
-            for (bb, line_idx) in range_boxes(layout, a, b, false) {
+            for (bb, line_idx) in layout.range_boxes(a, b, false) {
                 let w = (bb.x1 - bb.x0) as f32;
                 if w <= 0.0 {
                     continue;
                 }
-                let Some(line) = layout.get(line_idx) else { continue };
+                let Some(line) = layout.line(line_idx) else { continue };
                 let m = line.metrics();
                 let mut strike_off = m.line_height * 0.25;
                 let mut h = scale.round().max(1.0);
-                for item in line.items() {
+                for item in line.parley().items() {
                     if let PositionedLayoutItem::GlyphRun(gr) = item {
                         let run = gr.run().text_range();
-                        if run.end <= a || b <= run.start {
+                        if line.byte(run.end) <= a || b <= line.byte(run.start) {
                             continue;
                         }
                         let fm = gr.run().font_metrics();
@@ -190,7 +198,7 @@ impl TextSystem {
     /// Rounded background fills and rings for `highlights` in device px.
     pub(crate) fn highlight_decorations(
         &self,
-        layout: &Layout<Ink>,
+        layout: &TextLayout,
         highlights: &[TextHighlight],
         len: usize,
         scale: f32,
@@ -209,23 +217,16 @@ impl TextSystem {
             let pad = h.pad * scale;
             let ring = h.ring.map(|(c, rw)| (c, rw * scale));
             let mut last: Option<(usize, usize)> = None;
-            for (bb, line_idx) in range_boxes(layout, a, b, false) {
+            for (bb, line_idx) in layout.range_boxes(a, b, false) {
                 let w = (bb.x1 - bb.x0) as f32;
                 if w <= 0.0 {
                     continue;
                 }
                 let x0 = origin[0] + bb.x0 as f32;
                 let (mut top, mut bot) = ((origin[1] + bb.y0 as f32).round(), (origin[1] + bb.y1 as f32).round());
-                if let Some(l) = layout.get(line_idx) {
+                if let Some(l) = layout.line(line_idx) {
                     let base = origin[1] + l.metrics().baseline;
-                    let (mut asc, mut desc) = (0.0f32, 0.0f32);
-                    for run in l.runs() {
-                        let r = run.text_range();
-                        if r.start < b && a < r.end {
-                            let fm = run.font_metrics();
-                            (asc, desc) = (asc.max(fm.ascent), desc.max(fm.descent.abs()));
-                        }
-                    }
+                    let (asc, desc) = l.ink_extent(a, b);
                     if asc > 0.0 || desc > 0.0 {
                         top = (base - asc - 1.0 * scale).round();
                         bot = (base + desc + 1.0 * scale).round();

@@ -61,6 +61,7 @@ fn a_pill_label_stays_on_one_line_and_takes_room() {
     });
     assert!(!split, "a label that fits a line never splits across lines");
     let narrow = ts.layout_for_spec(pilled.text.as_ref().unwrap(), 1.0, Some(110.0), Alignment::Start);
+    let narrow = narrow.as_whole().unwrap();
     assert!(narrow.width() <= 110.5, "one wider than the line wraps inside it: {}", narrow.width());
 }
 
