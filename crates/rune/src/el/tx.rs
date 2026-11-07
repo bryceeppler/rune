@@ -107,6 +107,8 @@ pub(crate) struct TraceCalls {
 pub enum Shell {
     /// Close the window as if the user had: `App::keep_running` keeps the app and its state.
     Close,
+    /// Ask to quit as the system's Quit does (`Tx::request_quit`).
+    RequestQuit,
     Quit,
 }
 
@@ -187,7 +189,15 @@ impl Tx {
         self.shell = self.shell.max(Some(Shell::Close));
     }
 
-    /// Quit the app after this handler, whether or not it keeps running without a window.
+    /// Ask to quit after this handler, as macOS Quit and ⌘Q do: every window's
+    /// `App::on_close_request` is asked, and the app quits once all of them proceed, running
+    /// each `App::on_close` first. Bind an app's own Quit command (Ctrl-Q) to this.
+    pub fn request_quit(&mut self) {
+        self.shell = self.shell.max(Some(Shell::RequestQuit));
+    }
+
+    /// Quit the app after this handler, whether or not it keeps running without a window. Asks
+    /// no hook; `Tx::request_quit` asks first.
     pub fn quit(&mut self) {
         self.shell = Some(Shell::Quit);
     }

@@ -136,7 +136,7 @@ impl<S: 'static> Host<S> {
                 self.shell(event_loop);
             }
             WakeEvent::A11y(_) => self.a11y_receive(),
-            WakeEvent::Reopen => {}
+            WakeEvent::Reopen | WakeEvent::Quit(_) | WakeEvent::SessionEnd => {}
         }
     }
 
@@ -198,6 +198,7 @@ impl<S: 'static> Host<S> {
             }
             WindowEvent::CloseRequested => {
                 self.close(event_loop);
+                self.shell(event_loop);
                 return;
             }
             WindowEvent::HoveredFile(path) => { self.files.file(path, false); return; }

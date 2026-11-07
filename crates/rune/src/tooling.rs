@@ -307,6 +307,8 @@ pub(crate) enum Kind {
     Focus(bool),
     /// The app reopened (macOS: its Dock icon clicked).
     Reopen,
+    /// The system asked the app to quit (macOS: Quit from the menu, ⌘Q, the Dock).
+    Quit,
     Menu(String),
     /// Answers the open pop-up menu: an item's id, or `None` to dismiss it.
     PopupMenu(Option<String>),
@@ -418,6 +420,7 @@ impl Ev {
             Kind::Mark(name) => ScriptEvent::Mark(name.clone()),
             Kind::Focus(focused) => ScriptEvent::Focus(*focused),
             Kind::Reopen => ScriptEvent::Reopen,
+            Kind::Quit => ScriptEvent::Quit,
             Kind::Menu(item) => ScriptEvent::Menu(item.clone()),
             Kind::PopupMenu(picked) => ScriptEvent::PopupMenu(picked.clone()),
             Kind::FileDialog(path) => ScriptEvent::FileDialog(path.clone()),
@@ -506,3 +509,6 @@ mod window_tests;
 #[cfg(test)]
 #[path = "tooling/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tooling/close_tests.rs"]
+mod close_tests;

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::app::{Shared, WindowRequest};
 use crate::desktop::Slot;
 use crate::desktop::displays::VirtualDesktop;
+use crate::close_request::{CloseAnswer, CloseKind};
 use crate::el::Shell;
 use crate::render::{Gpu, OFFSCREEN_FORMAT, Renderer};
 use crate::runtime::{Env, Runtime};
@@ -25,6 +26,8 @@ pub(crate) struct Changes {
     pub(super) front: bool,
     /// It takes the keyboard.
     pub(super) keys: bool,
+    /// A handler asked to quit (`Tx::request_quit`).
+    pub(super) quit: bool,
 }
 
 /// One window of a `--desktop` run, whatever its state type.
@@ -63,6 +66,13 @@ pub(crate) trait Member {
     /// Shows it in front with the keyboard, as the default reopen.
     fn reopen(&mut self) -> Changes;
     fn menu(&self, item: &str) -> Result<(), crate::MenuError>;
+    /// Asks `App::on_close_request` whether the app may quit.
+    fn ask_quit(&mut self) -> CloseAnswer;
+    /// The answer to the quit it was asked, once there is one.
+    fn settle_quit(&mut self) -> Option<CloseAnswer>;
+    fn withdraw_quit(&mut self);
+    /// Closes as its close button would, asking nothing: the app is quitting.
+    fn end(&mut self);
     fn popup_open(&self) -> bool;
     fn resolve_popup(&mut self, picked: Option<&str>) -> Result<(), crate::PopupMenuError>;
     fn file_dialog_open(&self) -> bool;
@@ -119,6 +129,7 @@ impl<S: 'static> Window<S> {
         let comp = app.compositor.take();
         let (open, keep_running, on_close, on_focus, on_reopen) = (app.open, app.keep_running, app.on_close, app.on_focus, app.on_reopen);
         let on_ime = app.on_ime;
+        let on_close_request = app.on_close_request;
         let native = std::mem::take(&mut app.macos_window);
         let (modifier_keys, tab_visits_controls, srgb_blend) = (app.modifier_keys, app.tab_visits_controls, app.srgb_blend);
         let font_smoothing = app.font_smoothing;
@@ -133,6 +144,7 @@ impl<S: 'static> Window<S> {
         crate::playground::attach(&mut rt, playground, &spec, own.playground.clone(), own.variant.clone(), false);
         rt.on_focus = on_focus;
         rt.app_ime.hook = on_ime;
+        if let Some(hook) = on_close_request { rt.on_close_request(hook); }
         rt.set_modifier_keys(modifier_keys);
         rt.set_tab_visits_controls(tab_visits_controls);
         if let Some(bars) = own.scroll_bars.or(args.scroll_bars) { rt.set_system_scroll_bars(bars); }
@@ -206,8 +218,16 @@ impl<S: 'static> Window<S> {
         self.set_visible(false);
     }
 
+    /// Whether a close does anything: it shows, or hides for good without `keep_running`.
+    fn closes(&self) -> bool { !self.finished && (self.visible || !self.keep_running) }
+
+    /// Closes once `App::on_close_request` allows it, now or when it answers.
     fn close(&mut self) {
-        if !(self.visible || !self.keep_running) { return; }
+        if self.closes() && self.rt.request_close(CloseKind::Window) == CloseAnswer::Proceed { self.close_now(); }
+    }
+
+    fn close_now(&mut self) {
+        if !self.closes() { return; }
         if let Some(f) = self.on_close { self.rt.update(f); }
         self.hide();
         if !self.keep_running {
@@ -273,6 +293,7 @@ impl<S: 'static> Member for Window<S> {
             self.rt.update_if(f);
             self.menus.drain();
         });
+        if self.rt.settle_close(CloseKind::Window) == Some(CloseAnswer::Proceed) { self.close_now(); }
         if let Some(p) = requests.position { self.move_to(desktop.to_points(p)); }
         if let Some(place) = &requests.place { self.place(desktop, place, t); }
         if let Some(request) = requests.window { self.request(request, &mut changes); }
@@ -293,6 +314,7 @@ impl<S: 'static> Member for Window<S> {
             self.rt.minimize_request = false;
             match self.rt.shell_request.take() {
                 Some(Shell::Close) => self.close(),
+                Some(Shell::RequestQuit) => changes.quit = true,
                 Some(Shell::Quit) | None => {}
             }
             if self.visible {
@@ -364,6 +386,20 @@ impl<S: 'static> Member for Window<S> {
         changes
     }
     fn menu(&self, item: &str) -> Result<(), crate::MenuError> { crate::native_menu::fire(&self.shared, item) }
+
+    fn ask_quit(&mut self) -> CloseAnswer {
+        if self.finished { CloseAnswer::Proceed } else { self.rt.request_close(CloseKind::Quit) }
+    }
+
+    fn settle_quit(&mut self) -> Option<CloseAnswer> { self.rt.settle_close(CloseKind::Quit) }
+    fn withdraw_quit(&mut self) { self.rt.withdraw_close(CloseKind::Quit); }
+
+    fn end(&mut self) {
+        if !self.closes() { return; }
+        if let Some(f) = self.on_close { self.rt.update(f); }
+        self.hide();
+        self.finished = true;
+    }
     fn popup_open(&self) -> bool { self.rt.popup_menu().is_some() }
     fn resolve_popup(&mut self, picked: Option<&str>) -> Result<(), crate::PopupMenuError> { self.rt.resolve_popup(picked) }
     fn file_dialog_open(&self) -> bool { self.rt.file_dialog().is_some() }

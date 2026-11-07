@@ -2,6 +2,7 @@
 //! polling while hidden, closing, hiding, opening and creating.
 
 use super::*;
+use crate::close_request::{CloseAnswer, CloseKind};
 
 impl<S: 'static> Host<S> {
     pub(super) fn window_request(&mut self, event_loop: &ActiveEventLoop, request: WindowRequest) {
@@ -179,10 +180,12 @@ impl<S: 'static> Host<S> {
         self.rt.has_pending_input() || self.rt.drag_ends_pending()
     }
 
-    /// Carries out what a handler or update asked with `Tx::close_window` / `Tx::quit`, then
-    /// opens the pop-up menu it asked for, if the window is still there to open it over.
+    /// Carries out what a handler or update asked with `Tx::close_window` / `Tx::quit`, and a
+    /// close `App::on_close_request` allowed later, then opens the pop-up menu a handler asked
+    /// for, if the window is still there to open it over.
     pub(super) fn shell(&mut self, event_loop: &ActiveEventLoop) {
         self.show_title();
+        if self.rt.settle_close(CloseKind::Window) == Some(CloseAnswer::Proceed) { self.close_now(event_loop); }
         for _ in 0..8 {
             let minimize = std::mem::take(&mut self.rt.minimize_request);
             match self.rt.shell_request.take() {
@@ -191,6 +194,7 @@ impl<S: 'static> Host<S> {
                     self.file_dialog.cancel(&mut self.rt);
                     event_loop.exit();
                 }
+                Some(Shell::RequestQuit) => super::quitting::request(),
                 Some(Shell::Close) => self.close(event_loop),
                 None if minimize => self.minimize(),
                 None => {}
@@ -216,7 +220,18 @@ impl<S: 'static> Host<S> {
         }
     }
 
+    /// Closes the window once `App::on_close_request` allows it, now or when it answers.
     pub(super) fn close(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.closes() { self.close_now(event_loop); return; }
+        match self.rt.request_close(CloseKind::Window) {
+            CloseAnswer::Proceed => self.close_now(event_loop),
+            CloseAnswer::Pending | CloseAnswer::Cancel => if let Some(w) = self.win.as_ref().filter(|w| w.visible && self.rt.stale()) {
+                w.window.request_redraw();
+            },
+        }
+    }
+
+    pub(super) fn close_now(&mut self, event_loop: &ActiveEventLoop) {
         self.rt.minimize_request = false;
         if let Some(w) = &mut self.win {
             w.first_frame.hide();
