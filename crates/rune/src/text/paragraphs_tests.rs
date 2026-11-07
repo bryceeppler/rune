@@ -196,6 +196,49 @@ fn an_edit_reshapes_only_the_paragraphs_it_touches() {
     assert_eq!(lay(&mut ts, &n.text), 0, "undo");
 }
 
+/// Each version of a note built from the one before (typing, Return, a join, a span appearing
+/// in another paragraph, a block changing) lays out as the same note built fresh.
+#[test]
+fn a_stack_built_from_the_last_lays_out_as_one_built_fresh() {
+    let n = note(10, true);
+    let mut ts = TextSystem::default();
+    let at = n.text.find("task 6").unwrap();
+    let shift = |spans: &[Span], from: usize, by: isize| -> Vec<Span> {
+        spans.iter().map(|s| {
+            let m = |v: u32| if v as usize >= from { (v as isize + by) as u32 } else { v };
+            Span { start: m(s.start), end: m(s.end), ..s.clone() }
+        }).collect()
+    };
+    let mut versions = vec![(n.text.clone(), n.spans.clone(), n.blocks.clone())];
+    versions.push((format!("{}x{}", &n.text[..at], &n.text[at..]), shift(&n.spans, at, 1), n.blocks.clone()));
+    let (t, sp, _) = versions.last().unwrap().clone();
+    let mut blocks = n.blocks.clone();
+    blocks.insert(n.text[..at].matches('\n').count() + 1, Block::Paragraph);
+    versions.push((format!("{}\n{}", &t[..at], &t[at..]), shift(&sp, at, 1), blocks.clone()));
+    let mut underlined = versions.last().unwrap().1.clone();
+    let word = versions.last().unwrap().0.find("quote 2").unwrap();
+    underlined.push(Span::new(word, word + 5).underline(Color::WHITE));
+    versions.push((versions.last().unwrap().0.clone(), flatten_spans(&underlined), blocks.clone()));
+    let mut coded = blocks.clone();
+    coded[3] = Block::Code;
+    versions.push((versions.last().unwrap().0.clone(), versions.last().unwrap().1.clone(), coded));
+    for (text, spans, blocks) in versions {
+        let pills: Vec<PillChip> = Vec::new();
+        let built = ts.layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        ts.end_commit();
+        let fresh = TextSystem::default().layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        assert_eq!(built.len(), fresh.len());
+        for (a, b) in built.pieces().zip(fresh.pieces()) {
+            assert_eq!((a.start, a.y.to_bits(), a.lines), (b.start, b.y.to_bits(), b.lines));
+            for j in 0..a.lines {
+                let (la, lb) = (a.layout.get(j).unwrap(), b.layout.get(j).unwrap());
+                assert_eq!(*la.metrics(), *lb.metrics());
+                assert_eq!(runs(&la, a.y, |k| a.ink(k)), runs(&lb, b.y, |k| b.ink(k)), "paragraph at {}", a.start);
+            }
+        }
+    }
+}
+
 /// A stack keeps its paragraphs cached across commits that don't use it, however many other
 /// texts come and go, so the next keystroke after a pause reshapes one paragraph.
 #[test]

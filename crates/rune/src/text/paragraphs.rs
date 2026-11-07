@@ -33,9 +33,82 @@ enum Laid {
 #[derive(Default)]
 pub(crate) struct Stacks {
     pub(super) cache: Cache<Rc<Stack>>,
+    /// The stack built last, and what from: the next edit of its text builds from it.
+    last: Option<Source>,
     /// One paragraph's spans and pills while a stack is built.
     spans: Vec<Span>,
     pills: Vec<PillChip>,
+}
+
+/// What a stack was laid out from.
+struct Source {
+    stack: Rc<Stack>,
+    text: Box<str>,
+    spans: Box<[Span]>,
+    pills: Box<[PillChip]>,
+    blocks: Box<[crate::edit::Block]>,
+    style: TextStyle,
+    scale: f32,
+    max_width: Option<f32>,
+    align: Alignment,
+    wrap_anywhere: bool,
+}
+
+/// One paragraph of a text being stacked: its bytes, index, spans, pills and block.
+struct Draft<'a> {
+    start: usize,
+    end: usize,
+    spans: &'a [Span],
+    pills: &'a [PillChip],
+    block: Option<&'a crate::edit::Block>,
+}
+
+impl Source {
+    /// The paragraph of this earlier text whose layout `p` of `text` would get, sharing
+    /// `prefix` bytes from the start and `suffix` from the end with it: the same bytes, the same
+    /// block and the same spans and pills where they lie in it, as its layout's key covers.
+    /// `at` is where the last one was found, the place to look first.
+    fn same(&self, text: &str, prefix: usize, suffix: usize, p: &Draft<'_>, at: &mut usize) -> Option<&Para> {
+        let old_start = if p.end <= prefix {
+            p.start
+        } else if p.start >= text.len() - suffix {
+            p.start + self.text.len() - text.len()
+        } else {
+            return None;
+        };
+        let paras = &self.stack.paras;
+        if paras.get(*at).is_none_or(|q| q.start != old_start) {
+            *at = paras.partition_point(|q| q.start < old_start);
+        }
+        let i = *at;
+        let q = paras.get(i).filter(|q| q.start == old_start && q.len == p.end - p.start)?;
+        *at += 1;
+        let local = |s: &Span, start: usize, len: usize| {
+            ((s.start as usize).max(start) - start, ((s.end as usize).min(start + len)) - start, s.mono, s.weight.map(f32::to_bits), s.size.map(f32::to_bits), s.italic)
+        };
+        let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.icon.is_some());
+        let (spans, pills) = (&self.spans[q.spans.clone()], &self.pills[q.pills.clone()]);
+        (self.blocks.get(i) == p.block
+            && spans.len() == p.spans.len()
+            && spans.iter().zip(p.spans).all(|(a, b)| local(a, q.start, q.len) == local(b, p.start, q.len))
+            && pills.len() == p.pills.len()
+            && pills.iter().zip(p.pills).all(|(a, b)| pill(a, q.start) == pill(b, p.start)))
+            .then_some(q)
+    }
+}
+
+/// How many bytes `a` and `b` share from the start, and then from the end.
+fn shared(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let n = a.len().min(b.len());
+    let mut prefix = 0;
+    while prefix + 64 <= n && a[prefix..prefix + 64] == b[prefix..prefix + 64] { prefix += 64; }
+    while prefix < n && a[prefix] == b[prefix] { prefix += 1; }
+    let (a, b) = (&a[prefix..], &b[prefix..]);
+    let n = a.len().min(b.len());
+    let mut suffix = 0;
+    while suffix + 64 <= n && a[a.len() - suffix - 64..a.len() - suffix] == b[b.len() - suffix - 64..b.len() - suffix] { suffix += 64; }
+    while suffix < n && a[a.len() - suffix - 1] == b[b.len() - suffix - 1] { suffix += 1; }
+    (prefix, suffix)
 }
 
 pub(crate) struct Stack {
@@ -56,6 +129,9 @@ struct Para {
     y: f32,
     line: usize,
     lines: usize,
+    /// Its lines' heights summed, as Parley sums them.
+    height: f64,
+    plain: bool,
     spans: Range<usize>,
     pills: Range<usize>,
 }
@@ -402,6 +478,14 @@ impl TextSystem {
         let stack = Rc::new(self.stack(text, spans, blocks, pills, style, scale, max_width, align, wrap_anywhere));
         let cost = stack.paras.len() * size_of::<Para>();
         self.stacks.cache.insert(key, Entry::with_cost(stack.clone(), g, cost, shape));
+        self.stacks.last = Some(Source {
+            stack: stack.clone(),
+            text: text.into(),
+            spans: spans.into(),
+            pills: pills.into(),
+            blocks: blocks.into(),
+            style, scale, max_width, align, wrap_anywhere,
+        });
         TextLayout(Laid::Stacked(stack))
     }
 
@@ -419,32 +503,48 @@ impl TextSystem {
         wrap_anywhere: bool,
     ) -> Stack {
         let (mut local_spans, mut local_pills) = (std::mem::take(&mut self.stacks.spans), std::mem::take(&mut self.stacks.pills));
-        let mut paras = Vec::with_capacity(text.len() / 32 + 1);
+        let last = self.stacks.last.take().filter(|l| {
+            (l.style, l.scale, l.max_width, l.align, l.wrap_anywhere) == (style, scale, max_width, align, wrap_anywhere)
+        });
+        let (prefix, suffix) = last.as_ref().map_or((0, 0), |l| shared(l.text.as_bytes(), text.as_bytes()));
+        let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |l| l.stack.paras.len() + 1));
+        let mut at = 0;
         let (mut y, mut lines, mut full_width, mut width, mut all_plain) = (0f64, 0usize, 0f32, 0f32, true);
         let (mut s, mut q, mut start) = (0usize, 0usize, 0usize);
         for (k, piece) in text.split_inclusive('\n').enumerate() {
             let end = start + piece.len();
             while s < spans.len() && (spans[s].end as usize) <= start { s += 1; }
             let s1 = s + spans[s..].iter().take_while(|sp| (sp.start as usize) < end).count();
-            local_spans.clear();
-            local_spans.extend(spans[s..s1].iter().map(|sp| Span {
-                start: (sp.start as usize).max(start) as u32 - start as u32,
-                end: (sp.end as usize).min(end) as u32 - start as u32,
-                ..sp.clone()
-            }));
             while q < pills.len() && (pills[q].start as usize) < start { q += 1; }
             let q1 = q + pills[q..].iter().take_while(|p| (p.start as usize) < end).count();
-            local_pills.clear();
-            local_pills.extend(pills[q..q1].iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
-            let block = blocks.get(k..k + 1).unwrap_or(&[]);
-            let layout = self.layout_keyed(None, piece, &local_spans, block, &local_pills, style, scale, max_width, align, wrap_anywhere, true);
+            let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], block: blocks.get(k) };
+            let old = last.as_ref().and_then(|l| l.same(text, prefix, suffix, &draft, &mut at));
+            let layout = match old {
+                Some(old) => old.layout.clone(),
+                None => {
+                    local_spans.clear();
+                    local_spans.extend(draft.spans.iter().map(|sp| Span {
+                        start: (sp.start as usize).max(start) as u32 - start as u32,
+                        end: (sp.end as usize).min(end) as u32 - start as u32,
+                        ..sp.clone()
+                    }));
+                    local_pills.clear();
+                    local_pills.extend(draft.pills.iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
+                    let block = blocks.get(k..k + 1).unwrap_or(&[]);
+                    self.layout_keyed(None, piece, &local_spans, block, &local_pills, style, scale, max_width, align, wrap_anywhere, true)
+                }
+            };
             let shown = if end == text.len() { layout.len() } else { layout.len().saturating_sub(1) };
+            let (height, is_plain) = match old.filter(|o| o.lines == shown) {
+                Some(o) => (o.height, o.plain),
+                None => (layout.lines().take(shown).map(|l| l.metrics().line_height as f64).sum::<f64>(), plain(&layout)),
+            };
             let top = y.round() as f32;
-            y += layout.lines().take(shown).map(|l| l.metrics().line_height as f64).sum::<f64>();
+            y += height;
             full_width = full_width.max(layout.full_width());
             width = width.max(layout.width());
-            all_plain &= plain(&layout);
-            paras.push(Para { layout, start, len: piece.len(), y: top, line: lines, lines: shown, spans: s..s1, pills: q..q1 });
+            all_plain &= is_plain;
+            paras.push(Para { layout, start, len: piece.len(), y: top, line: lines, lines: shown, height, plain: is_plain, spans: s..s1, pills: q..q1 });
             lines += shown;
             (q, start) = (q1, end);
         }
