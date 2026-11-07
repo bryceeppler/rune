@@ -238,12 +238,21 @@ impl<S: 'static> Runtime<S> {
             let mut pill_icons = Vec::new();
             let pill_bg = spec.pill_colors.map_or(spec.rich_style.link.alpha(0.2), |(bg, _)| bg);
             let d_origin = if scale_motion == ScaleMotion::Still && tk == 1.0 { rest_origin } else { [0.0, 0.0] };
-            crate::text::pill_chips(layout, &spec.pills, spec.style.size, s, d_origin, pill_bg, &mut self.deco_scratch, &mut pill_icons);
+            // Only the lines the clip shows, with two ems either side for ink past the line box;
+            // the clip still decides what draws.
+            let band = if tk > 1e-4 {
+                let em = spec.spans.iter().filter_map(|sp| sp.size).fold(spec.style.size.max(spec.style.line_px()), f32::max);
+                let pad = 2.0 * em * s + 2.0 / raster.max(1e-4);
+                (clip[1] - rest_origin[1]) / tk - pad..(clip[3] - rest_origin[1]) / tk + pad
+            } else {
+                f32::NEG_INFINITY..f32::INFINITY
+            };
+            crate::text::pill_chips(layout, &spec.pills, spec.style.size, s, d_origin, band.clone(), pill_bg, &mut self.deco_scratch, &mut pill_icons);
             // Elided text draws its decorations over the drawn string's offsets.
             let drawn_spans = n.elided.map(|e| e.spans(&spec.spans));
             let spans = drawn_spans.as_deref().unwrap_or(&spec.spans);
             let drawn_rings = n.elided.map(|e| e.rings(&spec.rings));
-            self.text.decorations_with_rings(layout, spans, drawn_rings.as_deref().unwrap_or(&spec.rings), s, d_origin, &mut self.deco_scratch);
+            self.text.decorations_with_rings(layout, spans, drawn_rings.as_deref().unwrap_or(&spec.rings), s, d_origin, band.clone(), &mut self.deco_scratch);
             let drawn_len = n.elided.map_or(spec.content.len(), |e| e.drawn_len(spec.content.len()));
             if !spec.highlights.is_empty() {
                 let drawn = n.elided.map(|e| e.highlights(&spec.highlights));
@@ -319,15 +328,6 @@ impl<S: 'static> Runtime<S> {
                 self.text.glyphs_in(r, *at, s, [r_origin[0] - x, r_origin[1]], &mut self.glyph_scratch);
                 tk
             } else {
-                // Only the lines the clip shows, with two ems either side for ink past
-                // the line box; the per-glyph test below still decides what draws.
-                let band = if tk > 1e-4 {
-                    let em = spec.spans.iter().filter_map(|sp| sp.size).fold(spec.style.size.max(spec.style.line_px()), f32::max);
-                    let pad = 2.0 * em * s + 2.0 / raster.max(1e-4);
-                    (clip[1] - origin[1]) / tk - pad..(clip[3] - origin[1]) / tk + pad
-                } else {
-                    f32::NEG_INFINITY..f32::INFINITY
-                };
                 let bytes = reveal.is_some() || !link_fx.is_empty() || has_hl_fg;
                 // A secret's glyphs aren't kept past the frame that draws them.
                 let cached = !spec.redacted && !n.input.as_ref().is_some_and(|i| i.edit.is_secure());

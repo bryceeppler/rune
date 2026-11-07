@@ -48,8 +48,9 @@ impl TextSystem {
         self.decorations_into(layout, 0, spans, &[], scale, origin, out);
     }
 
-    /// [`Self::decorations`] for each of `layout`'s layouts, plus inset border `rings`
-    /// (`(start_byte, end_byte, color, width_pt)`).
+    /// [`Self::decorations`] for the layouts of `layout` that meet `band` (its y, device px),
+    /// plus inset border `rings` (`(start_byte, end_byte, color, width_pt)`).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn decorations_with_rings(
         &self,
         layout: &TextLayout,
@@ -57,9 +58,10 @@ impl TextSystem {
         rings: &[(u32, u32, Color, f32)],
         scale: f32,
         origin: [f32; 2],
+        band: std::ops::Range<f32>,
         out: &mut Vec<PaintedDeco>,
     ) {
-        for piece in layout.pieces() {
+        for piece in layout.pieces_in_band(band) {
             self.decorations_into(piece.layout, piece.start, piece.spans(spans), rings, scale, [origin[0], origin[1] + piece.y], out);
         }
     }

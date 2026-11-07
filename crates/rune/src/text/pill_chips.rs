@@ -1,9 +1,10 @@
 //! The chips drawn behind pill labels in a laid-out paragraph.
 use super::*;
 
-/// The chip behind each pill in `layout` (device px, at `origin`), and each leading icon with
-/// its size in px and top-left corner. A pill whose label wraps draws one chip per line, the
-/// first to its line's end and the rest from the line's start.
+/// The chip behind each pill in the layouts of `layout` that meet `band` (its y, device px),
+/// at `origin`, and each leading icon with its size in px and top-left corner. A pill whose
+/// label wraps draws one chip per line, the first to its line's end and the rest from the
+/// line's start.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pill_chips(
     layout: &TextLayout,
@@ -11,11 +12,12 @@ pub(crate) fn pill_chips(
     size: f32,
     scale: f32,
     origin: [f32; 2],
+    band: std::ops::Range<f32>,
     bg: Color,
     out: &mut Vec<PaintedDeco>,
     icons: &mut Vec<(&'static Icon, u32, [f32; 2], Option<Color>)>,
 ) {
-    for piece in layout.pieces() {
+    for piece in layout.pieces_in_band(band) {
         let pills = piece.pills(pills);
         if !pills.is_empty() {
             chips(piece.layout, piece.start, pills, size, scale, [origin[0], origin[1] + piece.y], bg, out, icons);
