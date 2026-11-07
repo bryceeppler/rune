@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn window_blur_cancels_preedit_without_losing_committed_text_or_focus() {
+    fn window_blur_commits_the_preedit_and_keeps_focus() {
         fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
             crate::text_input(s, crate::TextStyle::new(14.0, 400.0)).key("field").size(200.0, 40.0)
                 .on_edit(|s: &mut crate::TextEdit| s)
@@ -566,7 +566,7 @@ mod tests {
         rt.ime_reset = false;
         rt.cancel_composition(); rt.frame(0.0);
         assert!(rt.state.preedit.is_none() && rt.state.focused && rt.ime_reset);
-        assert_eq!(rt.state.text, "committed");
+        assert_eq!(rt.state.text, "committedpending");
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn input_handover_cancels_composition_and_keys_bubble_after_the_field() {
+    fn input_handover_commits_the_composition_and_keys_bubble_after_the_field() {
         use crate::{text_input, TextEdit, TextStyle};
         struct Form { first: TextEdit, search: TextEdit, open: bool, app_keys: usize }
         fn view(s: &Form, _: &mut Cx<Form>) -> El {
@@ -628,7 +628,7 @@ mod tests {
         assert!(!rt.keyboard_focus);
         rt.key(KeyEvent { key: Key::Text("query".into()), mods: Mods::default() }); rt.frame(0.0);
         assert_eq!(rt.state.search.text, "query");
-        assert_eq!(rt.state.first.text, "hello");
+        assert_eq!(rt.state.first.text, "hellopending");
         assert_eq!(rt.state.app_keys, 0);
         rt.key(KeyEvent { key: Key::Function(5), mods: Mods::default() }); rt.frame(0.0);
         assert_eq!(rt.state.app_keys, 1);
@@ -637,6 +637,7 @@ mod tests {
         assert!(rt.focused.is_none());
         assert!(!rt.state.search.focused);
         assert!(rt.state.search.preedit.is_none());
+        assert_eq!(rt.state.search.text, "querypending");
     }
 
     #[test]
