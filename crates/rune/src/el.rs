@@ -41,6 +41,7 @@ mod ride_trailing;
 mod scroll;
 mod sticky;
 mod text;
+pub(crate) use text::sync_rich;
 mod text_spec;
 mod tx;
 pub(crate) mod virtual_list;
@@ -187,6 +188,9 @@ pub struct InputSpec {
     pub(crate) rich_style: crate::edit::RichStyle,
     pub(crate) pill_icon: Option<PillIconFn>,
     pub(crate) pill_style: Option<PillStyleFn>,
+    /// The text's spans, strikes, blocks and links lag the edit and styles set since the field
+    /// was built; flattening rebuilds them once ([`El::sync_input_rich`]).
+    pub(crate) rich_stale: bool,
     pub(crate) access: Option<EditFn>,
     pub(crate) submit: Option<PressFn>,
     pub(crate) key: Option<InputKeyFn>,
@@ -696,6 +700,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         rich_style: crate::edit::RichStyle::default(),
         pill_icon: None,
         pill_style: None,
+        rich_stale: true,
         access: None,
         submit: None,
         key: None,
@@ -703,7 +708,6 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         paste: None,
     }));
     e.sync_input_pills();
-    e.sync_input_rich();
     e
 }
 
@@ -778,7 +782,7 @@ impl El {
                 }
             }
             self.sync_input_pills();
-            self.sync_input_rich();
+            self.stale_rich();
         } else if let Some(text) = &mut self.text {
             text.redacted = true;
             if text.selectable {
@@ -803,7 +807,7 @@ impl El {
                 text.replace_content(input.edit.display().0);
             }
             self.sync_input_pills();
-            self.sync_input_rich();
+            self.stale_rich();
         } else if let Some(text) = &mut self.text {
             text.secure_revealed = revealed;
         }
@@ -1201,9 +1205,7 @@ impl El {
         if let Some(cold) = self.vis.cold.get_mut_if_some() && let Some((_, ic)) = &mut cold.icon {
             *ic = c;
         }
-        if self.input.is_some() {
-            self.sync_input_rich();
-        }
+        self.stale_rich();
         self
     }
     pub fn align(mut self, a: Align) -> Self {

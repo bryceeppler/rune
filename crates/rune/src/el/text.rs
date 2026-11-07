@@ -9,7 +9,7 @@ impl El {
             t.style = s;
         }
         if self.input.is_some() {
-            self.sync_input_rich();
+            self.stale_rich();
         }
         self
     }
@@ -21,7 +21,7 @@ impl El {
         let spans = spans.into();
         if let Some(inp) = &mut self.input {
             inp.decorations = spans;
-            self.sync_input_rich();
+            self.stale_rich();
         } else if let Some(t) = &mut self.text {
             t.spans = crate::el::pills::with_pill_colors(&spans, &t.pills);
         }
@@ -89,7 +89,7 @@ impl El {
     pub fn rich_style(mut self, style: crate::edit::RichStyle) -> Self {
         if let Some(inp) = &mut self.input {
             inp.rich_style = style;
-            self.sync_input_rich();
+            self.stale_rich();
         } else if let Some(t) = &mut self.text {
             t.rich_style = style;
         }
@@ -103,7 +103,7 @@ impl El {
             t.pill_colors = Some((bg, fg));
         }
         if self.input.is_some() {
-            self.sync_input_rich();
+            self.stale_rich();
         }
         self
     }
@@ -120,7 +120,7 @@ impl El {
         if let Some(inp) = &mut self.input {
             inp.pill_icon = Some(Rc::new(icon));
             self.sync_input_pills();
-            self.sync_input_rich();
+            self.stale_rich();
         }
         self
     }
@@ -140,7 +140,7 @@ impl El {
         if let Some(inp) = &mut self.input {
             inp.pill_style = Some(Rc::new(style));
             self.sync_input_pills();
-            self.sync_input_rich();
+            self.stale_rich();
         }
         self
     }
@@ -161,44 +161,19 @@ impl El {
             })
             .collect();
     }
+    /// Marks a field's rich specs to rebuild when it flattens, after every builder has run.
+    pub(crate) fn stale_rich(&mut self) {
+        if let Some(inp) = &mut self.input {
+            inp.rich_stale = true;
+        }
+    }
+
+    /// Rebuilds a field's spans, strikes, blocks and links from its edit, if a builder changed
+    /// what they come from since the last time.
     pub(crate) fn sync_input_rich(&mut self) {
-        let (Some(inp), Some(t)) = (&self.input, &mut self.text) else { return };
-        t.rich_style = inp.rich_style;
-        if inp.edit.is_plain() && inp.decorations.is_empty() {
-            // A plain field lays out and draws exactly as before rich editing existed.
-            t.spans.clear();
-            t.strikes.clear();
-            t.blocks.clear();
-            t.soft_breaks.clear();
-            t.pills.clear();
-            return;
+        if let (Some(inp), Some(t)) = (&mut self.input, &mut self.text) {
+            sync_rich(inp, t);
         }
-        let (mut base_spans, strikes, rich_links, blocks) =
-            inp.edit.rich_display_specs(t.style, inp.rich_style);
-        for d in &inp.decorations {
-            for (ds, de) in inp.edit.map_range_to_display(d.start as usize, d.end as usize) {
-                let mut sp = d.clone();
-                sp.start = ds;
-                sp.end = de;
-                base_spans.push(sp);
-            }
-        }
-        let pill_fg = t.pill_colors.and_then(|(_, fg)| fg);
-        base_spans.extend(t.pills.iter().filter_map(|p| {
-            Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
-        }));
-        let mut flat = crate::text::flatten_spans(&base_spans);
-        for s in &mut flat {
-            if s.underline == Some(Color::TRANSPARENT) {
-                s.underline = Some(s.color.unwrap_or(t.color));
-            }
-        }
-        t.spans = flat;
-        t.strikes = strikes;
-        t.blocks = blocks;
-        t.soft_breaks = inp.edit.soft_breaks.clone();
-        // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
-        t.links = rich_links;
     }
     /// Wrap text at the element's width.
     pub fn wrap(mut self) -> Self {
@@ -478,4 +453,48 @@ impl El {
         if let Some(i) = &mut self.input { i.animate_layout = true; }
         self
     }
+}
+
+
+/// [`El::sync_input_rich`] for a field's spec and text.
+pub(crate) fn sync_rich(inp: &mut crate::el::InputSpec, t: &mut TextSpec) {
+    if !std::mem::take(&mut inp.rich_stale) {
+        return;
+    }
+    t.rich_style = inp.rich_style;
+    if inp.edit.is_plain() && inp.decorations.is_empty() {
+        // A plain field lays out and draws exactly as before rich editing existed.
+        t.spans.clear();
+        t.strikes.clear();
+        t.blocks.clear();
+        t.soft_breaks.clear();
+        t.pills.clear();
+        return;
+    }
+    let (mut base_spans, strikes, rich_links, blocks) =
+        inp.edit.rich_display_specs(t.style, inp.rich_style);
+    for d in &inp.decorations {
+        for (ds, de) in inp.edit.map_range_to_display(d.start as usize, d.end as usize) {
+            let mut sp = d.clone();
+            sp.start = ds;
+            sp.end = de;
+            base_spans.push(sp);
+        }
+    }
+    let pill_fg = t.pill_colors.and_then(|(_, fg)| fg);
+    base_spans.extend(t.pills.iter().filter_map(|p| {
+        Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
+    }));
+    let mut flat = crate::text::flatten_spans(&base_spans);
+    for s in &mut flat {
+        if s.underline == Some(Color::TRANSPARENT) {
+            s.underline = Some(s.color.unwrap_or(t.color));
+        }
+    }
+    t.spans = flat;
+    t.strikes = strikes;
+    t.blocks = blocks;
+    t.soft_breaks = inp.edit.soft_breaks.clone();
+    // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
+    t.links = rich_links;
 }
