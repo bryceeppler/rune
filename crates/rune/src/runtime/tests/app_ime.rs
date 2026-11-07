@@ -79,6 +79,22 @@ fn a_focused_field_takes_the_input_method_but_the_apps_composition_ends_in_the_a
 }
 
 #[test]
+fn the_apps_composition_commits_in_the_app_when_a_field_takes_the_input_method() {
+    let mut rt = editor();
+    rt.ime(Ime::Preedit("か".into(), None));
+    rt.frame(0.0);
+    rt.update(|s, _| s.field.focused = true);
+    rt.frame(0.0);
+    assert!(rt.ime_reset, "the platform input method resets");
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("家".into()));
+    rt.ime(Ime::Disabled);
+    rt.frame(0.0);
+    assert_eq!(rt.state.log, ["Preedit(\"か\", None)", "Preedit(\"\", None)", "Commit(\"家\")", "Disabled"]);
+    assert_eq!(rt.state.field.text, "", "the field hears nothing of the app's composition");
+}
+
+#[test]
 fn without_on_ime_an_ime_cursor_hears_nothing() {
     let mut rt = editor();
     rt.app_ime.hook = None;

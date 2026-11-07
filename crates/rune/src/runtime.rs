@@ -640,7 +640,7 @@ pub struct Runtime<S: 'static> {
     held_mods: crate::Mods,
     /// `El::help` tooltips.
     help: help::HelpState,
-    /// The shell cancels native composition before enabling the new text focus.
+    /// The shell ends the platform input method's composition before serving the new text focus.
     pub(crate) ime_reset: bool,
     /// Text the focused field asked to copy (the shell writes it to the clipboard).
     pub copy_request: Option<crate::ClipboardWrite>,

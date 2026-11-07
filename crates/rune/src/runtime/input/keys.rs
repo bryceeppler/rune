@@ -174,13 +174,19 @@ impl<S: 'static> Runtime<S> {
     /// [`Self::with_focused`] for an edit that needs the app state (an app's paste hook).
     pub(super) fn with_focused_state(&mut self, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
         let Some(path) = self.focused.clone() else { return false };
+        self.with_input_state(path, f, tx)
+    }
+
+    /// [`Self::with_focused_state`] for the field at `path`, which may have lost focus.
+    pub(super) fn with_input_state(&mut self, path: String, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
+        let focused = self.focused.as_deref() == Some(path.as_str());
         let Some((access, submit, change, animate_layout, single_line, secure, revealed_override)) =
-            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override))
+            self.input_at(&path).map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override))
         else {
             return false;
         };
         let Some(access) = access else { return false };
-        self.input_click.clear_last();
+        if focused { self.input_click.clear_last(); }
         {
             let edit = access(states!(self));
             edit.set_single_line(single_line);
@@ -193,7 +199,7 @@ impl<S: 'static> Runtime<S> {
         if tx.key_repeat { out.submit = false; out.blur = false; }
         // Typing is the user's own hand: no animation.
         tx.instant = !animate_layout;
-        self.caret_follow = true;
+        self.caret_follow |= focused;
         if let Some(change) = change
             && before.as_ref().map(|s| s.as_str()) != Some(access(states!(self)).text.as_str())
         {
@@ -245,7 +251,11 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(super) fn focused_input(&self) -> Option<&InputSpec> {
-        let path = self.focused.as_deref()?;
+        self.input_at(self.focused.as_deref()?)
+    }
+
+    /// The text field at `path`: mounted, or kept while focused in a virtual row that scrolled out.
+    fn input_at(&self, path: &str) -> Option<&InputSpec> {
         self.node(path).and_then(|n| n.input.as_deref()).or_else(|| self.virtual_inputs.get(path).map(Box::as_ref))
     }
 
@@ -284,12 +294,6 @@ impl<S: 'static> Runtime<S> {
 
     pub fn ime(&mut self, ev: Ime) {
         self.queue.push(Action::Ime(ev));
-    }
-
-    /// End native composition on window deactivation without discarding text or field focus.
-    pub fn cancel_composition(&mut self) {
-        self.ime(Ime::Preedit(String::new(), None));
-        self.ime_reset = true;
     }
 
     pub fn paste(&mut self, text: impl Into<String>) {
