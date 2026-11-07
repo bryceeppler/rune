@@ -62,20 +62,22 @@ fn the_app_hears_the_composition_and_typing_arrives_once() {
 }
 
 #[test]
-fn a_focused_field_takes_the_input_method_but_the_apps_composition_ends_in_the_app() {
+fn a_field_taking_the_input_method_commits_the_apps_composition_in_the_app() {
     let mut rt = editor();
     rt.ime(Ime::Preedit("か".into(), None));
     rt.frame(0.0);
     rt.update(|s, _| s.field.focused = true);
     rt.frame(0.0);
-    // Turning the input method over to the field ends the app's composition.
-    rt.ime(Ime::Preedit(String::new(), None));
-    rt.ime(Ime::Disabled);
-    rt.ime(Ime::Preedit("ね".into(), None));
-    rt.ime(Ime::Commit("猫".into()));
+    assert!(rt.ime_reset, "the platform input method resets");
+    assert_eq!(rt.state.log, ["Preedit(\"か\", None)", "Commit(\"か\")"], "the app commits what it showed");
+    // The platform's own answer for it reaches no one; the field's next composition is its own.
+    for ev in [Ime::Preedit(String::new(), None), Ime::Commit("家".into()), Ime::Disabled,
+        Ime::Preedit("ね".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("猫".into())] {
+        rt.ime(ev);
+    }
     rt.frame(0.0);
-    assert_eq!(rt.state.log, ["Preedit(\"か\", None)", "Preedit(\"\", None)", "Disabled"]);
-    assert_eq!(rt.state.field.text, "猫", "the field's own composition stays the field's");
+    assert_eq!(rt.state.log, ["Preedit(\"か\", None)", "Commit(\"か\")", "Disabled"]);
+    assert_eq!(rt.state.field.text, "猫");
 }
 
 #[test]

@@ -4,9 +4,10 @@
 //! key equivalent whose item is disabled (no responder implements its action), so without
 //! these methods ⌘C would never reach Rune's own text editing. Main thread only.
 use super::{default_macos, standard::{self, KeyDown, Standard, ITEMS}};
+use crate::platform::ime::commit_composition;
 use crate::runtime::Unhandled;
 use std::{cell::Cell, ffi::{c_char, c_void}, sync::Arc};
-use objc2::{ClassType, msg_send, rc::Retained, runtime::{AnyClass, AnyObject, Bool, Sel}};
+use objc2::{ClassType, rc::Retained, runtime::{AnyClass, AnyObject, Bool, Sel}};
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSPanel, NSView, NSWindow, NSWindowButton};
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSProcessInfo, NSString};
 
@@ -108,30 +109,14 @@ unsafe fn perform(view: &NSView, item: &Standard) {
         let route = standard::route(item, button, current.as_deref().map(key_down).as_ref());
         // winit hands the press to the host synchronously, which takes this; clear it anyway.
         UNHANDLED.with(|u| u.set(then.filter(|_| route.then_button).map(|then| (Some(item.key), then))));
+        // The composition commits into its field before the command, and the key then reaches
+        // Rune instead of the input method, which would swallow it as part of the composition.
         commit_composition(view);
         match current.filter(|_| route.current) {
             Some(event) => view.keyDown(&event),
             None => press(view, item, window.as_deref()),
         }
         UNHANDLED.with(|u| u.set(None));
-    }
-}
-
-/// An IME composition (or a dead key's accent) in the view ends before the command, as in an
-/// NSTextView: the input method commits it, so the text lands in the field first; one that
-/// doesn't is dropped. Then the key reaches Rune instead of the input method, which would
-/// otherwise swallow it as part of the composition.
-unsafe fn commit_composition(view: &NSView) {
-    // SAFETY: main thread; the view is a live WinitView, which implements NSTextInputClient.
-    unsafe {
-        let marked: bool = msg_send![view, hasMarkedText];
-        if !marked { return; }
-        // The input method answers with `insertText:`, which winit reports as `Ime::Commit`.
-        let context: *mut AnyObject = msg_send![view, inputContext];
-        if let Some(context) = context.as_ref() { let _: () = msg_send![context, discardMarkedText]; }
-        // Back to winit's ground state whether or not it committed: right after a commit winit
-        // treats the next key as part of it and drops it.
-        let _: () = msg_send![view, unmarkText];
     }
 }
 

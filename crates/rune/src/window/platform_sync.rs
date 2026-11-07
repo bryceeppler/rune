@@ -11,8 +11,7 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     secure_input.set(rt.has_secure_focus() && focused);
     let ime_allowed = rt.ime_area.is_some() && !rt.has_secure_focus() && focused;
     if std::mem::take(&mut rt.ime_reset) || ime_allowed != *ime {
-        l.window.set_ime_allowed(false);
-        l.window.set_ime_allowed(ime_allowed);
+        reset_ime(&l.window, ime_allowed);
         *ime = ime_allowed;
     }
     l.apply_cursor(rt, focused);
@@ -25,6 +24,14 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
             LogicalSize::new(a[2] as f64, a[3] as f64),
         );
     }
+}
+
+/// Turns the window's input method off, discarding the composition the runtime finished, then
+/// back on if `allowed`.
+pub(super) fn reset_ime(window: &winit::window::Window, allowed: bool) {
+    crate::platform::ime::discard_composition(window);
+    window.set_ime_allowed(false);
+    window.set_ime_allowed(allowed);
 }
 
 impl Win {

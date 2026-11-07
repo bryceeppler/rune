@@ -25,8 +25,9 @@ pub(super) fn navigates(ev: &KeyEvent) -> bool {
         && matches!(ev.key, Key::Tab | Key::Up | Key::Down | Key::Left | Key::Right | Key::Home | Key::End | Key::PageUp | Key::PageDown)
 }
 
-/// Pushes focus (and a secure flag) into an input's app-owned editor and mirrors it back.
-fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::States<'_>, focused: bool) -> bool {
+/// Pushes focus (and a secure flag) into an input's app-owned editor and mirrors it back. A field
+/// without focus drops its preedit, unless it is a finished composition still to commit (`kept`).
+fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::States<'_>, focused: bool, kept: bool) -> bool {
     let Some(access) = &input.access else {
         input.edit.focused = focused;
         return false;
@@ -44,9 +45,9 @@ fn sync_input_focus(input: &mut crate::el::InputSpec, states: crate::states::Sta
         edit.set_revealed(revealed);
         changed = true;
     }
-    if edit.focused != focused || (!focused && edit.preedit.is_some()) {
+    if edit.focused != focused || (!focused && !kept && edit.preedit.is_some()) {
         edit.focused = focused;
-        if !focused { edit.clear_preedit(); }
+        if !focused && !kept { edit.clear_preedit(); }
         edit.break_history_group();
         changed = true;
     }
@@ -166,6 +167,7 @@ impl<S: 'static> Runtime<S> {
         crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) }
     }
     pub(super) fn set_focus(&mut self, path: Option<String>, keyboard: bool) -> bool {
+        let finished = self.finish_composition_off(path.as_deref());
         self.input_click.on_focus_change(path.as_deref());
         if self.focused != path { self.ime_area = None; self.ime_reset = true; self.blur_links(); self.hover_focus = false; }
         // Tabbing away or into a field takes the selection's keyboard; a hovered row doesn't.
@@ -176,14 +178,16 @@ impl<S: 'static> Runtime<S> {
         {
             self.clear_text_selection();
         }
-        let mut changed = self.focused != path && self.physical_focus_lost();
+        let mut changed = finished | (self.focused != path && self.physical_focus_lost());
         for n in &mut self.nodes {
             if let Some(input) = &mut n.input {
-                changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(n.path.as_str()));
+                let kept = self.app_ime.awaits(&input.edit);
+                changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(n.path.as_str()), kept);
             }
         }
         for (p, input) in &mut self.virtual_inputs {
-            changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(p.as_str()));
+            let kept = self.app_ime.awaits(&input.edit);
+            changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(p.as_str()), kept);
         }
         self.focused = path;
         if self.focused.is_some() {
@@ -553,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn window_blur_cancels_preedit_without_losing_committed_text_or_focus() {
+    fn window_blur_commits_the_preedit_and_keeps_focus() {
         fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
             crate::text_input(s, crate::TextStyle::new(14.0, 400.0)).key("field").size(200.0, 40.0)
                 .on_edit(|s: &mut crate::TextEdit| s)
@@ -565,7 +569,7 @@ mod tests {
         rt.ime_reset = false;
         rt.cancel_composition(); rt.frame(0.0);
         assert!(rt.state.preedit.is_none() && rt.state.focused && rt.ime_reset);
-        assert_eq!(rt.state.text, "committed");
+        assert_eq!(rt.state.text, "committedpending");
     }
 
     #[test]
@@ -599,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn input_handover_cancels_composition_and_keys_bubble_after_the_field() {
+    fn input_handover_commits_the_composition_and_keys_bubble_after_the_field() {
         use crate::{text_input, TextEdit, TextStyle};
         struct Form { first: TextEdit, search: TextEdit, open: bool, app_keys: usize }
         fn view(s: &Form, _: &mut Cx<Form>) -> El {
@@ -627,7 +631,7 @@ mod tests {
         assert!(!rt.keyboard_focus);
         rt.key(KeyEvent { key: Key::Text("query".into()), mods: Mods::default() }); rt.frame(0.0);
         assert_eq!(rt.state.search.text, "query");
-        assert_eq!(rt.state.first.text, "hello");
+        assert_eq!(rt.state.first.text, "hellopending");
         assert_eq!(rt.state.app_keys, 0);
         rt.key(KeyEvent { key: Key::Function(5), mods: Mods::default() }); rt.frame(0.0);
         assert_eq!(rt.state.app_keys, 1);
@@ -636,6 +640,7 @@ mod tests {
         assert!(rt.focused.is_none());
         assert!(!rt.state.search.focused);
         assert!(rt.state.search.preedit.is_none());
+        assert_eq!(rt.state.search.text, "querypending");
     }
 
     #[test]
