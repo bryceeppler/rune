@@ -176,6 +176,7 @@ impl<S: 'static> AnyHost for Host<S> {
             self.rt.refuse_file_dialog("cannot open a file dialog while the window is hidden");
         }
         self.hidden_input(event_loop);
+        self.geometry_turn(event_loop);
         self.a11y_turn();
         false
     }

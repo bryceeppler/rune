@@ -251,14 +251,16 @@ fn raise_levels() {
     }
 }
 
-/// `monitor`'s work area (without its taskbar and app bars) as top and bottom, in physical
-/// desktop pixels.
-pub(crate) fn work_area(monitor: &winit::monitor::MonitorHandle) -> Option<(i32, i32)> {
+/// `monitor`'s work area (without its taskbar and app bars) as x, y, width and height, in
+/// physical desktop pixels.
+pub(crate) fn work_area(monitor: &winit::monitor::MonitorHandle) -> Option<[i32; 4]> {
     use winit::platform::windows::MonitorHandleExtWindows;
     use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
     // SAFETY: MONITORINFO is plain data; all zeros is valid before cbSize is set.
     let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
     // SAFETY: GetMonitorInfoW fills `info`, whose cbSize says which struct it is.
-    (unsafe { GetMonitorInfoW(monitor.hmonitor() as _, &mut info) } != 0).then_some((info.rcWork.top, info.rcWork.bottom))
+    if unsafe { GetMonitorInfoW(monitor.hmonitor() as _, &mut info) } == 0 { return None; }
+    let windows_sys::Win32::Foundation::RECT { left, top, right, bottom } = info.rcWork;
+    Some([left, top, right - left, bottom - top])
 }

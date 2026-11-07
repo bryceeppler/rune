@@ -96,6 +96,11 @@ pub(crate) struct Window<S: 'static> {
     renderer: Option<Renderer>,
     on_close: Option<fn(&mut S, &mut crate::Tx)>,
     on_reopen: Option<fn(&mut S, bool, &mut crate::Tx) -> bool>,
+    on_geometry: Option<crate::window::OnGeometry<S>>,
+    /// `App::restore_geometry`, until the window first opens.
+    restore: Option<crate::WindowGeometry>,
+    /// What `on_geometry` last heard.
+    reported: Option<crate::WindowGeometry>,
     keep_running: bool,
     launcher: bool,
     /// A nonactivating panel, launcher or not: reopening never brings it back.
@@ -129,7 +134,7 @@ impl<S: 'static> Window<S> {
         let comp = app.compositor.take();
         let (open, keep_running, on_close, on_focus, on_reopen) = (app.open, app.keep_running, app.on_close, app.on_focus, app.on_reopen);
         let on_ime = app.on_ime;
-        let on_close_request = app.on_close_request;
+        let (on_close_request, on_geometry, restore) = (app.on_close_request, app.on_geometry, app.restore_geometry.take());
         let native = std::mem::take(&mut app.macos_window);
         let (modifier_keys, tab_visits_controls, srgb_blend) = (app.modifier_keys, app.tab_visits_controls, app.srgb_blend);
         let font_smoothing = app.font_smoothing;
@@ -159,7 +164,8 @@ impl<S: 'static> Window<S> {
         shared.visible.store(visible, Ordering::Release);
         let decorated = !options.borderless && !options.transparent;
         Window {
-            key, rt, shared, shortcuts, menus, handle, comp, renderer: None, on_close, on_reopen, keep_running,
+            key, rt, shared, shortcuts, menus, handle, comp, renderer: None, on_close, on_reopen, on_geometry, restore,
+            reported: None, keep_running,
             launcher: native.launcher,
             panel: native.nonactivating_panel,
             main,
@@ -259,6 +265,24 @@ impl<S: 'static> Window<S> {
         self.rt.set_viewport((frame[2], frame[3]), scale);
         self.rt.set_window_origin((frame[0], frame[1]));
     }
+
+    /// Its geometry in the run's global points, which stand for desktop units.
+    fn geometry(&self) -> crate::WindowGeometry {
+        let [x, y, w, h] = self.frame;
+        crate::WindowGeometry {
+            frame: Some([x, y, w, h].map(|v| v.round() as i32)), size: (w, h),
+            scale: f64::from(self.rt.env.scale), ..Default::default()
+        }
+    }
+
+    /// Tells `WindowHandle::geometry` and `App::on_geometry` a geometry that changed.
+    fn report_geometry(&mut self) {
+        let geometry = self.geometry();
+        if self.reported.as_ref() == Some(&geometry) { return; }
+        if let Some(handle) = &self.handle { handle.set_geometry(geometry.clone()); }
+        self.reported = Some(geometry.clone());
+        if let Some(f) = self.on_geometry { self.rt.update_if(|s, tx| f(s, &geometry, tx)); }
+    }
 }
 
 impl<S: 'static> Member for Window<S> {
@@ -272,6 +296,12 @@ impl<S: 'static> Member for Window<S> {
     fn features(&self) -> wgpu::Features { self.comp.as_ref().map_or(wgpu::Features::empty(), |c| c.features()) }
 
     fn start(&mut self, desktop: &VirtualDesktop) {
+        if let Some(saved) = self.restore.take() {
+            let screens: Vec<_> = desktop.displays.iter()
+                .map(|d| crate::window::geometry::Screen { area: d.frame.map(|v| v.round() as i32), primary: d.primary }).collect();
+            let placed = saved.fitted(&screens, 0, 1.0);
+            if let Some([x, y, ..]) = placed.frame { return self.resize([x as f32, y as f32, placed.size.0, placed.size.1]); }
+        }
         let display = desktop.display_at(self.position);
         let (w, h) = match self.physical {
             Some((w, h)) => ((f64::from(w) / display.scale) as f32, (f64::from(h) / display.scale) as f32),
@@ -325,6 +355,7 @@ impl<S: 'static> Member for Window<S> {
             }
             if self.rt.shell_request.is_none() { break; }
         }
+        self.report_geometry();
         changes
     }
 
