@@ -628,6 +628,8 @@ mod tests {
         assert!(!rt.state.first.focused);
         assert!(rt.state.first.preedit.is_none());
         assert!(rt.ime_reset);
+        // The shell resets the input method; the platform's Disabled ends the old session.
+        rt.ime_reset_sent(); rt.ime(crate::Ime::Disabled); rt.ime_session_over();
         assert!(!rt.keyboard_focus);
         rt.key(KeyEvent { key: Key::Text("query".into()), mods: Mods::default() }); rt.frame(0.0);
         assert_eq!(rt.state.search.text, "query");
