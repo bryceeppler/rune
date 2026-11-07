@@ -11,6 +11,7 @@
 //! line heights off the pixel grid (a heading, or 1.5x) one can sit a pixel off a whole layout.
 
 use std::ops::Range;
+use std::rc::Weak;
 
 use parley::BoundingBox;
 use parley::editing::Cursor;
@@ -18,6 +19,7 @@ use parley::layout::Affinity;
 
 use super::*;
 use super::cursor::{cursor_from_point_in, line_for_offset, plain};
+use super::layout_cache::fresh;
 
 /// A text's lines: one Parley layout, or one per hard paragraph stacked top to bottom.
 #[derive(Clone)]
@@ -29,11 +31,14 @@ enum Laid {
     Stacked(Rc<Stack>),
 }
 
-/// Texts of several paragraphs laid out as stacks of `layouts`, by break key.
+/// Texts of several paragraphs laid out as stacks of `layouts`, by break key. A stack holds
+/// its paragraphs' layouts, so it stays only while something shows it or for two commits:
+/// after that its paragraphs are the layout cache's to keep within its budget.
 #[derive(Default)]
 pub(crate) struct Stacks {
     pub(super) cache: Cache<Rc<Stack>>,
-    /// The stack built last, and what from: the next edit of its text builds from it.
+    /// The stack built last, while it lasts, and what from: the next edit of its text builds
+    /// from it.
     last: Option<Source>,
     /// One paragraph's spans and pills while a stack is built.
     spans: Vec<Span>,
@@ -42,7 +47,7 @@ pub(crate) struct Stacks {
 
 /// What a stack was laid out from.
 struct Source {
-    stack: Rc<Stack>,
+    stack: Weak<Stack>,
     text: Box<str>,
     spans: Box<[Span]>,
     pills: Box<[PillChip]>,
@@ -63,12 +68,25 @@ struct Draft<'a> {
     block: Option<&'a crate::edit::Block>,
 }
 
+impl Stacks {
+    /// Keeps the stacks something else holds (a node's text) or a commit before this one used.
+    pub(super) fn end_commit(&mut self, g: u32) {
+        for e in self.cache.values_mut().filter(|e| Rc::strong_count(&e.value) > 1) {
+            e.used = g;
+        }
+        self.cache.retain(|_, e| fresh(g, e.used));
+        if self.last.as_ref().is_some_and(|l| l.stack.strong_count() == 0) {
+            self.last = None;
+        }
+    }
+}
+
 impl Source {
     /// The paragraph of this earlier text whose layout `p` of `text` would get, sharing
     /// `prefix` bytes from the start and `suffix` from the end with it: the same bytes, the same
     /// block and the same spans and pills where they lie in it, as its layout's key covers.
     /// `at` is where the last one was found, the place to look first.
-    fn same(&self, text: &str, prefix: usize, suffix: usize, p: &Draft<'_>, at: &mut usize) -> Option<&Para> {
+    fn same<'s>(&self, stack: &'s Stack, text: &str, prefix: usize, suffix: usize, p: &Draft<'_>, at: &mut usize) -> Option<&'s Para> {
         let old_start = if p.end <= prefix {
             p.start
         } else if p.start >= text.len() - suffix {
@@ -76,7 +94,7 @@ impl Source {
         } else {
             return None;
         };
-        let paras = &self.stack.paras;
+        let paras = &stack.paras;
         if paras.get(*at).is_none_or(|q| q.start != old_start) {
             *at = paras.partition_point(|q| q.start < old_start);
         }
@@ -479,7 +497,7 @@ impl TextSystem {
         let cost = stack.paras.len() * size_of::<Para>();
         self.stacks.cache.insert(key, Entry::with_cost(stack.clone(), g, cost, shape));
         self.stacks.last = Some(Source {
-            stack: stack.clone(),
+            stack: Rc::downgrade(&stack),
             text: text.into(),
             spans: spans.into(),
             pills: pills.into(),
@@ -505,9 +523,9 @@ impl TextSystem {
         let (mut local_spans, mut local_pills) = (std::mem::take(&mut self.stacks.spans), std::mem::take(&mut self.stacks.pills));
         let last = self.stacks.last.take().filter(|l| {
             (l.style, l.scale, l.max_width, l.align, l.wrap_anywhere) == (style, scale, max_width, align, wrap_anywhere)
-        });
-        let (prefix, suffix) = last.as_ref().map_or((0, 0), |l| shared(l.text.as_bytes(), text.as_bytes()));
-        let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |l| l.stack.paras.len() + 1));
+        }).and_then(|l| Some((l.stack.upgrade()?, l)));
+        let (prefix, suffix) = last.as_ref().map_or((0, 0), |(_, l)| shared(l.text.as_bytes(), text.as_bytes()));
+        let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |(old, _)| old.paras.len() + 1));
         let mut at = 0;
         let (mut y, mut lines, mut full_width, mut width, mut all_plain) = (0f64, 0usize, 0f32, 0f32, true);
         let (mut s, mut q, mut start) = (0usize, 0usize, 0usize);
@@ -518,7 +536,7 @@ impl TextSystem {
             while q < pills.len() && (pills[q].start as usize) < start { q += 1; }
             let q1 = q + pills[q..].iter().take_while(|p| (p.start as usize) < end).count();
             let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], block: blocks.get(k) };
-            let old = last.as_ref().and_then(|l| l.same(text, prefix, suffix, &draft, &mut at));
+            let old = last.as_ref().and_then(|(old, l)| l.same(old, text, prefix, suffix, &draft, &mut at));
             let layout = match old {
                 Some(old) => old.layout.clone(),
                 None => {

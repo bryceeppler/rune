@@ -259,6 +259,24 @@ fn a_kept_stack_keeps_its_paragraphs_through_idle_commits() {
     drop(held);
 }
 
+/// Notes laid out and then shown no more keep no more shaped bytes than the stale budget:
+/// their stacks go, and their paragraphs go as the budget needs.
+#[test]
+fn stacks_shown_no_more_keep_only_the_stale_budget() {
+    let mut ts = TextSystem::default();
+    for i in 0..80 {
+        let text = format!("{i} {}\n{i} {}", "word ".repeat(400), "other ".repeat(400));
+        ts.layout_text(None, &text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, false, true);
+        ts.end_commit();
+    }
+    for _ in 0..4 {
+        ts.end_commit();
+    }
+    let held: usize = ts.layouts.values().map(|e| e.cost as usize).sum();
+    assert!(held <= super::super::layout_cache::STALE_BYTES, "{} layouts hold {held} bytes", ts.layouts.len());
+    assert!(ts.stacks.cache.is_empty());
+}
+
 /// New families or a new language lay a stacked text out again in them.
 #[test]
 fn new_fonts_lay_stacks_out_again() {
