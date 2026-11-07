@@ -62,7 +62,7 @@ impl Action {
     /// before it reached the app is asked again (`Closing::heard_input`).
     fn from_person(&self) -> bool {
         match self {
-            Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(_) | Action::Paste(..)
+            Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(..) | Action::ImeFinish | Action::Paste(..)
             | Action::Files(_) | Action::Press(..) | Action::DoublePress(_) | Action::SecondaryPress(..)
             | Action::Link(..) | Action::LinkSecondary(..) | Action::Drag(..) | Action::DragRepeat(..)
             | Action::DragStart(_) | Action::DragEnd(..) | Action::PointerMove(..) | Action::Wheel(..)

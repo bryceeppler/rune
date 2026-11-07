@@ -186,6 +186,8 @@ impl<S: 'static> Runtime<S> {
         self.app_ime.ending = Some(session);
         self.app_ime.session = self.app_ime.session.max(session + 1);
         self.ime_reset = true;
+        // What the person typed reaches the app: a save under way may have missed it.
+        self.closing.heard_input();
         match owner {
             Owner::App { shown } => {
                 let mut one = self.transaction();
