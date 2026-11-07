@@ -54,6 +54,24 @@ pub(super) enum Action {
     A11y(String, A11yAct),
 }
 
+impl Action {
+    /// Whether a person made it, so it may change what the app saves; a close request answered
+    /// before it reached the app is asked again (`Closing::heard_input`).
+    fn from_person(&self) -> bool {
+        match self {
+            Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(_) | Action::Paste(..)
+            | Action::Files(_) | Action::Press(..) | Action::DoublePress(_) | Action::SecondaryPress(..)
+            | Action::Link(..) | Action::LinkSecondary(..) | Action::Drag(..) | Action::DragRepeat(..)
+            | Action::DragStart(_) | Action::DragEnd(..) | Action::PointerMove(..) | Action::Wheel(..)
+            | Action::Gesture(..) | Action::Dismiss(_) | Action::FocusControl(_) | Action::A11y(..)
+            | Action::ClipboardRead(..) | Action::FileDialog(..) => true,
+            Action::WindowFocus(_) | Action::HoverFocus(_) | Action::Hover(_) | Action::HoverChange(..)
+            | Action::SelectionChange(..) | Action::AtBottom(..) | Action::FarFromBottom(..) | Action::VisibleRows(..)
+            | Action::Layout(..) | Action::ScreenLayout(..) | Action::DrawnLayout(..) | Action::Focus(..) | Action::Blur => false,
+        }
+    }
+}
+
 /// A queued action and when the input that queued it arrived (`Tx::input_time`): the arrival
 /// time its host dispatched the input under (`input_time::scope`), none for what layout,
 /// timers, updates and polls queue.
@@ -250,6 +268,7 @@ impl<S: 'static> Runtime<S> {
         let (name, path, at) = (handler_name(&action), stall_path(&action).map(str::to_owned), self.handler_location(&action));
         let stall = crate::tooling::perf_warn::Stall::start();
         let timed = self.interaction_note(&action).map(|note| (note, crate::time::Instant::now()));
+        if action.from_person() { self.closing.heard_input(); }
         let ran = self.dispatch_action(action, tx);
         if ran && let Some((note, started)) = timed { self.interaction_ran(note, started); }
         #[cfg(debug_assertions)]

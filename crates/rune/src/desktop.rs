@@ -45,6 +45,9 @@ struct Desk {
     scale: f32,
     /// A quit waiting on windows' answers, one per member.
     quitting: Option<Vec<crate::CloseAnswer>>,
+    /// Every window agreed to quit, and ended.
+    ended: bool,
+    last_main: crate::window::quitting::LastMain,
 }
 
 impl Desk {
@@ -104,8 +107,17 @@ impl Desk {
         for m in &mut self.members { m.withdraw_quit(); }
         if verdict == crate::CloseAnswer::Proceed {
             for m in &mut self.members { m.end(); }
+            self.ended = true;
             println!("rune-quit {}", json!({ "t": t }));
         }
+    }
+
+    /// The app ends with its last main window, as a native run does (`LastMain`).
+    fn end_with_last_main(&mut self, t: f64) {
+        if self.ended || self.quitting.is_some() { return; }
+        let main_open = self.members.iter().any(|m| m.main_open());
+        let showing = self.members.iter().filter(|m| m.visible()).count();
+        if self.last_main.ask(main_open, showing) { self.quit(t); }
     }
 
     /// A hidden key window hands the keyboard to the topmost visible one.
@@ -130,6 +142,7 @@ impl Desk {
                 self.apply(i, changes, t);
             }
             self.settle_quit(t);
+            self.end_with_last_main(t);
             self.settle_key();
             if !self.members.iter().any(|m| m.pending()) { return; }
         }
@@ -298,7 +311,7 @@ pub(crate) fn run(windows: Vec<AnyWindowSpec>, selected: usize, args: Args, acce
     let n = members.len();
     let mut desk = Desk {
         members, z: (0..n).collect(), key: None, active: true, hover: None, pressed: None, files: None,
-        origin: (primary[0], primary[1]), scale, quitting: None,
+        origin: (primary[0], primary[1]), scale, quitting: None, ended: false, last_main: Default::default(),
     };
     let members = &desk.members;
     desk.z.sort_by_key(|&i| members[i].on_top());

@@ -89,16 +89,14 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
         let proxy = proxy.clone();
         crate::platform::quit::on_sigterm(move || { let _ = proxy.send_event(WakeEvent::SessionEnd); });
     }
-    let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None }));
+    let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None, last_main: Default::default() }));
     #[cfg(target_os = "windows")]
     {
         let windows = Rc::downgrade(&windows);
-        crate::platform::quit::on_session_end(move || {
-            match windows.upgrade().as_deref().map(RefCell::try_borrow_mut) {
-                Some(Ok(mut windows)) => windows.end_session(),
-                Some(Err(_)) => eprintln!("rune: the session ended inside an event; on_close did not run"),
-                None => {}
-            }
+        crate::platform::quit::on_session(move |step| match windows.upgrade().as_deref().map(RefCell::try_borrow_mut) {
+            Some(Ok(mut windows)) => windows.session(step),
+            Some(Err(_)) => super::quitting::session_later(step),
+            None => crate::platform::quit::SessionReply::Ends,
         });
     }
     crate::open_url::incoming::prepare();
@@ -112,7 +110,7 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
 }
 
 /// The loop's handler, shared so that what Windows sends inside a window procedure
-/// (`quit::on_session_end`) reaches the windows between events.
+/// (`quit::on_session`) reaches the windows between events.
 #[cfg(not(target_arch = "wasm32"))]
 struct Handler(Rc<RefCell<Windows>>);
 

@@ -2,6 +2,8 @@
 //! asks its own hook and keeps one request in flight per kind, so a second close button click or
 //! ⌘Q while a save runs joins the first. The answer travels in the `CloseRequest` itself: the
 //! hook answers at once, or keeps the request and answers from any thread when its work ends.
+//! A request covers all input the app was given: input queued when Rune asks reaches the app
+//! first, and input that reaches it while the request is out makes a proceed ask again.
 
 use std::sync::{Arc, Mutex};
 
@@ -77,25 +79,38 @@ impl Slot {
 
 pub(crate) type Hook<S> = fn(&mut S, CloseRequest, &mut Tx);
 
+/// A request of one kind that Rune owes the hook or has given it.
+enum Asked {
+    /// To ask once the input queued when it was made reaches the app (`Runtime::ask_due_closes`).
+    Due,
+    /// With the app, which had heard `heard` inputs (`Closing::heard`) when asked.
+    Out { slot: Arc<Slot>, heard: u64 },
+}
+
 /// A window's hook and the requests it holds, one per kind.
 pub(crate) struct Closing<S> {
     hook: Option<Hook<S>>,
-    window: Option<Arc<Slot>>,
-    quit: Option<Arc<Slot>>,
-    /// Wakes the window's host when an answer arrives from another thread.
+    window: Option<Asked>,
+    quit: Option<Asked>,
+    /// Input the app has been given, counted so an answer given before some of it is stale.
+    heard: u64,
+    /// Wakes the window's host when the hook was asked or answered, to carry out what it asked.
     wake: Waker,
 }
 
 impl<S> Default for Closing<S> {
-    fn default() -> Self { Self { hook: None, window: None, quit: None, wake: Arc::new(|| {}) } }
+    fn default() -> Self { Self { hook: None, window: None, quit: None, heard: 0, wake: Arc::new(|| {}) } }
 }
 
 impl<S> Closing<S> {
-    fn slot(&mut self, kind: CloseKind) -> &mut Option<Arc<Slot>> {
+    fn slot(&mut self, kind: CloseKind) -> &mut Option<Asked> {
         match kind { CloseKind::Window => &mut self.window, CloseKind::Quit => &mut self.quit }
     }
 
     pub(crate) fn set_wake(&mut self, wake: Waker) { self.wake = wake; }
+
+    /// The app was given input a person made, which a save already under way may have missed.
+    pub(crate) fn heard_input(&mut self) { self.heard += 1; }
 }
 
 impl<S: 'static> crate::App<S> {
@@ -106,8 +121,12 @@ impl<S: 'static> crate::App<S> {
     /// closes as before (`on_close` runs). A quit asks every window's hook and quits once all of
     /// them proceed: macOS Quit from the menu, ⌘Q, the Dock or a logout (AppKit's reply-later
     /// termination), and `Tx::request_quit` everywhere. `Tx::quit` and `AppHandle::quit` ask
-    /// nothing. Endings the system won't wait for (a Windows session end, `SIGTERM`, a display
-    /// server that goes away) run `on_close` alone, so do the last synchronous save there.
+    /// nothing. A request covers all the input the window was given: input queued when Rune
+    /// asks reaches the app before the hook, and input that reaches it while the app holds the
+    /// request makes a proceed ask the hook again, so a save that started before the last
+    /// keystroke never closes the window. Endings the system won't wait for (a Windows session
+    /// end, `SIGTERM`, a display server that goes away) run `on_close` alone, so do the last
+    /// synchronous save there.
     pub fn on_close_request(mut self, f: fn(&mut S, CloseRequest, &mut Tx)) -> Self {
         self.on_close_request = Some(f);
         self
@@ -121,30 +140,63 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// Asks the hook whether `kind` may go ahead, as the window's host does for a close button
-    /// or a quit, and returns its answer so far. Without a hook it proceeds. A pending answer
-    /// stays in flight for `settle_close`; while it does, another request of this kind joins it
-    /// rather than asking again.
+    /// or a quit, and returns its answer so far. Without a hook it proceeds. Input still queued
+    /// reaches the app first, so the hook is asked in the next frame and this is `Pending`. A
+    /// pending request stays in flight for `settle_close`; while it does, another request of
+    /// this kind joins it rather than asking again.
     pub fn request_close(&mut self, kind: CloseKind) -> CloseAnswer {
-        let Some(hook) = self.closing.hook else { return CloseAnswer::Proceed };
-        if self.closing.slot(kind).is_some() { return CloseAnswer::Pending; }
-        let slot = Arc::new(Slot { answer: Mutex::new(CloseAnswer::Pending), wake: self.closing.wake.clone() });
-        *self.closing.slot(kind) = Some(slot.clone());
-        let request = CloseRequest { kind, slot };
-        self.update(move |s, tx| hook(s, request, tx));
+        if self.closing.hook.is_none() { return CloseAnswer::Proceed; }
+        if self.closing.slot(kind).is_none() { self.ask_close(kind); }
         self.settle_close(kind).unwrap_or(CloseAnswer::Pending)
     }
 
     /// The request of `kind` in flight: None when there is none, `Pending` while the app holds
-    /// it, and its answer once it has one, which this takes.
+    /// it, and its answer once it has one, which this takes. A proceed waits for input still
+    /// queued, and asks the hook again when the app was given input after it was asked.
     pub fn settle_close(&mut self, kind: CloseKind) -> Option<CloseAnswer> {
-        let answer = self.closing.slot(kind).as_ref()?.get();
-        if answer != CloseAnswer::Pending { *self.closing.slot(kind) = None; }
-        Some(answer)
+        let queued = self.has_pending_input();
+        let (answer, heard) = match self.closing.slot(kind).as_ref()? {
+            Asked::Due if queued => return Some(CloseAnswer::Pending),
+            Asked::Due => { self.hand_close(kind); return self.settle_close(kind); }
+            Asked::Out { slot, heard } => (slot.get(), *heard),
+        };
+        match answer {
+            CloseAnswer::Pending => Some(CloseAnswer::Pending),
+            CloseAnswer::Proceed if queued => Some(CloseAnswer::Pending),
+            CloseAnswer::Proceed if heard != self.closing.heard => { self.ask_close(kind); self.settle_close(kind) }
+            CloseAnswer::Proceed | CloseAnswer::Cancel => {
+                *self.closing.slot(kind) = None;
+                Some(answer)
+            }
+        }
     }
 
     /// Forgets the request of `kind`: a later answer to it changes nothing.
     pub(crate) fn withdraw_close(&mut self, kind: CloseKind) {
         *self.closing.slot(kind) = None;
+    }
+
+    /// Asks the hook requests waited on this frame's input for (`Asked::Due`), now that the
+    /// input has reached the app.
+    pub(crate) fn ask_due_closes(&mut self) {
+        for kind in [CloseKind::Window, CloseKind::Quit] {
+            if matches!(self.closing.slot(kind), Some(Asked::Due)) { self.hand_close(kind); }
+        }
+    }
+
+    /// Asks the hook about `kind` once the input queued now has reached the app: at once when
+    /// none is queued, else in the next frame, after that input.
+    fn ask_close(&mut self, kind: CloseKind) {
+        if self.has_pending_input() { *self.closing.slot(kind) = Some(Asked::Due) } else { self.hand_close(kind) }
+    }
+
+    fn hand_close(&mut self, kind: CloseKind) {
+        let Some(hook) = self.closing.hook else { return };
+        let slot = Arc::new(Slot { answer: Mutex::new(CloseAnswer::Pending), wake: self.closing.wake.clone() });
+        *self.closing.slot(kind) = Some(Asked::Out { slot: slot.clone(), heard: self.closing.heard });
+        let request = CloseRequest { kind, slot };
+        self.update(move |s, tx| hook(s, request, tx));
+        (self.closing.wake)();
     }
 }
 

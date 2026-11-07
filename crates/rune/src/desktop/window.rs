@@ -73,6 +73,8 @@ pub(crate) trait Member {
     fn withdraw_quit(&mut self);
     /// Closes as its close button would, asking nothing: the app is quitting.
     fn end(&mut self);
+    /// The app's own window, still open: the app runs while one is.
+    fn main_open(&self) -> bool;
     fn popup_open(&self) -> bool;
     fn resolve_popup(&mut self, picked: Option<&str>) -> Result<(), crate::PopupMenuError>;
     fn file_dialog_open(&self) -> bool;
@@ -427,10 +429,12 @@ impl<S: 'static> Member for Window<S> {
 
     fn end(&mut self) {
         if !self.closes() { return; }
+        if self.rt.has_pending_input() { self.rt.hidden_timer_frame(); }
         if let Some(f) = self.on_close { self.rt.update(f); }
         self.hide();
         self.finished = true;
     }
+    fn main_open(&self) -> bool { self.main && !self.finished }
     fn popup_open(&self) -> bool { self.rt.popup_menu().is_some() }
     fn resolve_popup(&mut self, picked: Option<&str>) -> Result<(), crate::PopupMenuError> { self.rt.resolve_popup(picked) }
     fn file_dialog_open(&self) -> bool { self.rt.file_dialog().is_some() }

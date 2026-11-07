@@ -96,8 +96,9 @@ pub(crate) enum WakeEvent {
     /// Something asked the app to quit; every window's `App::on_close_request` is asked.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Quit(crate::platform::quit::QuitFrom),
-    /// The system is ending the app without waiting (`SIGTERM`): every window's `on_close` runs.
-    #[cfg_attr(not(all(unix, not(target_os = "ios"), not(target_os = "android"))), allow(dead_code))]
+    /// The system is ending the app without waiting (`SIGTERM`, a Windows session end inside
+    /// an event): every window's `on_close` runs.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     SessionEnd,
 }
 
@@ -131,8 +132,9 @@ pub(crate) trait AnyHost {
     fn apply_pending(&mut self, _event_loop: &ActiveEventLoop) {}
     /// Shows, restores and activates it as the default reopen.
     fn reopen(&mut self, _event_loop: &ActiveEventLoop) {}
-    /// Asks `App::on_close_request` whether the app may quit; overlays never object.
-    fn ask_quit(&mut self, _event_loop: &ActiveEventLoop) -> crate::CloseAnswer { crate::CloseAnswer::Proceed }
+    /// Asks `App::on_close_request` whether the app may quit; overlays never object. The host
+    /// wakes to carry out what the hook asked.
+    fn ask_quit(&mut self) -> crate::CloseAnswer { crate::CloseAnswer::Proceed }
     /// The answer to the quit `ask_quit` asked, once there is one.
     fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { None }
     /// Forgets the quit: a late answer changes nothing.
@@ -157,6 +159,7 @@ struct Windows {
     // Weak pool preserves release_gpu_when_closed when the last GPU owner closes.
     gpu: Rc<RefCell<Weak<Gpu>>>,
     quitting: Option<quitting::Quitting>,
+    last_main: quitting::LastMain,
 }
 impl Windows {
     fn cleanup(&mut self, event_loop: &ActiveEventLoop) {
@@ -171,14 +174,7 @@ impl Windows {
         if event_loop.exiting() {
             for host in self.hosts.iter_mut().flatten() { host.cancel_menus(); }
         }
-        if !self.hosts.iter().flatten().any(|h| h.keeps_loop()) {
-            // The app ends with its last main window: windows still open close as their close
-            // button would. A quit already asked to exit and skips their hooks.
-            if !event_loop.exiting() {
-                for host in self.hosts.iter_mut().flatten() { host.terminate(); }
-            }
-            event_loop.exit();
-        }
+        self.end_with_last_main(event_loop);
     }
 
     /// The app was reopened: every `on_reopen` hook runs, then, unless one handled it or the

@@ -12,6 +12,8 @@ impl<S: 'static> AnyHost for Host<S> {
         // Once: a window that already closed ran its hook then.
         if self.finished || !self.closes() { return; }
         self.finished = true;
+        // Input still queued reaches the app before its last save.
+        if self.rt.has_pending_input() { self.rt.hidden_timer_frame(); }
         self.close_hook();
         self.popup.cancel(&mut self.rt);
         self.file_dialog.cancel(&mut self.rt);
@@ -22,12 +24,9 @@ impl<S: 'static> AnyHost for Host<S> {
         self.file_dialog.cancel(&mut self.rt);
     }
 
-    fn ask_quit(&mut self, event_loop: &ActiveEventLoop) -> crate::CloseAnswer {
+    fn ask_quit(&mut self) -> crate::CloseAnswer {
         if !self.started || self.finished { return crate::CloseAnswer::Proceed; }
-        let answer = self.rt.request_close(crate::CloseKind::Quit);
-        self.drain(event_loop, false);
-        self.publish();
-        answer
+        self.rt.request_close(crate::CloseKind::Quit)
     }
 
     fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { self.rt.settle_close(crate::CloseKind::Quit) }

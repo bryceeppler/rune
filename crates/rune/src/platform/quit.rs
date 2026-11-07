@@ -5,19 +5,47 @@
 //! adds the method (`install`) as it does for reopening: the method sends the quit to Rune's
 //! loop and answers "later"; the loop asks each window's hook and `reply` answers AppKit.
 //!
-//! Elsewhere nothing asks: Windows ends a session with `WM_ENDSESSION`, after which the process
-//! may die at any moment, and a desktop session on Unix ends with `SIGTERM`. Both run each
-//! window's `on_close` before the app goes (`on_session_end`, `on_sigterm`).
+//! Windows asks with `WM_QUERYENDSESSION` and can't wait: the query asks each window's hook,
+//! and while one saves the session waits, the app named in the shutdown screen until its quit
+//! settles (`on_session`). `WM_ENDSESSION` then ends the session, after which the process may
+//! die at any moment, so each window's `on_close` runs before it returns. A desktop session on
+//! Unix ends with `SIGTERM`, which runs `on_close` too (`on_sigterm`).
 
 /// Who asked the app to quit, and so who hears the answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QuitFrom {
-    /// `Tx::request_quit` off macOS: the loop exits once every window proceeds.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    /// `Tx::request_quit` off macOS, or the last main window closing: the loop exits once
+    /// every window proceeds.
     Rune,
     /// AppKit's `applicationShouldTerminate:`, waiting for `reply`.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     AppKit,
+    /// Windows' session query, which the session waits on: the app exits once every window
+    /// proceeds, and `unblock`s the session when one cancels.
+    Session,
+}
+
+/// What Windows tells the app of a session ending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) enum SessionStep {
+    /// `WM_QUERYENDSESSION`: may the session end?
+    Query,
+    /// `WM_ENDSESSION` going ahead: the process may end once this returns.
+    Ends,
+    /// `WM_ENDSESSION` called off: the session goes on.
+    Continues,
+}
+
+/// The app's answer to a session query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) enum SessionReply {
+    Ends,
+    /// A window is saving: the session waits, and the app exits once it is done.
+    Waits,
+    /// A window refused.
+    Refuses,
 }
 
 #[cfg(target_os = "macos")]
@@ -25,7 +53,7 @@ pub(crate) use mac::{install, reply, terminate};
 #[cfg(all(unix, not(target_os = "ios"), not(target_os = "android")))]
 pub(crate) use unix::on_sigterm;
 #[cfg(target_os = "windows")]
-pub(crate) use win::{on_session_end, watch_session_end};
+pub(crate) use win::{on_session, unblock, watch_session_end};
 
 #[cfg(target_os = "macos")]
 mod mac {
@@ -148,37 +176,64 @@ mod unix {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_ENDSESSION, WM_NCDESTROY};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_ENDSESSION, WM_NCDESTROY, WM_QUERYENDSESSION};
+
+    use super::{SessionReply, SessionStep};
 
     const SUBCLASS: usize = 0x5255_4e45;
 
     thread_local! {
-        static ENDED: RefCell<Option<Box<dyn FnMut()>>> = const { RefCell::new(None) };
+        static SESSION: RefCell<Option<Box<dyn FnMut(SessionStep) -> SessionReply>>> = const { RefCell::new(None) };
+        /// The window the shutdown screen names while the session waits on the app.
+        static BLOCKED: Cell<HWND> = const { Cell::new(std::ptr::null_mut()) };
     }
 
-    /// Runs `ended` on the event loop's thread when Windows ends the session, before the
-    /// window that hears it returns from `WM_ENDSESSION`, after which the process may end at any
-    /// moment. Runs once.
-    pub(crate) fn on_session_end(ended: impl FnMut() + 'static) {
-        ENDED.with(|e| *e.borrow_mut() = Some(Box::new(ended)));
+    /// Runs `step` on the event loop's thread for each session step, inside the window
+    /// procedure that hears it: the query's answer goes back to Windows, and the end returns
+    /// only once `step` has.
+    pub(crate) fn on_session(step: impl FnMut(SessionStep) -> SessionReply + 'static) {
+        SESSION.with(|s| *s.borrow_mut() = Some(Box::new(step)));
     }
 
-    /// Makes `window` hear the session end for `on_session_end`.
+    /// Makes `window` hear the session for `on_session`.
     pub(crate) fn watch_session_end(window: &winit::window::Window) {
         let Some(hwnd) = crate::platform::win32::hwnd(window) else { return };
         // SAFETY: the subclass carries no data and is removed at WM_NCDESTROY.
         unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, 0) };
     }
 
+    /// Lets a session that waited on the app end without it: the quit it waited for was refused.
+    pub(crate) fn unblock() {
+        let hwnd = BLOCKED.with(|b| b.replace(std::ptr::null_mut()));
+        // SAFETY: a window this thread named; a destroyed one fails harmlessly.
+        if !hwnd.is_null() { unsafe { ShutdownBlockReasonDestroy(hwnd) }; }
+    }
+
+    fn step(step: SessionStep) -> SessionReply {
+        // A step inside another (a hook that pumped messages) refuses rather than reenter.
+        SESSION.with(|s| s.try_borrow_mut().ok().and_then(|mut s| s.as_mut().map(|f| f(step)))).unwrap_or(SessionReply::Refuses)
+    }
+
     unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, _: usize) -> LRESULT {
         match message {
-            WM_ENDSESSION if wparam != 0 => {
-                let ended = ENDED.with(|e| e.try_borrow_mut().ok().and_then(|mut e| e.take()));
-                if let Some(mut ended) = ended { ended(); }
+            WM_QUERYENDSESSION => return match step(SessionStep::Query) {
+                SessionReply::Ends => 1,
+                SessionReply::Waits => {
+                    let reason: Vec<u16> = "Saving before it closes".encode_utf16().chain([0]).collect();
+                    // SAFETY: a window of this thread and a NUL-terminated string that outlives the call.
+                    if unsafe { ShutdownBlockReasonCreate(hwnd, reason.as_ptr()) } != 0 { BLOCKED.with(|b| b.set(hwnd)); }
+                    0
+                }
+                SessionReply::Refuses => 0,
+            },
+            WM_ENDSESSION => {
+                step(if wparam != 0 { SessionStep::Ends } else { SessionStep::Continues });
+                if wparam == 0 { unblock(); }
             }
             // SAFETY: removes this subclass from the window it was set on.
             WM_NCDESTROY => unsafe { RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS); },
