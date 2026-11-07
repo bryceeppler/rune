@@ -8,6 +8,7 @@ impl<S: 'static> Runtime<S> {
         let physical_key = one.physical_key;
         one.focused = self.focused_key();
         if matches!(ev.key, crate::Key::Modifier { .. }) { return !repeat && self.route_modifier(ev, one); }
+        self.app_ime.key_pressed();
         one.key_repeat = repeat;
         let shown = self.keyboard_focus || self.hover_focus;
         self.keyboard_focus |= focus::navigates(ev);
