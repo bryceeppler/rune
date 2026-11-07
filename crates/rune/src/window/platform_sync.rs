@@ -26,10 +26,10 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     }
 }
 
-/// Turns the window's input method off, ending its composition first, then back on if `allowed`.
-/// The composition's commit, if any, follows as events for the field that composed it.
+/// Turns the window's input method off, discarding the composition the runtime finished, then
+/// back on if `allowed`.
 pub(super) fn reset_ime(window: &winit::window::Window, allowed: bool) {
-    crate::platform::ime::end_composition(window);
+    crate::platform::ime::discard_composition(window);
     window.set_ime_allowed(false);
     window.set_ime_allowed(allowed);
 }

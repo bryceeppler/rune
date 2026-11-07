@@ -1,11 +1,11 @@
-//! Ends the platform input method's composition. winit's `set_ime_allowed(false)` leaves it open
-//! on macOS and Windows, where the input method's next keystroke or commit would reach whatever
-//! has focus then. On X11 it destroys the input context and on Wayland it deactivates the input
-//! method, either of which ends the composition.
+//! Discards the platform input method's composition once Rune has committed the text it
+//! showed. winit's `set_ime_allowed(false)` leaves it open on macOS and Windows, where the input
+//! method's next keystroke would extend it. On X11 the toggle destroys the input context and on
+//! Wayland it deactivates the input method, either of which ends it.
 
-/// The input method commits the composition or drops it, by its own rules. A commit arrives as
-/// `Ime::Commit` once winit delivers the events this queued, ahead of any later input.
-pub(crate) fn end_composition(window: &winit::window::Window) {
+/// The input method drops the composition; one that commits it anyway sends a commit the
+/// runtime drops as the finished composition's late answer.
+pub(crate) fn discard_composition(window: &winit::window::Window) {
     #[cfg(target_os = "macos")]
     if let Some(view) = super::macos::content_view(window) {
         // SAFETY: main thread; winit's content view implements NSTextInputClient.
@@ -13,13 +13,12 @@ pub(crate) fn end_composition(window: &winit::window::Window) {
     }
     #[cfg(target_os = "windows")]
     if let Some(hwnd) = super::win32::hwnd(window) {
-        use windows_sys::Win32::UI::Input::Ime::{CPS_COMPLETE, ImmGetContext, ImmNotifyIME, ImmReleaseContext, NI_COMPOSITIONSTR};
-        // SAFETY: the window's own thread. IMM32 bridges TSF input methods, which answer through
-        // the same WM_IME_COMPOSITION and WM_IME_ENDCOMPOSITION messages.
+        use windows_sys::Win32::UI::Input::Ime::{CPS_CANCEL, ImmGetContext, ImmNotifyIME, ImmReleaseContext, NI_COMPOSITIONSTR};
+        // SAFETY: the window's own thread. IMM32 bridges TSF input methods too.
         unsafe {
             let context = ImmGetContext(hwnd);
             if context.is_null() { return; }
-            ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+            ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
             ImmReleaseContext(hwnd, context);
         }
     }
