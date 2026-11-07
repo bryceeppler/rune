@@ -300,8 +300,8 @@ impl<S: 'static> Member for Window<S> {
     fn start(&mut self, desktop: &VirtualDesktop) {
         if let Some(saved) = self.restore.take() {
             let screens: Vec<_> = desktop.displays.iter()
-                .map(|d| crate::window::geometry::Screen { area: d.frame.map(|v| v.round() as i32), primary: d.primary }).collect();
-            let placed = saved.fitted(&screens, 0, 1.0);
+                .map(|d| crate::window::geometry::Screen::in_points(d.frame.map(|v| v.round() as i32), d.primary)).collect();
+            let placed = saved.fitted(&screens, 1.0);
             if let Some([x, y, ..]) = placed.frame { return self.resize([x as f32, y as f32, placed.size.0, placed.size.1]); }
         }
         let display = desktop.display_at(self.position);

@@ -548,9 +548,18 @@ app.run();
   `AppHandle::close`. A quit asks every window's hook and goes ahead once all of them proceed:
   macOS Quit from the menu, ⌘Q, the Dock or a logout (AppKit's reply-later termination), and
   `Tx::request_quit` on every platform, which an app's own Quit command (Ctrl-Q) should call.
+  Closing the last main window asks the windows still open as a quit, and asks again each
+  time fewer of them show, so one that cancels keeps the app running while it shows.
   A second close or quit while one waits joins it. `Tx::quit` and `AppHandle::quit` ask
-  nothing. A close or quit that goes ahead runs `on_close` as before. Endings the system won't
-  wait for run `on_close` alone, synchronously, before the process can end: a Windows session
+  nothing. A close or quit that goes ahead runs `on_close` as before.
+  A request covers every input the window was given: input queued when Rune asks reaches the
+  app before the hook, and input that reaches it while the app holds the request makes a
+  `proceed()` ask the hook again, so a save that started before the last keystroke never ends
+  the window.
+  Windows asks before a session ends (`WM_QUERYENDSESSION`): every window's hook is asked as
+  a quit, and while one saves the session waits, the shutdown screen naming the app, which
+  exits once every window proceeds. Endings the system won't wait for run `on_close` alone,
+  synchronously, after the window's queued input, before the process can end: a Windows session
   end (`WM_ENDSESSION`), `SIGTERM` on macOS and Linux, and a display server that goes away.
   Headless runs ask too: a `--desktop` script's `{"quit": true}` is a system quit, and a test
   can drive the hook through `Runtime::request_close` and `Runtime::settle_close`.
@@ -563,7 +572,8 @@ app.run();
   geometry and passing it to `App::restore_geometry` at the next launch reopens the window where
   it was. Restoring moves and shrinks the frame to lie wholly on a display present now (the one
   it overlaps most, else centred on the primary display, inside the menu bar, Dock and taskbar),
-  then maximizes it or makes it fullscreen as it was; a window saved minimized opens normal.
+  at that display's scale, since the window keeps its size in points, then maximizes it or makes
+  it fullscreen as it was; a window saved minimized opens normal.
   Wayland restores the size and state, and the compositor places the window.
 - `Tx::set_title("Draft — Notes")` sets the window's title from a handler or `update`. The window
   opens with `AppSpec`'s title, keeps the last one set when it closes and opens again, and headless

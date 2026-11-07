@@ -39,38 +39,48 @@ pub struct WindowGeometry {
     pub display: Option<String>,
 }
 
-/// A display's usable area in desktop units: its bounds less the menu bar, Dock or taskbar.
+/// A display's usable area in desktop units, its bounds less the menu bar, Dock or taskbar, and
+/// how a window's frame meets it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Screen {
     pub area: [i32; 4],
+    /// Desktop units per point on it.
+    pub units: f64,
+    /// How far an edge may pass the area: Windows' invisible resize border, which counts in a
+    /// window's frame.
+    pub slack: i32,
     pub primary: bool,
 }
 
-/// `frame` moved and shrunk to lie wholly on one of `screens`: the one it overlaps most, keeping
-/// its place there, else centred on the primary screen. Edges may pass an area by `slack`, the
-/// invisible resize border Windows counts in a window's frame. None without screens.
-pub(crate) fn fit(frame: [i32; 4], screens: &[Screen], slack: i32) -> Option<[i32; 4]> {
-    let overlap = |s: &Screen| {
-        let span = |a: i32, al: i32, b: i32, bl: i32| (i64::from(a) + i64::from(al)).min(i64::from(b) + i64::from(bl)) - i64::from(a.max(b));
-        let (w, h) = (span(frame[0], frame[2], s.area[0], s.area[2]), span(frame[1], frame[3], s.area[1], s.area[3]));
-        if w > 0 && h > 0 { w * h } else { 0 }
-    };
-    let best = screens.iter().max_by_key(|s| overlap(s)).filter(|s| overlap(s) > 0);
-    let screen = best.or_else(|| screens.iter().find(|s| s.primary)).or(screens.first())?;
-    let [ax, ay, aw, ah] = screen.area;
-    let (w, h) = (frame[2].min(aw + 2 * slack), frame[3].min(ah + 2 * slack));
-    let (x, y) = if best.is_some() { (frame[0], frame[1]) } else { (ax + (aw - w) / 2, ay + (ah - h) / 2) };
-    Some([x.clamp(ax - slack, ax + aw + slack - w), y.clamp(ay - slack, ay + ah + slack - h), w, h])
+impl Screen {
+    /// A screen that takes frames in points, as macOS and the headless desktop do.
+    pub(crate) fn in_points(area: [i32; 4], primary: bool) -> Self { Screen { area, units: 1.0, slack: 0, primary } }
 }
 
 impl WindowGeometry {
-    /// This geometry placed on `screens`: its frame fitted (`fit`) and its content shrunk by
-    /// what the frame lost, at `units` desktop units per point.
-    pub(crate) fn fitted(&self, screens: &[Screen], slack: i32, units: f64) -> WindowGeometry {
+    /// This geometry placed on `screens`, its frame saved at `units` desktop units per point:
+    /// the screen the frame overlaps most, keeping its place there, else centred on the primary
+    /// screen. The frame is rescaled to that screen's units, since the window keeps its size in
+    /// points, then moved and shrunk to lie wholly on it, and the content shrinks by what the
+    /// frame lost. Unchanged without a frame or screens.
+    pub(crate) fn fitted(&self, screens: &[Screen], units: f64) -> WindowGeometry {
         let Some(frame) = self.frame else { return self.clone() };
-        let Some(placed) = fit(frame, screens, slack) else { return self.clone() };
-        let lost = |was: i32, now: i32| (f64::from(was - now) / units) as f32;
-        let size = (self.size.0 - lost(frame[2], placed[2]), self.size.1 - lost(frame[3], placed[3]));
+        let overlap = |s: &Screen| {
+            let span = |a: i32, al: i32, b: i32, bl: i32| (i64::from(a) + i64::from(al)).min(i64::from(b) + i64::from(bl)) - i64::from(a.max(b));
+            let (w, h) = (span(frame[0], frame[2], s.area[0], s.area[2]), span(frame[1], frame[3], s.area[1], s.area[3]));
+            if w > 0 && h > 0 { w * h } else { 0 }
+        };
+        let best = screens.iter().max_by_key(|s| overlap(s)).filter(|s| overlap(s) > 0);
+        let Some(screen) = best.or_else(|| screens.iter().find(|s| s.primary)).or(screens.first()) else { return self.clone() };
+        let ratio = if units > 0.0 { screen.units / units } else { 1.0 };
+        let rescale = |v: i32| (f64::from(v) * ratio).round() as i32;
+        let (want_w, want_h) = (rescale(frame[2]), rescale(frame[3]));
+        let ([ax, ay, aw, ah], slack) = (screen.area, screen.slack);
+        let (w, h) = (want_w.min(aw + 2 * slack), want_h.min(ah + 2 * slack));
+        let (x, y) = if best.is_some() { (frame[0], frame[1]) } else { (ax + (aw - w) / 2, ay + (ah - h) / 2) };
+        let placed = [x.clamp(ax - slack, ax + aw + slack - w), y.clamp(ay - slack, ay + ah + slack - h), w, h];
+        let lost = |was: i32, now: i32| (f64::from(was - now) / screen.units) as f32;
+        let size = (self.size.0 - lost(want_w, w), self.size.1 - lost(want_h, h));
         WindowGeometry { frame: Some(placed), size, ..self.clone() }
     }
 }
@@ -79,6 +89,7 @@ impl WindowGeometry {
 fn units_per_point(scale: f64) -> f64 { if cfg!(target_os = "macos") { 1.0 } else { scale } }
 
 /// How far Windows' invisible resize border reaches outside a window's visible frame.
+#[cfg(not(target_os = "macos"))]
 fn slack(scale: f64) -> i32 { if cfg!(target_os = "windows") { (8.0 * scale).round() as i32 } else { 0 } }
 
 /// What a window's host remembers of its geometry: the frame and size it had last while normal,
@@ -121,7 +132,8 @@ fn screens(event_loop: &ActiveEventLoop) -> Vec<Screen> {
             let mut area = [p.x, p.y, s.width as i32, s.height as i32];
             #[cfg(target_os = "windows")]
             if let Some(work) = crate::platform::win32::work_area(&m) { area = work; }
-            Screen { area, primary: primary.as_ref() == Some(&m) }
+            let scale = m.scale_factor();
+            Screen { area, units: units_per_point(scale), slack: slack(scale), primary: primary.as_ref() == Some(&m) }
         }).collect()
     }
 }
@@ -135,7 +147,7 @@ fn mac_screens() -> Vec<Screen> {
     screens.iter().enumerate().map(|(i, s)| {
         let r = s.visibleFrame();
         let area = [r.origin.x, top - r.origin.y - r.size.height, r.size.width, r.size.height].map(|v| v.round() as i32);
-        Screen { area, primary: i == 0 }
+        Screen::in_points(area, i == 0)
     }).collect()
 }
 
@@ -193,7 +205,7 @@ impl<S: 'static> Host<S> {
     pub(super) fn restored_frame(&mut self, event_loop: &ActiveEventLoop) -> Option<(Option<Position>, (f32, f32))> {
         let saved = self.restore.as_ref()?;
         let wayland = is_wayland(event_loop);
-        let placed = saved.fitted(&screens(event_loop), slack(saved.scale), units_per_point(saved.scale));
+        let placed = saved.fitted(&screens(event_loop), units_per_point(saved.scale));
         let position = placed.frame.filter(|_| !wayland).map(|[x, y, ..]| if cfg!(target_os = "macos") {
             Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y)))
         } else {
