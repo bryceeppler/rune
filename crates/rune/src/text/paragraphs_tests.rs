@@ -56,17 +56,20 @@ fn lay_out(ts: &mut TextSystem, n: &Note, scale: f32, width: Option<f32>) -> (Rc
     (whole, stacked)
 }
 
-/// Each glyph run of a line: its x, baseline, ink, size and glyphs, by bits.
-fn runs(line: &parley::Line<'_, Ink>, dy: f32, ink: impl Fn(u16) -> u16) -> Vec<(u32, u32, u16, u32, Vec<(u32, u32, u32)>)> {
-    line.items().filter_map(|item| match item {
-        PositionedLayoutItem::GlyphRun(gr) => Some((
+/// A glyph run's x, baseline, ink, size and glyphs (id, x, advance), by bits.
+type Run = (u32, u32, u16, u32, Vec<(u32, u32, u32)>);
+
+/// Each glyph run of a line, and each inline box as a run of no glyphs.
+fn runs(line: &parley::Line<'_, Ink>, dy: f32, ink: impl Fn(u16) -> u16) -> Vec<Run> {
+    line.items().map(|item| match item {
+        PositionedLayoutItem::GlyphRun(gr) => (
             gr.offset().to_bits(),
             (gr.baseline() + dy).to_bits(),
             ink(gr.style().brush.0),
             gr.run().font_size().to_bits(),
             gr.glyphs().map(|g| (g.id, g.x.to_bits(), g.advance.to_bits())).collect(),
-        )),
-        PositionedLayoutItem::InlineBox(b) => Some((b.x.to_bits(), (b.y + dy).to_bits(), u16::MAX, b.width.to_bits(), Vec::new())),
+        ),
+        PositionedLayoutItem::InlineBox(b) => (b.x.to_bits(), (b.y + dy).to_bits(), u16::MAX, b.width.to_bits(), Vec::new()),
     }).collect()
 }
 
@@ -85,23 +88,57 @@ fn a_stacked_text_lays_out_line_for_line_as_one_layout() {
         for (scale, width) in [(2.0, Some(700.0)), (1.0, Some(350.0)), (2.0, None)] {
             let mut ts = TextSystem::default();
             let (whole, stacked) = lay_out(&mut ts, &n, scale, width);
-            assert_eq!(stacked.len(), whole.len());
-            assert_eq!(stacked.height().to_bits(), whole.height().to_bits());
-            assert_eq!(stacked.full_width().to_bits(), whole.full_width().to_bits());
-            let mut lines = whole.lines().enumerate();
-            for p in stacked.pieces() {
-                for j in 0..p.lines {
-                    let (i, w) = lines.next().unwrap();
-                    let line = stacked.line(i).unwrap();
-                    assert_eq!(line.text_range(), w.text_range(), "line {i} at {scale}x");
-                    assert_eq!(line.break_reason(), w.break_reason());
-                    assert_eq!(line.metrics(), *w.metrics(), "line {i} at {scale}x");
-                    assert_eq!(runs(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), runs(&w, 0.0, |k| k), "line {i} at {scale}x");
-                }
-            }
-            assert!(lines.next().is_none());
-            assert_eq!(stacked.lines().count(), whole.len());
+            assert_line_for_line(&whole, &stacked, &format!("{scale}x"));
         }
+    }
+}
+
+/// `stacked` is `whole` line for line, bit for bit, at its height and width.
+fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
+    assert_eq!(stacked.len(), whole.len(), "{what}");
+    assert_eq!(stacked.height().to_bits(), whole.height().to_bits(), "{what}: height");
+    assert_eq!(stacked.full_width(), whole.full_width(), "{what}: width");
+    let mut lines = whole.lines().enumerate();
+    for p in stacked.pieces() {
+        for j in 0..p.lines {
+            let (i, w) = lines.next().unwrap();
+            let line = stacked.line(i).unwrap();
+            assert_eq!(line.text_range(), w.text_range(), "{what}: line {i}");
+            assert_eq!(line.break_reason(), w.break_reason(), "{what}: line {i}");
+            assert_eq!(line.metrics(), *w.metrics(), "{what}: line {i}");
+            assert_eq!(runs(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), runs(&w, 0.0, |k| k), "{what}: line {i}");
+        }
+    }
+    assert!(lines.next().is_none(), "{what}");
+    assert_eq!(stacked.lines().count(), whole.len(), "{what}");
+}
+
+/// Parley ends a paragraph at `\r`, `\r\n`, U+2028 and U+2029 as at `\n`, and indents each by
+/// its own block: a stack's paragraphs end there too, so the same lines indent.
+#[test]
+fn every_hard_break_ends_a_paragraph_with_its_own_block() {
+    let blocks = vec![Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code, Block::Quote];
+    for sep in ["\r", "\r\n", "\u{2028}", "\u{2029}"] {
+        let n = Note { text: format!("first{sep}second\nthird{sep}fourth{sep}"), spans: Vec::new(), blocks: blocks.clone(), pills: Vec::new() };
+        let (whole, stacked) = lay_out(&mut TextSystem::default(), &n, 2.0, Some(400.0));
+        assert_eq!(stacked.pieces().count(), 4, "{sep:?}");
+        assert_line_for_line(&whole, &stacked, &format!("{sep:?}"));
+        queries_match(&n);
+    }
+}
+
+/// A text ending in a hard break ends in an empty paragraph indented by its own block, also
+/// once deleting the paragraph after the break has made it the last.
+#[test]
+fn a_trailing_empty_paragraph_keeps_its_block() {
+    let mut ts = TextSystem::default();
+    let blocks = vec![Block::Paragraph, Block::Paragraph, Block::Quote];
+    for text in ["first\nsecond\nthird", "first\nsecond\n"] {
+        let n = Note { text: text.into(), spans: Vec::new(), blocks: blocks.clone(), pills: Vec::new() };
+        let (whole, stacked) = lay_out(&mut ts, &n, 2.0, Some(400.0));
+        ts.end_commit();
+        assert_line_for_line(&whole, &stacked, text);
+        queries_match(&n);
     }
 }
 

@@ -1,14 +1,16 @@
-//! A text node's laid-out lines. A text of several hard paragraphs (text between `\n`s) lays
-//! out one Parley layout per paragraph, each cached under that paragraph's text, spans and
-//! style, and stacks them, so an edit reshapes only the paragraph it touches.
+//! A text node's laid-out lines. A text of several hard paragraphs (each ended by a hard line
+//! break, as Parley breaks lines: `\n`, `\r\n`, `\r`, U+2028 or U+2029) lays out one Parley
+//! layout per paragraph, each cached under that paragraph's text, spans, block and style, and
+//! stacks them, so an edit reshapes only the paragraph it touches.
 //!
-//! A paragraph's layout holds the `\n` that ends it, so each line keeps the text range, break
+//! A paragraph's layout holds the break that ends it, so each line keeps the text range, break
 //! reason and newline cluster it has in one layout of the whole text. Parley adds an empty
-//! line after a final newline; the stack drops it from every paragraph but the last, where the
-//! whole text has it too. Paragraph tops are the whole text's line tops rounded to device
-//! pixels, as Parley rounds them, so a paragraph's first line lands where one layout puts it.
-//! Lines below it in a wrapped paragraph follow Parley's rounding inside the paragraph: with
-//! line heights off the pixel grid (a heading, or 1.5x) one can sit a pixel off a whole layout.
+//! line after a final break; the stack drops it from every paragraph but the last, where the
+//! whole text has it too, indented by its own block. Paragraph tops are the whole text's line
+//! tops rounded to device pixels, as Parley rounds them, so a paragraph's first line lands
+//! where one layout puts it. Lines below it in a wrapped paragraph follow Parley's rounding
+//! inside the paragraph: with line heights off the pixel grid (a heading, or 1.5x) one can sit
+//! a pixel off a whole layout.
 
 use std::ops::Range;
 use std::rc::Weak;
@@ -59,13 +61,13 @@ struct Source {
     wrap_anywhere: bool,
 }
 
-/// One paragraph of a text being stacked: its bytes, index, spans, pills and block.
+/// One paragraph of a text being stacked: its bytes, spans, pills and blocks.
 struct Draft<'a> {
     start: usize,
     end: usize,
     spans: &'a [Span],
     pills: &'a [PillChip],
-    block: Option<&'a crate::edit::Block>,
+    blocks: &'a [crate::edit::Block],
 }
 
 impl Stacks {
@@ -84,7 +86,7 @@ impl Stacks {
 impl Source {
     /// The paragraph of this earlier text whose layout `p` of `text` would get, sharing
     /// `prefix` bytes from the start and `suffix` from the end with it: the same bytes, the same
-    /// block and the same spans and pills where they lie in it, as its layout's key covers.
+    /// blocks and the same spans and pills where they lie in it, as its layout's key covers.
     /// `at` is where the last one was found, the place to look first.
     fn same<'s>(&self, stack: &'s Stack, text: &str, prefix: usize, suffix: usize, p: &Draft<'_>, at: &mut usize) -> Option<&'s Para> {
         let old_start = if p.end <= prefix {
@@ -106,13 +108,47 @@ impl Source {
         };
         let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.icon.is_some());
         let (spans, pills) = (&self.spans[q.spans.clone()], &self.pills[q.pills.clone()]);
-        (self.blocks.get(i) == p.block
+        (para_blocks(&self.blocks, i, q.start + q.len == self.text.len() && ends_in_break(&self.text)) == p.blocks
             && spans.len() == p.spans.len()
             && spans.iter().zip(p.spans).all(|(a, b)| local(a, q.start, q.len) == local(b, p.start, q.len))
             && pills.len() == p.pills.len()
             && pills.iter().zip(p.pills).all(|(a, b)| pill(a, q.start) == pill(b, p.start)))
             .then_some(q)
     }
+}
+
+/// The blocks paragraph `k` lays out with: its own, and with `trailing` (it ends a text that
+/// ends in a break) the empty paragraph's after it.
+fn para_blocks(blocks: &[crate::edit::Block], k: usize, trailing: bool) -> &[crate::edit::Block] {
+    blocks.get(k..(k + 1 + trailing as usize).min(blocks.len())).unwrap_or(&[])
+}
+
+fn ends_in_break(text: &str) -> bool { text.ends_with(['\n', '\r', '\u{2028}', '\u{2029}']) }
+
+/// The end of the first hard paragraph of `bytes` at or after `from`: past the line break that
+/// ends it, or the end of the text.
+fn hard_end(bytes: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while let Some(&b) = bytes.get(i) {
+        match b {
+            b'\n' => return i + 1,
+            b'\r' => return i + 1 + (bytes.get(i + 1) == Some(&b'\n')) as usize,
+            0xE2 if bytes.get(i + 1) == Some(&0x80) && matches!(bytes.get(i + 2), Some(0xA8 | 0xA9)) => return i + 3,
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// `text`'s hard paragraphs, each with the line break that ends it.
+fn hard_paragraphs(text: &str) -> impl Iterator<Item = &str> {
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        let end = (start < text.len()).then(|| hard_end(text.as_bytes(), start))?;
+        let piece = &text[start..end];
+        start = end;
+        Some(piece)
+    })
 }
 
 /// How many bytes `a` and `b` share from the start, and then from the end.
@@ -448,10 +484,8 @@ impl Stack {
 /// align within the wrap width, or start-aligned without one: Parley aligns unwrapped lines to
 /// the widest, which a paragraph doesn't know.
 fn stacks(text: &str, spans: &[Span], max_width: Option<f32>, align: Alignment) -> bool {
-    let bytes = text.as_bytes();
     (max_width.is_some() || align == Alignment::Start)
-        && bytes.len() > 1
-        && bytes[..bytes.len() - 1].contains(&b'\n')
+        && hard_end(text.as_bytes(), 0) < text.len()
         && spans.windows(2).all(|w| w[0].end <= w[1].start)
         && !text.chars().any(right_to_left)
 }
@@ -526,16 +560,17 @@ impl TextSystem {
         }).and_then(|l| Some((l.stack.upgrade()?, l)));
         let (prefix, suffix) = last.as_ref().map_or((0, 0), |(_, l)| shared(l.text.as_bytes(), text.as_bytes()));
         let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |(old, _)| old.paras.len() + 1));
+        let trails = ends_in_break(text);
         let mut at = 0;
         let (mut y, mut lines, mut full_width, mut width, mut all_plain) = (0f64, 0usize, 0f32, 0f32, true);
         let (mut s, mut q, mut start) = (0usize, 0usize, 0usize);
-        for (k, piece) in text.split_inclusive('\n').enumerate() {
+        for (k, piece) in hard_paragraphs(text).enumerate() {
             let end = start + piece.len();
             while s < spans.len() && (spans[s].end as usize) <= start { s += 1; }
             let s1 = s + spans[s..].iter().take_while(|sp| (sp.start as usize) < end).count();
             while q < pills.len() && (pills[q].start as usize) < start { q += 1; }
             let q1 = q + pills[q..].iter().take_while(|p| (p.start as usize) < end).count();
-            let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], block: blocks.get(k) };
+            let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], blocks: para_blocks(blocks, k, trails && end == text.len()) };
             let old = last.as_ref().and_then(|(old, l)| l.same(old, text, prefix, suffix, &draft, &mut at));
             let layout = match old {
                 Some(old) => old.layout.clone(),
@@ -548,8 +583,7 @@ impl TextSystem {
                     }));
                     local_pills.clear();
                     local_pills.extend(draft.pills.iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
-                    let block = blocks.get(k..k + 1).unwrap_or(&[]);
-                    self.layout_keyed(None, piece, &local_spans, block, &local_pills, style, scale, max_width, align, wrap_anywhere, true)
+                    self.layout_keyed(None, piece, &local_spans, draft.blocks, &local_pills, style, scale, max_width, align, wrap_anywhere, true)
                 }
             };
             let shown = if end == text.len() { layout.len() } else { layout.len().saturating_sub(1) };
