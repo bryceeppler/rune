@@ -397,13 +397,12 @@ impl<S: 'static> Host<S> {
                 if redraw { l.window.request_redraw(); }
             }
             WindowEvent::Ime(ime) => {
-                match ime {
-                    WIme::Preedit(s, cur) => rt.ime(Ime::Preedit(s, cur)),
-                    WIme::Commit(s) => rt.ime(Ime::Commit(s)),
-                    WIme::Enabled => rt.ime(Ime::Enabled),
-                    // The platform ended the session a reset ended (macOS, Windows, X11).
-                    WIme::Disabled => { rt.ime(Ime::Disabled); rt.ime_session_over(); }
-                }
+                rt.ime_from_platform(match ime {
+                    WIme::Preedit(s, cur) => Ime::Preedit(s, cur),
+                    WIme::Commit(s) => Ime::Commit(s),
+                    WIme::Enabled => Ime::Enabled,
+                    WIme::Disabled => Ime::Disabled,
+                }, false);
                 l.window.request_redraw();
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {

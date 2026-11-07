@@ -4,9 +4,13 @@
 //! A composition ends where it began, as a browser's does on blur. Before focus moves off its
 //! editor, or as the window stops taking keys (after any input that arrived first), Rune
 //! commits the text the editor shows there; a field hears `on_input_change` while it still has
-//! focus. The shell then resets the platform's input method, and everything the platform sends
-//! for the session that reset ended is dropped: until the shell reports that session over, or
-//! the platform's own answer commits. None of it reaches the new focus.
+//! focus. That ends the input method session the composition was open in, and the shell
+//! resets the platform's input method.
+//!
+//! Every event carries the session it belongs to, stamped by whoever delivers it: the shell
+//! knows which of the platform's events answer the reset, and anything else is the current
+//! session's. An event from a session Rune ended is dropped; one from the current session
+//! always arrives.
 use super::*;
 use std::sync::Weak;
 
@@ -17,52 +21,40 @@ enum Owner {
     Field { path: String, model: Weak<()> },
 }
 
-/// An open composition. `since` numbers the input method event that started it, in arrival
-/// order, which places it among the platform's sessions.
+/// An open composition, in the session its events came from.
 struct Composition {
-    since: u64,
+    session: u64,
     owner: Owner,
 }
 
-/// What the shell reports of the platform's input method, in order with its events.
-pub(crate) enum ImeStep {
-    /// The window stopped taking keys: the composition finishes after the input before it.
-    Finish,
-    /// The platform ended every session open when the shell's last reset was sent, which
-    /// covered the events numbered up to this.
-    SessionOver(u64),
-}
-
-/// `App::on_ime`, and the composition open in any editor.
+/// `App::on_ime`, the composition open in any editor, and the sessions its events come from.
 pub(crate) struct AppIme<S> {
     pub(crate) hook: Option<fn(&mut S, &Ime, &mut Tx) -> bool>,
     open: Option<Composition>,
-    /// The `since` of a composition Rune finished: what the platform sends for its session is
-    /// dropped.
-    ended: Option<u64>,
-    /// Input method events that arrived so far.
-    arrived: u64,
-    /// `arrived` when the shell last reset the platform's input method.
-    reset_at: u64,
+    /// The current session. Every one before it was ended by finishing a composition.
+    session: u64,
+    /// The session the last finish ended, until the shell's next reset takes it.
+    ending: Option<u64>,
+    /// The session the shell's last reset ended, which a late event from the platform is from.
+    reset_ended: Option<u64>,
+    /// The platform is still answering the shell's last reset (macOS, Windows, X11): its events
+    /// are late until its next `Enabled` or `Disabled`, or its second idle wait (the number seen).
+    answering: Option<u8>,
     /// Models of removed fields whose finished composition commits once the view shows them
     /// again: only that view can reach them.
     unplaced: Vec<Weak<()>>,
 }
 
 impl<S> Default for AppIme<S> {
-    fn default() -> Self { Self { hook: None, open: None, ended: None, arrived: 0, reset_at: 0, unplaced: Vec::new() } }
+    fn default() -> Self {
+        Self { hook: None, open: None, session: 0, ending: None, reset_ended: None, answering: None, unplaced: Vec::new() }
+    }
 }
 
 impl<S> AppIme<S> {
     /// The app's editor has a composition open: Return and Escape belong to the input method.
     pub(super) fn composing(&self) -> bool {
         self.hook.is_some() && matches!(self.open, Some(Composition { owner: Owner::App { .. }, .. }))
-    }
-
-    /// Numbers an input method event as it arrives.
-    pub(super) fn arrive(&mut self) -> u64 {
-        self.arrived += 1;
-        self.arrived
     }
 
     /// `edit` is a removed field's finished composition, still to commit.
@@ -85,14 +77,24 @@ fn commit_preedit(edit: &mut crate::edit::TextEdit, model: &Weak<()>) -> EditOut
 }
 
 impl<S: 'static> Runtime<S> {
+    /// The input method session events belong to now. Finishing a composition (focus left its
+    /// editor, or the window stopped taking keys) ends its session and starts the next.
+    pub fn ime_session(&self) -> u64 {
+        self.app_ime.session
+    }
+
+    /// An input method event from `session`, as whoever delivers it knows: the shell, or a test
+    /// or embedder replaying one. An event from a session Rune ended is dropped; one from the
+    /// current session ([`Self::ime_session`]) always arrives. [`Self::ime`] sends one from the
+    /// current session.
+    pub fn ime_in(&mut self, session: u64, ev: Ime) {
+        self.queue.push(Action::Ime(ev, session));
+    }
+
     /// An input method event goes to the focused text field, else to `App::on_ime`; turning
-    /// on or off is only the app's to hear. `seq` numbers it in arrival order.
-    pub(super) fn run_ime(&mut self, ev: Ime, seq: u64, one: &mut Tx) -> bool {
-        if self.app_ime.ended.is_some() && matches!(ev, Ime::Preedit(..) | Ime::Commit(_)) {
-            // The ended session's answer; a composition ends with one commit at most.
-            if matches!(ev, Ime::Commit(_)) { self.app_ime.ended = None; }
-            return false;
-        }
+    /// on or off is only the app's to hear.
+    pub(super) fn run_ime(&mut self, ev: Ime, session: u64, one: &mut Tx) -> bool {
+        if session < self.app_ime.session && matches!(ev, Ime::Preedit(..) | Ime::Commit(_)) { return false; }
         let app = matches!(ev, Ime::Enabled | Ime::Disabled) || self.focused_input().is_none();
         let active = self.composing() || matches!(&ev, Ime::Preedit(s, _) | Ime::Commit(s) if !s.is_empty());
         let mut model = None;
@@ -101,12 +103,11 @@ impl<S: 'static> Runtime<S> {
         };
         match &ev {
             Ime::Preedit(s, _) if !s.is_empty() => {
-                let since = self.app_ime.open.as_ref().map_or(seq, |c| c.since);
                 let owner = match (model, self.focused.clone()) {
                     (Some(model), Some(path)) => Owner::Field { path, model },
                     _ => Owner::App { shown: s.clone() },
                 };
-                self.app_ime.open = Some(Composition { since, owner });
+                self.app_ime.open = Some(Composition { session: self.app_ime.session, owner });
             }
             Ime::Preedit(..) | Ime::Commit(_) => self.app_ime.open = None,
             Ime::Enabled | Ime::Disabled => {}
@@ -116,13 +117,33 @@ impl<S: 'static> Runtime<S> {
         ran
     }
 
-    pub(super) fn run_ime_step(&mut self, step: ImeStep) -> bool {
-        match step {
-            ImeStep::Finish => self.finish_composition(),
-            ImeStep::SessionOver(at) => {
-                if self.app_ime.ended.is_some_and(|since| since <= at) { self.app_ime.ended = None; }
-                false
-            }
+    /// The shell reset the platform's input method. With `answers`, the platform's answer is
+    /// still to come and ends with its next `Enabled` or `Disabled`.
+    pub(crate) fn ime_reset_sent(&mut self, answers: bool) {
+        let ime = &mut self.app_ime;
+        ime.reset_ended = ime.ending.take();
+        ime.answering = answers.then_some(0);
+    }
+
+    /// An input method event from the platform. `late`: it answers a session the shell's last
+    /// reset ended, as Wayland's serial tells; elsewhere so is anything before the end of the
+    /// platform's answer to that reset.
+    pub(crate) fn ime_from_platform(&mut self, ev: Ime, late: bool) {
+        let ime = &mut self.app_ime;
+        let late = late || ime.answering.is_some();
+        if matches!(ev, Ime::Enabled | Ime::Disabled) { ime.answering = None; }
+        let session = late.then_some(ime.reset_ended).flatten().unwrap_or(ime.session);
+        self.ime_in(session, ev);
+    }
+
+    /// The event loop is about to wait. macOS and Windows answer a reset while it runs, so
+    /// their answer has arrived by the second wait after it, `Disabled` or not.
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+    pub(crate) fn ime_platform_idle(&mut self) {
+        let ime = &mut self.app_ime;
+        if let Some(waits) = &mut ime.answering {
+            *waits += 1;
+            if *waits >= 2 { ime.answering = None; }
         }
     }
 
@@ -133,27 +154,10 @@ impl<S: 'static> Runtime<S> {
         let composing = self.app_ime.open.is_some() || self.queue.iter().any(|a| matches!(a, Action::Ime(..)));
         if self.queue.is_empty() || !composing {
             self.finish_composition();
-        } else if !self.queue.iter().any(|a| matches!(a, Action::ImeStep(ImeStep::Finish))) {
-            self.queue.push(Action::ImeStep(ImeStep::Finish));
+        } else if !self.queue.iter().any(|a| matches!(a, Action::ImeFinish)) {
+            self.queue.push(Action::ImeFinish);
         }
         self.ime_reset = true;
-    }
-
-    /// The shell reset the platform's input method: the sessions open now end, and their events
-    /// are what a later [`Self::ime_session_over`] vouches for.
-    pub(crate) fn ime_reset_sent(&mut self) {
-        self.app_ime.reset_at = self.app_ime.arrived;
-    }
-
-    /// The platform ended every session open at the last reset the shell sent: what it sends
-    /// from here on belongs to a new one. Whether that's news to the runtime.
-    pub(crate) fn ime_session_over(&mut self) -> bool {
-        let at = self.app_ime.reset_at;
-        let finishing = self.queue.iter().any(|a| matches!(a, Action::ImeStep(ImeStep::Finish)));
-        let told = self.queue.iter().any(|a| matches!(a, Action::ImeStep(ImeStep::SessionOver(n)) if *n == at));
-        let news = (self.app_ime.ended.is_some_and(|since| since <= at) || finishing) && !told;
-        if news { self.queue.push(Action::ImeStep(ImeStep::SessionOver(at))); }
-        news
     }
 
     /// Focus is about to move to `path`: a composition whose editor loses the input method by it
@@ -176,11 +180,11 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
-    /// Commits the open composition's text in the editor it began in; the platform's events
-    /// for its session are dropped from now on.
-    fn finish_composition(&mut self) -> bool {
-        let Some(Composition { since, owner }) = self.app_ime.open.take() else { return false };
-        self.app_ime.ended = Some(since);
+    /// Commits the open composition's text in the editor it began in, and ends its session.
+    pub(super) fn finish_composition(&mut self) -> bool {
+        let Some(Composition { session, owner }) = self.app_ime.open.take() else { return false };
+        self.app_ime.ending = Some(session);
+        self.app_ime.session = self.app_ime.session.max(session + 1);
         self.ime_reset = true;
         match owner {
             Owner::App { shown } => {

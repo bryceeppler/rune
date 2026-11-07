@@ -91,7 +91,7 @@ impl<S: 'static> Runtime<S> {
     /// Keyboard input, a focus change, a file drag step or a file dialog answer is queued for the
     /// next frame.
     pub(crate) fn keys_queued(&self) -> bool {
-        self.queue.iter().any(|a| matches!(a, Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::WindowFocus(_) | Action::ImeStep(_) | Action::Files(_) | Action::FileDialog(..)))
+        self.queue.iter().any(|a| matches!(a, Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::WindowFocus(_) | Action::ImeFinish | Action::Files(_) | Action::FileDialog(..)))
     }
 
     /// The last committed frame is out of date: state changed (an update, poll or handler), or
@@ -460,7 +460,7 @@ impl<S: 'static> Runtime<S> {
             // the previous field. The same boundary covers an earlier handler, and lets a
             // file drag find only what is mounted and reachable now (a covered window builds
             // nothing until this).
-            let routed = matches!(&action, Action::Key { .. } | Action::KeyUp(_) | Action::Physical(..) | Action::Ime(..) | Action::ImeStep(_) | Action::Paste(..) | Action::Files(_));
+            let routed = matches!(&action, Action::Key { .. } | Action::KeyUp(_) | Action::Physical(..) | Action::Ime(..) | Action::ImeFinish | Action::Paste(..) | Action::Files(_));
             // So is a playground an earlier handler opened or moved.
             if routed { self.latch_playground(&mut tx); }
             if (ran || self.dirty || !tx.scroll_to.is_empty()) && routed {

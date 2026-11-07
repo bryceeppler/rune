@@ -70,9 +70,12 @@ fn a_field_taking_the_input_method_commits_the_apps_composition_in_the_app() {
     rt.frame(0.0);
     assert!(rt.ime_reset, "the platform input method resets");
     assert_eq!(rt.state.log, ["Preedit(\"か\", None)", "Commit(\"か\")"], "the app commits what it showed");
-    // The platform's own answer for it reaches no one; the field's next composition is its own.
-    for ev in [Ime::Preedit(String::new(), None), Ime::Commit("家".into()), Ime::Disabled,
-        Ime::Preedit("ね".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("猫".into())] {
+    // The platform's own answer, from the session that ended, reaches no one; the field's next
+    // composition is its own.
+    for ev in [Ime::Preedit(String::new(), None), Ime::Commit("家".into()), Ime::Disabled] {
+        rt.ime_in(rt.ime_session() - 1, ev);
+    }
+    for ev in [Ime::Preedit("ね".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("猫".into())] {
         rt.ime(ev);
     }
     rt.frame(0.0);

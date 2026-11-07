@@ -1,6 +1,7 @@
 //! Focus leaving a field mid-composition, by every path and whatever the platform answers: the
-//! text the field shows commits there before focus moves, and nothing the platform sends for
-//! that composition afterwards reaches the field that took focus.
+//! text the field shows commits there before focus moves, which ends its input method session.
+//! What the platform sends for that session afterwards, stamped with it, reaches no field;
+//! anything from the current session always arrives.
 use super::*;
 use crate::{Ime, Key, KeyEvent, Mods, TextEdit, TextStyle, text_input};
 
@@ -25,6 +26,7 @@ fn view(s: &Notes, _: &mut Cx<Notes>) -> El {
         .child(el().key("button").size(100.0, 40.0).focusable(true).role("button"))
 }
 
+/// `a` composing `か` in the first session.
 fn composing_in_a() -> Runtime<Notes> {
     let mut a = TextEdit::new("");
     a.focused = true;
@@ -37,26 +39,25 @@ fn composing_in_a() -> Runtime<Notes> {
     rt
 }
 
+/// The session `composing_in_a` composed in, which focus leaving ends.
+const FIRST: u64 = 0;
+
+/// Events from the current session.
 fn send(rt: &mut Runtime<Notes>, events: impl IntoIterator<Item = Ime>) {
     for ev in events { rt.ime(ev); }
     rt.frame(0.0);
 }
 
-/// Events from a platform whose `Disabled` after a reset ends the old session (macOS, Windows,
-/// X11), as the shell reports them.
-fn platform(rt: &mut Runtime<Notes>, events: impl IntoIterator<Item = Ime>) {
-    for ev in events {
-        let over = ev == Ime::Disabled;
-        rt.ime(ev);
-        if over { rt.ime_session_over(); }
-    }
+/// Events from `session`, as a shell that knows they answer it delivers them.
+fn late(rt: &mut Runtime<Notes>, session: u64, events: impl IntoIterator<Item = Ime>) {
+    for ev in events { rt.ime_in(session, ev); }
     rt.frame(0.0);
 }
 
-/// The shell resets the platform's input method, as the runtime asked.
-fn shell_resets(rt: &mut Runtime<Notes>) {
-    assert!(std::mem::take(&mut rt.ime_reset), "the platform's input method resets");
-    rt.ime_reset_sent();
+/// Events as the shell hears them from the platform.
+fn platform(rt: &mut Runtime<Notes>, events: impl IntoIterator<Item = Ime>) {
+    for ev in events { rt.ime_from_platform(ev, false); }
+    rt.frame(0.0);
 }
 
 fn click(rt: &mut Runtime<Notes>, x: f32, y: f32) {
@@ -72,6 +73,10 @@ fn press(rt: &mut Runtime<Notes>, key: Key, shift: bool) {
 
 fn preedits_clear(rt: &Runtime<Notes>) -> bool {
     rt.state.a.preedit.is_none() && rt.state.b.preedit.is_none()
+}
+
+fn texts(rt: &Runtime<Notes>) -> (&str, &str) {
+    (rt.state.a.text.as_str(), rt.state.b.text.as_str())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,31 +101,32 @@ fn leave(rt: &mut Runtime<Notes>, path: Path) {
         Path::Removed => { rt.update(|s, _| { s.show_a = false; s.b.focused = true; }); rt.frame(0.0); }
         Path::SecondWindow => { rt.window_focus(false); rt.cancel_composition(); rt.frame(0.0); }
     }
-    shell_resets(rt);
+    assert!(rt.ime_reset, "{path:?}: the platform's input method resets");
+    assert!(rt.ime_session() > FIRST, "{path:?}: the composition's session ended");
 }
 
-/// What the platform sends once its composition is discarded.
+/// What the platform sends once its composition is discarded, all of it from the ended session.
 #[derive(Clone, Copy)]
 enum Answer {
     /// The input method commits its own conversion anyway.
     Commit,
     EmptyCommit,
     Cancel,
-    /// The input method turns off and on before its commit arrives, as winit's Wayland client
-    /// reported it: no `Disabled` there says the old session is over.
+    /// The input method turns off and on before its commit arrives, as a compositor may.
     LateCommit,
 }
 
 fn answer(rt: &mut Runtime<Notes>, answer: Answer) {
     let clear = || Ime::Preedit(String::new(), None);
+    let ended = rt.ime_session() - 1;
     match answer {
-        Answer::Commit => platform(rt, [clear(), Ime::Commit("家".into()), Ime::Disabled]),
-        Answer::EmptyCommit => platform(rt, [clear(), Ime::Commit(String::new()), Ime::Disabled]),
-        Answer::Cancel => platform(rt, [clear(), Ime::Disabled]),
+        Answer::Commit => late(rt, ended, [clear(), Ime::Commit("家".into()), Ime::Disabled]),
+        Answer::EmptyCommit => late(rt, ended, [clear(), Ime::Commit(String::new()), Ime::Disabled]),
+        Answer::Cancel => late(rt, ended, [clear(), Ime::Disabled]),
         Answer::LateCommit => {
-            send(rt, [Ime::Disabled, Ime::Enabled]);
+            late(rt, ended, [Ime::Disabled, Ime::Enabled]);
             for _ in 0..3 { rt.frame(0.016); }
-            send(rt, [clear(), Ime::Commit("家".into()), Ime::Disabled]);
+            late(rt, ended, [clear(), Ime::Commit("家".into()), Ime::Disabled]);
         }
     }
 }
@@ -179,6 +185,7 @@ fn a_commit_before_focus_moves_keeps_the_input_methods_conversion() {
     click(&mut rt, 100.0, 60.0);
     assert_eq!(rt.state.a.text, "家");
     assert_eq!(rt.state.changed, ["a"]);
+    assert_eq!(rt.ime_session(), FIRST, "no composition was open to end its session");
 }
 
 #[test]
@@ -187,19 +194,20 @@ fn an_empty_preedit_commits_nothing_and_the_next_commit_is_the_new_fields() {
     send(&mut rt, [Ime::Preedit(String::new(), None)]);
     click(&mut rt, 100.0, 60.0);
     send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("，".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("", "，"));
+    assert_eq!(texts(&rt), ("", "，"));
     assert_eq!(rt.state.changed, ["b"]);
 }
 
 #[test]
-fn after_a_silent_reset_the_platforms_new_session_is_the_new_fields() {
+fn the_ended_sessions_events_drop_and_the_current_ones_arrive_interleaved() {
     let mut rt = composing_in_a();
     click(&mut rt, 100.0, 60.0);
-    shell_resets(&mut rt);
-    platform(&mut rt, [Ime::Preedit(String::new(), None), Ime::Disabled, Ime::Enabled]);
+    late(&mut rt, FIRST, [Ime::Preedit(String::new(), None)]);
     press(&mut rt, Key::Text("x".into()), false);
     send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("，".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", "x，"));
+    late(&mut rt, FIRST, [Ime::Preedit("かな".into(), None), Ime::Commit("家".into())]);
+    send(&mut rt, [Ime::Commit("。".into())]);
+    assert_eq!(texts(&rt), ("か", "x，。"));
 }
 
 #[test]
@@ -207,7 +215,7 @@ fn a_new_model_under_the_same_field_never_hears_the_old_composition() {
     let mut rt = composing_in_a();
     rt.update(|s, _| { s.a = TextEdit::new("next note"); s.a.focused = true; });
     rt.frame(0.0);
-    shell_resets(&mut rt);
+    assert!(rt.ime_reset, "the platform input method resets for the new note");
     answer(&mut rt, Answer::Commit);
     assert_eq!(rt.state.a.text, "next note", "the old note's composition stays out of the new note");
     assert!(rt.state.changed.is_empty() && preedits_clear(&rt));
@@ -217,26 +225,26 @@ fn a_new_model_under_the_same_field_never_hears_the_old_composition() {
 fn a_late_preedit_from_the_ended_session_stays_out_of_the_new_field() {
     let mut rt = composing_in_a();
     click(&mut rt, 100.0, 60.0);
-    send(&mut rt, [Ime::Disabled, Ime::Enabled, Ime::Preedit("かな".into(), None)]);
+    late(&mut rt, FIRST, [Ime::Disabled, Ime::Enabled, Ime::Preedit("かな".into(), None)]);
     assert!(rt.state.b.preedit.is_none(), "the old session's preedit reached b: {:?}", rt.state.b.preedit);
-    send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", ""));
+    late(&mut rt, FIRST, [Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
+    assert_eq!(texts(&rt), ("か", ""));
 }
 
 #[test]
 fn a_late_preedit_and_conversion_type_nothing_into_the_new_field() {
     let mut rt = composing_in_a();
     click(&mut rt, 100.0, 60.0);
-    send(&mut rt, [Ime::Disabled, Ime::Enabled, Ime::Preedit("かな".into(), None),
+    late(&mut rt, FIRST, [Ime::Disabled, Ime::Enabled, Ime::Preedit("かな".into(), None),
         Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", ""));
+    assert_eq!(texts(&rt), ("か", ""));
 }
 
 #[test]
 fn a_late_preedit_never_reopens_a_composition_deactivation_finished() {
     let mut rt = composing_in_a();
     rt.window_focus(false);
-    send(&mut rt, [Ime::Preedit("かな".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
+    late(&mut rt, FIRST, [Ime::Preedit("かな".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
     assert_eq!(rt.state.a.text, "か", "the finished composition commits once");
     assert_eq!(rt.state.changed, ["a"]);
 }
@@ -262,7 +270,7 @@ fn an_update_queued_before_deactivation_commits_and_the_late_conversion_never_la
     rt.window_focus(false);
     rt.cancel_composition();
     rt.frame(0.0);
-    send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
+    late(&mut rt, FIRST, [Ime::Preedit(String::new(), None), Ime::Commit("仮名".into())]);
     assert_eq!(rt.state.a.text, "かな");
     assert_eq!(rt.state.changed, ["a"]);
 }
@@ -273,26 +281,17 @@ fn a_key_queued_before_deactivation_does_not_let_the_old_commit_through() {
     rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() });
     rt.window_focus(false);
     rt.frame(0.0);
-    send(&mut rt, [Ime::Disabled, Ime::Enabled, Ime::Preedit(String::new(), None), Ime::Commit("家".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", ""));
+    late(&mut rt, FIRST, [Ime::Disabled, Ime::Enabled, Ime::Preedit(String::new(), None), Ime::Commit("家".into())]);
+    assert_eq!(texts(&rt), ("か", ""));
 }
 
 #[test]
-fn after_the_old_sessions_commit_a_direct_commit_is_the_new_fields() {
+fn the_ended_sessions_commit_drops_and_a_direct_commit_in_the_new_one_arrives() {
     let mut rt = composing_in_a();
     click(&mut rt, 100.0, 60.0);
-    send(&mut rt, [Ime::Commit("家".into()), Ime::Commit("，".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", "，"));
-}
-
-#[test]
-fn after_a_silent_cancel_a_direct_commit_in_the_new_session_is_not_lost() {
-    let mut rt = composing_in_a();
-    click(&mut rt, 100.0, 60.0);
-    shell_resets(&mut rt);
-    platform(&mut rt, [Ime::Preedit(String::new(), None), Ime::Disabled, Ime::Enabled]);
+    late(&mut rt, FIRST, [Ime::Commit("家".into())]);
     send(&mut rt, [Ime::Commit("，".into())]);
-    assert_eq!((rt.state.a.text.as_str(), rt.state.b.text.as_str()), ("か", "，"));
+    assert_eq!(texts(&rt), ("か", "，"));
 }
 
 #[test]
@@ -302,7 +301,7 @@ fn hiding_finishes_the_composition_and_drops_its_late_commit() {
     rt.set_live_visible(false);
     assert_eq!(rt.state.a.text, "か");
     assert_eq!(rt.state.a_focused_at_change, [true]);
-    send(&mut rt, [Ime::Disabled, Ime::Enabled, Ime::Preedit(String::new(), None), Ime::Commit("家".into())]);
+    late(&mut rt, FIRST, [Ime::Disabled, Ime::Enabled, Ime::Preedit(String::new(), None), Ime::Commit("家".into())]);
     assert_eq!(rt.state.a.text, "か");
     rt.set_live_visible(true);
     send(&mut rt, [Ime::Preedit("ね".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("猫".into())]);
@@ -351,19 +350,101 @@ fn clearing_undo_history_keeps_the_composition_its_fields() {
     assert_eq!(rt.state.changed, ["a"]);
 }
 
-/// A new rich model replaces `a` first: that ends the old composition, and the platform's new
-/// session starts the one formatting runs through.
+/// The new rich model ends the old composition's session; the composition formatting runs
+/// through is the current session's.
 #[test]
-fn formatting_the_selection_keeps_the_composition_its_fields() {
+fn review_formatting_the_selection_does_not_lose_a_shown_composition() {
     let mut rt = composing_in_a();
     rt.update(|s, _| { s.a = TextEdit::new("before").rich(); s.a.focused = true; s.a.anchor = 0; s.a.focus = 6; });
     rt.frame(0.0);
-    shell_resets(&mut rt);
-    platform(&mut rt, [Ime::Preedit(String::new(), None), Ime::Disabled]);
     send(&mut rt, [Ime::Preedit("か".into(), None)]);
     press(&mut rt, Key::Command('b'), false);
     click(&mut rt, 100.0, 60.0);
     answer(&mut rt, Answer::Commit);
-    assert_eq!(rt.state.a.text, "か", "formatting is not a new model");
+    assert_eq!(rt.state.a.text, "か", "changing formatting must not change the identity of the active composition");
 }
 
+#[test]
+fn review_headless_new_composition_after_silent_reset_survives() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    send(&mut rt, [Ime::Disabled, Ime::Enabled]);
+    send(&mut rt, [Ime::Preedit("ね".into(), None), Ime::Commit("猫".into())]);
+    assert_eq!(rt.state.b.text, "猫");
+}
+
+#[test]
+fn review_silent_cancel_then_direct_commit_is_not_lost() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Disabled, Ime::Enabled]);
+    send(&mut rt, [Ime::Commit("，".into())]);
+    assert_eq!(texts(&rt), ("か", "，"));
+}
+
+#[test]
+fn review_two_fast_focus_changes_preserve_new_composition() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    send(&mut rt, [Ime::Preedit("ね".into(), None)]);
+    click(&mut rt, 100.0, 20.0);
+    assert_eq!(rt.state.b.text, "ね");
+}
+
+#[test]
+fn the_platforms_answer_to_a_reset_is_the_ended_sessions_until_its_disabled() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    rt.ime_reset_sent(true);
+    platform(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("家".into()), Ime::Disabled]);
+    platform(&mut rt, [Ime::Enabled, Ime::Preedit("ね".into(), None), Ime::Preedit(String::new(), None), Ime::Commit("猫".into())]);
+    assert_eq!(texts(&rt), ("か", "猫"));
+}
+
+#[test]
+fn an_answer_without_its_disabled_ends_by_the_second_idle_wait() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    rt.ime_reset_sent(true);
+    platform(&mut rt, [Ime::Commit("家".into())]);
+    rt.ime_platform_idle();
+    platform(&mut rt, [Ime::Commit("仮名".into())]);
+    rt.ime_platform_idle();
+    platform(&mut rt, [Ime::Commit("，".into())]);
+    assert_eq!(texts(&rt), ("か", "，"));
+}
+
+#[test]
+fn a_reset_that_ended_no_session_leaves_every_platform_event_current() {
+    let mut rt = composing_in_a();
+    send(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("家".into())]);
+    click(&mut rt, 100.0, 60.0);
+    rt.ime_reset_sent(true);
+    platform(&mut rt, [Ime::Commit("，".into()), Ime::Disabled]);
+    assert_eq!(texts(&rt), ("家", "，"));
+}
+
+#[test]
+fn a_late_wayland_batch_is_the_ended_sessions_and_a_current_one_arrives() {
+    let mut rt = composing_in_a();
+    click(&mut rt, 100.0, 60.0);
+    rt.ime_reset_sent(false);
+    rt.ime_from_platform(Ime::Preedit(String::new(), None), true);
+    rt.ime_from_platform(Ime::Commit("家".into()), true);
+    rt.ime_from_platform(Ime::Commit("，".into()), false);
+    rt.frame(0.0);
+    assert_eq!(texts(&rt), ("か", "，"));
+}
+
+/// The shell resets at once while the finish waits behind the input queued first: the answer,
+/// stamped with the session that was current, still arrives after the finish ended it.
+#[test]
+fn the_answer_to_a_deactivation_drops_though_its_finish_waits_for_queued_input() {
+    let mut rt = composing_in_a();
+    rt.ime(Ime::Preedit("かな".into(), None));
+    rt.window_focus(false);
+    rt.ime_reset_sent(true);
+    platform(&mut rt, [Ime::Preedit(String::new(), None), Ime::Commit("仮名".into()), Ime::Disabled]);
+    assert_eq!(rt.state.a.text, "かな");
+    assert_eq!(rt.state.changed, ["a"]);
+}

@@ -46,52 +46,60 @@ impl Linux {
         self.text_input.as_mut().map(|t| t.set_area(area)).is_some()
     }
 
-    /// What Rune's own Wayland input method sent since the last call.
-    pub(crate) fn poll(&mut self) -> Vec<crate::Ime> {
+    /// What Rune's own Wayland input method sent since the last call, each event marked late if
+    /// it answers a session that ended.
+    pub(crate) fn poll(&mut self) -> Vec<(bool, crate::Ime)> {
         self.text_input.as_mut().map_or_else(Vec::new, |t| t.poll())
     }
 }
 
-/// The input method drops the composition; one that commits it anyway sends a commit the
-/// runtime drops as the finished composition's late answer.
-pub(crate) fn discard_composition(window: &winit::window::Window) {
+/// The input method drops the composition. Whether the platform answers the reset with events
+/// that end at its next `Enabled` or `Disabled`: macOS and Windows when a composition was open
+/// (an input method may commit it anyway), X11 once winit applies the toggle.
+pub(crate) fn discard_composition(window: &winit::window::Window) -> bool {
     #[cfg(target_os = "macos")]
-    if let Some(view) = super::macos::content_view(window) {
+    return super::macos::content_view(window).is_some_and(|view| {
         // SAFETY: main thread; winit's content view implements NSTextInputClient.
         unsafe { commit_composition(&view) }
-    }
+    });
     #[cfg(target_os = "windows")]
-    if let Some(hwnd) = super::win32::hwnd(window) {
-        use windows_sys::Win32::UI::Input::Ime::{CPS_CANCEL, ImmGetContext, ImmNotifyIME, ImmReleaseContext, NI_COMPOSITIONSTR};
+    return super::win32::hwnd(window).is_some_and(|hwnd| {
+        use windows_sys::Win32::UI::Input::Ime::{CPS_CANCEL, GCS_COMPSTR, ImmGetCompositionStringW, ImmGetContext, ImmNotifyIME, ImmReleaseContext, NI_COMPOSITIONSTR};
         // SAFETY: the window's own thread. IMM32 bridges TSF input methods too.
         unsafe {
             let context = ImmGetContext(hwnd);
-            if context.is_null() { return; }
+            if context.is_null() { return false; }
+            let open = ImmGetCompositionStringW(context, GCS_COMPSTR, std::ptr::null_mut(), 0) > 0;
             ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
             ImmReleaseContext(hwnd, context);
+            open
         }
-    }
+    });
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let _ = window;
+    {
+        let _ = window;
+        cfg!(all(unix, not(target_os = "ios"), not(target_os = "android")))
+    }
 }
 
 /// An IME composition (or a dead key's accent) in the view ends as in an NSTextView: the input
 /// method commits it with `insertText:`, which winit reports as `Ime::Commit`; one that doesn't
-/// is dropped.
+/// is dropped. Whether one was open.
 ///
 /// # Safety
 /// Main thread, with `view` a live WinitView.
 #[cfg(target_os = "macos")]
-pub(crate) unsafe fn commit_composition(view: &objc2_app_kit::NSView) {
+pub(crate) unsafe fn commit_composition(view: &objc2_app_kit::NSView) -> bool {
     use objc2::{msg_send, runtime::AnyObject};
     // SAFETY: the caller's contract; WinitView implements NSTextInputClient.
     unsafe {
         let marked: bool = msg_send![view, hasMarkedText];
-        if !marked { return; }
+        if !marked { return false; }
         let context: *mut AnyObject = msg_send![view, inputContext];
         if let Some(context) = context.as_ref() { let _: () = msg_send![context, discardMarkedText]; }
         // Back to winit's ground state whether or not it committed: right after a commit winit
         // treats the next key as part of it and drops it.
         let _: () = msg_send![view, unmarkText];
     }
+    true
 }

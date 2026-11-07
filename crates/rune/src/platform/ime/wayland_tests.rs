@@ -10,11 +10,10 @@ fn after_a_reset() -> Session {
 }
 
 #[test]
-fn an_answer_for_the_session_a_reset_ended_is_dropped() {
-    let mut session = after_a_reset();
-    session.preedit(Some("かな".into()), 0, 6);
-    session.commit_string(Some("仮名".into()));
-    assert!(session.done(2).is_empty(), "sent before the compositor saw the new enable");
+fn an_answer_for_the_session_a_reset_ended_is_late() {
+    let session = after_a_reset();
+    assert!(session.late(2), "sent before the compositor saw the new enable");
+    assert!(!session.late(3) && !session.late(4));
 }
 
 #[test]
@@ -34,11 +33,20 @@ fn a_composition_in_the_new_session_shows_and_commits() {
 }
 
 #[test]
-fn nothing_arrives_while_the_input_method_is_off() {
+fn what_arrives_while_the_input_method_is_off_is_late() {
     let mut session = after_a_reset();
     session.disabling();
-    session.commit_string(Some("x".into()));
-    assert!(session.done(4).is_empty());
+    assert!(session.late(4));
+}
+
+#[test]
+fn a_serial_past_the_wrap_still_belongs_to_the_session() {
+    let mut session = Session::default();
+    session.commits = u32::MAX - 1;
+    session.enabling();
+    assert_eq!(session.since, u32::MAX);
+    assert!(!session.late(u32::MAX) && !session.late(1));
+    assert!(session.late(u32::MAX - 1));
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! Wayland's input method (`zwp_text_input_v3`), run by Rune on winit's display connection, in
 //! a private queue, for winit's surface. winit's own client drops each `done` event's serial,
-//! so a compositor's answer for a session Rune reset reached the next focus. A reset here
-//! starts a new session, and a `done` whose serial predates that session's `enable` is dropped.
+//! so nothing told a compositor's answer for a session Rune reset from the next session's
+//! input. A reset here starts a new session, and a `done` whose serial predates that session's
+//! `enable` is late: the runtime hears its events as the ended session's.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use wayland_backend::client::{Backend, ObjectId};
@@ -35,13 +36,17 @@ pub(super) struct Session {
 }
 
 impl Session {
+    /// A `done` with this serial answers a session that ended: sent while the input method was
+    /// off, or before the compositor saw the current session's `enable`.
+    pub(super) fn late(&self, serial: u32) -> bool {
+        !self.enabled || (serial.wrapping_sub(self.since) as i32) < 0
+    }
+
     /// A `done` event applies the batch it closes, as the runtime's events, in the protocol's
     /// order: the old preedit goes, the commit goes in, then the new preedit (empty unless the
-    /// batch sent one). Every pending value then resets. Nothing, if it answers a session that
-    /// ended.
-    pub(super) fn done(&mut self, serial: u32) -> Vec<Ime> {
+    /// batch sent one). Every pending value then resets.
+    pub(super) fn done(&mut self, _serial: u32) -> Vec<Ime> {
         let (preedit, commit) = (self.preedit.take(), self.commit.take());
-        if !self.enabled || serial < self.since { return Vec::new(); }
         let mut events = Vec::new();
         if commit.is_some() || preedit.is_none() { events.push(Ime::Preedit(String::new(), None)); }
         events.extend(commit.map(Ime::Commit));
@@ -78,7 +83,8 @@ impl Session {
 struct State {
     surface: ObjectId,
     session: Session,
-    events: Vec<Ime>,
+    /// Each event, and whether it answers a session that ended.
+    events: Vec<(bool, Ime)>,
 }
 
 /// One window's text input, made on first use and kept with the window.
@@ -116,8 +122,8 @@ impl TextInput {
         Some(TextInput { queue, state, manager, seat, text_input })
     }
 
-    /// Ends the session and, if `allowed`, starts a new one: nothing the compositor sends for
-    /// the old one reaches the runtime.
+    /// Ends the session and, if `allowed`, starts a new one: what the compositor sends for the
+    /// old one is late.
     pub(crate) fn reset(&mut self, allowed: bool) {
         let State { session, events, .. } = &mut self.state;
         session.allowed = allowed;
@@ -140,8 +146,9 @@ impl TextInput {
         }
     }
 
-    /// What the compositor sent since the last call, as the runtime's events.
-    pub(crate) fn poll(&mut self) -> Vec<Ime> {
+    /// What the compositor sent since the last call, as the runtime's events, each marked late
+    /// if it answers a session that ended.
+    pub(crate) fn poll(&mut self) -> Vec<(bool, Ime)> {
         let _ = self.queue.dispatch_pending(&mut self.state);
         let _ = self.queue.flush();
         std::mem::take(&mut self.state.events)
@@ -157,21 +164,21 @@ impl Drop for TextInput {
     }
 }
 
-fn enable(text_input: &ZwpTextInputV3, session: &mut Session, events: &mut Vec<Ime>) {
+fn enable(text_input: &ZwpTextInputV3, session: &mut Session, events: &mut Vec<(bool, Ime)>) {
     text_input.enable();
     text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
     if let Some([x, y, w, h]) = session.area { text_input.set_cursor_rectangle(x, y, w, h); }
     text_input.commit();
     session.enabling();
-    events.push(Ime::Enabled);
+    events.push((false, Ime::Enabled));
 }
 
-fn disable(text_input: &ZwpTextInputV3, session: &mut Session, events: &mut Vec<Ime>) {
+fn disable(text_input: &ZwpTextInputV3, session: &mut Session, events: &mut Vec<(bool, Ime)>) {
     if !session.enabled { return; }
     text_input.disable();
     text_input.commit();
     session.disabling();
-    events.push(Ime::Disabled);
+    events.push((false, Ime::Disabled));
 }
 
 impl Dispatch<ZwpTextInputV3, ()> for State {
@@ -188,7 +195,10 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
             }
             Event::PreeditString { text, cursor_begin, cursor_end } => session.preedit(text, cursor_begin, cursor_end),
             Event::CommitString { text } => session.commit_string(text),
-            Event::Done { serial } => events.extend(session.done(serial)),
+            Event::Done { serial } => {
+                let late = session.late(serial);
+                events.extend(session.done(serial).into_iter().map(|ev| (late, ev)));
+            }
             _ => {}
         }
     }

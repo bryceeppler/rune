@@ -22,20 +22,18 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
 }
 
 /// Turns the window's input method off, discarding the composition the runtime finished, then
-/// back on if `allowed`. The runtime drops what the platform still sends for the session this
-/// ends until the platform ends it: at once with Rune's own Wayland input method, at the
-/// platform's next `Disabled` elsewhere.
+/// back on if `allowed`. The runtime hears the platform's answer as the ended session's.
 pub(super) fn reset_ime<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, allowed: bool) {
-    crate::platform::ime::discard_composition(&l.window);
+    let answers = crate::platform::ime::discard_composition(&l.window);
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
     if l.native.ime.reset(&l.window, allowed) {
-        rt.ime_reset_sent();
-        rt.ime_session_over();
+        // Its serials tell the ended session's answers apart.
+        rt.ime_reset_sent(false);
         return;
     }
     l.window.set_ime_allowed(false);
     l.window.set_ime_allowed(allowed);
-    rt.ime_reset_sent();
+    rt.ime_reset_sent(answers);
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
     l.native.ime.wake(&l.window);
 }
@@ -48,15 +46,15 @@ pub(super) fn set_ime_area(l: &mut Win, a: [f32; 4]) {
 }
 
 /// Each turn of the event loop: what Rune's own Wayland input method sent, and on macOS and
-/// Windows, whose input methods answer a reset while it runs, the end of the old session.
+/// Windows, whose input methods answer a reset while it runs, the loop going idle.
 pub(super) fn poll_ime<S: 'static>(l: &mut Win, rt: &mut Runtime<S>) {
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
-    let heard = l.native.ime.poll().into_iter().map(|ev| rt.ime(ev)).count() > 0;
+    if l.native.ime.poll().into_iter().map(|(late, ev)| rt.ime_from_platform(ev, late)).count() > 0 {
+        l.window.request_redraw();
+    }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    let heard = rt.ime_session_over();
-    #[cfg(not(any(target_os = "macos", target_os = "windows", all(unix, not(target_os = "ios"), not(target_os = "android")))))]
-    let heard = false;
-    if heard { l.window.request_redraw(); }
+    rt.ime_platform_idle();
+    let _ = (l, rt);
 }
 
 impl Win {

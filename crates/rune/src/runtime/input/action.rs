@@ -42,9 +42,10 @@ pub(super) enum Action {
     /// innermost first (`runtime/input/gesture.rs`).
     Wheel(u64, Vec<String>, crate::WheelEvent),
     Gesture(Vec<String>, gesture_dispatch::Gesture),
-    /// An input method event, numbered in arrival order.
+    /// An input method event and the session it belongs to.
     Ime(Ime, u64),
-    ImeStep(app_ime::ImeStep),
+    /// The window stopped taking keys: the composition finishes after the input before it.
+    ImeFinish,
     Paste(crate::ClipboardContent, Option<Option<String>>),
     /// A `Tx::read_clipboard` callback's id and what the clipboard held.
     ClipboardRead(u64, crate::ClipboardContent),
@@ -172,7 +173,7 @@ fn handler_name(action: &Action) -> &'static str {
         Action::VisibleRows(..) => "on_visible_rows",
         Action::ScreenLayout(..) => "on_screen_layout",
         Action::Files(_) => "on_drop_files",
-        Action::Ime(..) | Action::ImeStep(_) => "a text input's edit",
+        Action::Ime(..) | Action::ImeFinish => "a text input's edit",
         Action::Paste(..) => "on_paste",
         Action::ClipboardRead(..) => "a `read_clipboard` callback",
         Action::FileDialog(..) => "a file dialog callback",
@@ -457,8 +458,8 @@ impl<S: 'static> Runtime<S> {
             Action::KeyUp(ev) => self.route_key_up(&ev, &mut one),
             Action::Wheel(gesture, chain, ev) => self.run_wheel(gesture, chain, ev, &mut one),
             Action::Gesture(chain, gesture) => self.run_gesture(chain, gesture, &mut one),
-            Action::Ime(ev, seq) => self.run_ime(ev, seq, &mut one),
-            Action::ImeStep(step) => self.run_ime_step(step),
+            Action::Ime(ev, session) => self.run_ime(ev, session, &mut one),
+            Action::ImeFinish => self.finish_composition(),
             Action::Paste(content, target) => {
                 if target.is_some_and(|target| target != self.paste_target()) { return false; }
                 let hook = self.focused_input().and_then(|i| i.paste.clone());

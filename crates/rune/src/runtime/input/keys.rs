@@ -292,8 +292,9 @@ impl<S: 'static> Runtime<S> {
         self.queue.push(Action::Key { ev, repeat: true, stage: false });
     }
 
+    /// An input method event from the current session ([`Runtime::ime_in`]).
     pub fn ime(&mut self, ev: Ime) {
-        self.queue.push(Action::Ime(ev, self.app_ime.arrive()));
+        self.ime_in(self.ime_session(), ev);
     }
 
     pub fn paste(&mut self, text: impl Into<String>) {
