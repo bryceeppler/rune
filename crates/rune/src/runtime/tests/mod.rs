@@ -11,6 +11,7 @@ mod fold_glide;
 mod glyph_replay;
 mod group_opacity;
 mod id_pruning;
+mod ime_focus;
 mod input_clipboard;
 mod layout_hover;
 mod layout_reads;
