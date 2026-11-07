@@ -502,6 +502,9 @@ let app = rune::App::new(spec)
     .accessory()                   // macOS: menu-bar app, no Dock icon (h.set_dock_icon(true) shows it)
     .standard_menus()              // macOS: Edit, Minimize ⌘M and Close ⌘W (no Quit); regular apps get them anyway
     .on_close(|s, tx| ..)          // runs before every close; tx.quit() quits instead
+    .on_close_request(|s, request, tx| ..) // asked before a close or quit: proceed, cancel or answer later
+    .on_geometry(|s, geometry, tx| false)  // the window moved, resized, maximized ...: save it
+    .restore_geometry(saved)       // open where it was, moved onto a display present now
     .on_reopen(|s, has_visible, tx| false); // macOS: Dock icon clicked; true skips the default
     // .window_options(WindowOptions { max_size, resizable, .. }) for this window
 let handle = app.handle();     // AppHandle<S>: Clone + Send + Sync, usable before run
@@ -528,6 +531,40 @@ app.run();
 - Handlers ask the shell with `Tx::close_window()`, `Tx::minimize()` and `Tx::quit()` (quit wins,
   and either wins over minimize). Minimize does nothing for a hidden window, a panel, a launcher,
   an overlay, a borderless window or a window that can't minimize (debug builds say so).
+- `App::on_close_request` decides whether a close or a quit goes ahead, now or later. Its hook
+  gets a `CloseRequest` saying what would end (`CloseKind::Window` or `CloseKind::Quit`) and
+  answers it once: `proceed()` or `cancel()` in the hook, or later from any thread once a save
+  finishes. Dropping the request cancels, so a save that fails keeps the window open.
+  ```rust
+  fn on_close_request(app: &mut Notes, request: rune::CloseRequest, _: &mut rune::Tx) {
+      if app.saved() { return request.proceed(); }
+      app.core.flush(move |result| match result {   // on the core's thread
+          Ok(()) => request.proceed(),
+          Err(_) => request.cancel(),
+      });
+  }
+  ```
+  Every close asks: the close button, ⌘W, Alt-F4, the taskbar's Close, `Tx::close_window` and
+  `AppHandle::close`. A quit asks every window's hook and goes ahead once all of them proceed:
+  macOS Quit from the menu, ⌘Q, the Dock or a logout (AppKit's reply-later termination), and
+  `Tx::request_quit` on every platform, which an app's own Quit command (Ctrl-Q) should call.
+  A second close or quit while one waits joins it. `Tx::quit` and `AppHandle::quit` ask
+  nothing. A close or quit that goes ahead runs `on_close` as before. Endings the system won't
+  wait for run `on_close` alone, synchronously, before the process can end: a Windows session
+  end (`WM_ENDSESSION`), `SIGTERM` on macOS and Linux, and a display server that goes away.
+  Headless runs ask too: a `--desktop` script's `{"quit": true}` is a system quit, and a test
+  can drive the hook through `Runtime::request_close` and `Runtime::settle_close`.
+- `App::on_geometry` runs, at most once a loop turn, when the window moves, resizes, changes
+  display or scale, or is maximized, minimized, made fullscreen or restored;
+  `WindowHandle::geometry` reads the latest. A `WindowGeometry` holds the outer frame in desktop
+  units (points on macOS, pixels on Windows and X11; none on Wayland, which keeps positions from
+  apps), the content size in points, the `WindowState`, the scale and the display's name. A
+  maximized, fullscreen or minimized window reports the frame it returns to, so saving the latest
+  geometry and passing it to `App::restore_geometry` at the next launch reopens the window where
+  it was. Restoring moves and shrinks the frame to lie wholly on a display present now (the one
+  it overlaps most, else centred on the primary display, inside the menu bar, Dock and taskbar),
+  then maximizes it or makes it fullscreen as it was; a window saved minimized opens normal.
+  Wayland restores the size and state, and the compositor places the window.
 - `Tx::set_title("Draft — Notes")` sets the window's title from a handler or `update`. The window
   opens with `AppSpec`'s title, keeps the last one set when it closes and opens again, and headless
   `--tree` output shows it as `"title"`.
@@ -801,6 +838,8 @@ The `rune-mac` crate holds the app's side (all no-ops off macOS):
 - `rune_mac::remember_frame(name)`, called from `poll` until it returns true, has AppKit save the
   window frame and restore it next launch; `rune_mac::saved_size(name)` gives that size for
   `AppSpec::size`, so the layout doesn't animate to it at launch.
+  It names every window of the process the same, so an app with several windows uses
+  `App::on_geometry` and `App::restore_geometry` instead.
 - `rune_mac::busy(true)` holds the script's swap, for up to 15 minutes, while the app is doing
   something a relaunch would lose; `busy(false)` lets it go. The marker is the process's pid
   under `~/Library/Caches/mac-app/busy/`, so a crash can't hold the swap.
