@@ -73,6 +73,8 @@ pub struct TextEdit {
     allowed_blocks: Option<u8>,
     /// Whether a user has edited the value since `replace_text`.
     edited_tag: EditedTag,
+    /// This model, through clones and every edit: what an input method composition belongs to.
+    identity: Arc<()>,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -167,6 +169,7 @@ impl TextEdit {
             allowed_marks: None,
             allowed_blocks: None,
             edited_tag: EditedTag::default(),
+            identity: Arc::default(),
         }
     }
 

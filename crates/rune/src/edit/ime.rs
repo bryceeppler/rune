@@ -26,3 +26,14 @@ impl Drop for Ime {
         }
     }
 }
+
+impl super::TextEdit {
+    /// Which model this is, unchanged by edits, undo history or formatting; clones share it.
+    pub(crate) fn identity(&self) -> std::sync::Weak<()> {
+        std::sync::Arc::downgrade(&self.identity)
+    }
+
+    pub(crate) fn is_model(&self, identity: &std::sync::Weak<()>) -> bool {
+        identity.ptr_eq(&self.identity())
+    }
+}
