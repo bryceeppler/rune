@@ -290,7 +290,7 @@ impl<S: 'static> Host<S> {
         self.secure_input.set(false);
         self.ime_allowed = false;
         self.rt.cancel_composition();
-        if let Some(w) = &self.win { super::platform_sync::reset_ime(&w.window, false); }
+        if let Some(w) = &mut self.win { super::platform_sync::reset_ime(w, &mut self.rt, false); }
         self.rt.set_live_visible(false);
         self.rt.cancel_timer_frame();
         self.popup.cancel(&mut self.rt);

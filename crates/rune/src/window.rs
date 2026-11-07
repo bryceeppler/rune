@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
+use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Ime as WIme, MouseButton, StartCause, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::ModifiersState;

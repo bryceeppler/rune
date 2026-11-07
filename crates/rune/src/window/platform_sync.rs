@@ -11,27 +11,52 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     secure_input.set(rt.has_secure_focus() && focused);
     let ime_allowed = rt.ime_area.is_some() && !rt.has_secure_focus() && focused;
     if std::mem::take(&mut rt.ime_reset) || ime_allowed != *ime {
-        reset_ime(&l.window, ime_allowed);
+        reset_ime(l, rt, ime_allowed);
         *ime = ime_allowed;
     }
     l.apply_cursor(rt, focused);
     #[cfg(target_os = "macos")]
     l.native.help.sync(&l.window, rt.help_regions());
     clipboard.flush(rt);
-    if let Some(a) = rt.ime_area {
-        l.window.set_ime_cursor_area(
-            LogicalPosition::new(a[0] as f64, a[1] as f64),
-            LogicalSize::new(a[2] as f64, a[3] as f64),
-        );
-    }
+    if let Some(a) = rt.ime_area { set_ime_area(l, a); }
 }
 
 /// Turns the window's input method off, discarding the composition the runtime finished, then
-/// back on if `allowed`.
-pub(super) fn reset_ime(window: &winit::window::Window, allowed: bool) {
-    crate::platform::ime::discard_composition(window);
-    window.set_ime_allowed(false);
-    window.set_ime_allowed(allowed);
+/// back on if `allowed`. The runtime drops what the platform still sends for the session this
+/// ends until the platform ends it: at once with Rune's own Wayland input method, at the
+/// platform's next `Disabled` elsewhere.
+pub(super) fn reset_ime<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, allowed: bool) {
+    crate::platform::ime::discard_composition(&l.window);
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+    if l.native.ime.reset(&l.window, allowed) {
+        rt.ime_reset_sent();
+        rt.ime_session_over();
+        return;
+    }
+    l.window.set_ime_allowed(false);
+    l.window.set_ime_allowed(allowed);
+    rt.ime_reset_sent();
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+    l.native.ime.wake(&l.window);
+}
+
+/// Places the input method's candidates at the caret, `a` in window points.
+pub(super) fn set_ime_area(l: &mut Win, a: [f32; 4]) {
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+    if l.native.ime.set_area(&l.window, a) { return; }
+    l.window.set_ime_cursor_area(LogicalPosition::new(a[0] as f64, a[1] as f64), LogicalSize::new(a[2] as f64, a[3] as f64));
+}
+
+/// Each turn of the event loop: what Rune's own Wayland input method sent, and on macOS and
+/// Windows, whose input methods answer a reset while it runs, the end of the old session.
+pub(super) fn poll_ime<S: 'static>(l: &mut Win, rt: &mut Runtime<S>) {
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+    let heard = l.native.ime.poll().into_iter().map(|ev| rt.ime(ev)).count() > 0;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    let heard = rt.ime_session_over();
+    #[cfg(not(any(target_os = "macos", target_os = "windows", all(unix, not(target_os = "ios"), not(target_os = "android")))))]
+    let heard = false;
+    if heard { l.window.request_redraw(); }
 }
 
 impl Win {

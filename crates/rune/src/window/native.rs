@@ -31,6 +31,7 @@ pub(super) struct Native {
 #[derive(Default)]
 pub(super) struct Native {
     pub(super) activator: Option<crate::platform::activation::Activator>,
+    pub(super) ime: crate::platform::ime::Linux,
 }
 
 #[cfg(target_os = "windows")]

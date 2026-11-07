@@ -359,7 +359,7 @@ impl<S: 'static> Host<S> {
                 rt.set_titlebar_inset(place_chrome(&l.window, chrome));
                 if !focused {
                     rt.cancel_composition();
-                    super::platform_sync::reset_ime(&l.window, false);
+                    super::platform_sync::reset_ime(l, rt, false);
                     self.ime_allowed = false;
                     // A minimized or occluded window skips redraw.
                     l.apply_cursor(rt, false);
@@ -368,15 +368,10 @@ impl<S: 'static> Host<S> {
                 } else {
                     let ime_allowed = rt.ime_area.is_some() && !rt.has_secure_focus();
                     if std::mem::take(&mut rt.ime_reset) || ime_allowed != self.ime_allowed {
-                        super::platform_sync::reset_ime(&l.window, ime_allowed);
+                        super::platform_sync::reset_ime(l, rt, ime_allowed);
                         self.ime_allowed = ime_allowed;
                     }
-                    if let Some(a) = rt.ime_area {
-                        l.window.set_ime_cursor_area(
-                            LogicalPosition::new(a[0] as f64, a[1] as f64),
-                            LogicalSize::new(a[2] as f64, a[3] as f64),
-                        );
-                    }
+                    if let Some(a) = rt.ime_area { super::platform_sync::set_ime_area(l, a); }
                     l.apply_cursor(rt, true);
                 }
                 if rt.stale() { l.window.request_redraw(); }
@@ -406,7 +401,8 @@ impl<S: 'static> Host<S> {
                     WIme::Preedit(s, cur) => rt.ime(Ime::Preedit(s, cur)),
                     WIme::Commit(s) => rt.ime(Ime::Commit(s)),
                     WIme::Enabled => rt.ime(Ime::Enabled),
-                    WIme::Disabled => rt.ime(Ime::Disabled),
+                    // The platform ended the session a reset ended (macOS, Windows, X11).
+                    WIme::Disabled => { rt.ime(Ime::Disabled); rt.ime_session_over(); }
                 }
                 l.window.request_redraw();
             }

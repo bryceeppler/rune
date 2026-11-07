@@ -167,6 +167,7 @@ impl<S: 'static> AnyHost for Host<S> {
         #[cfg(target_os = "macos")]
         self.fn_key();
         self.flush_files(event_loop);
+        if let Some(l) = &mut self.win { super::platform_sync::poll_ime(l, &mut self.rt); }
         // Another window switched the font families (`Tx::set_font_families`).
         if self.rt.follow_font_families() && let Some(w) = &self.win { w.window.request_redraw(); }
         // Process queued hide/close requests before completing a pending first reveal.
