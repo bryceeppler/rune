@@ -22,6 +22,18 @@ impl<S: 'static> AnyHost for Host<S> {
         self.file_dialog.cancel(&mut self.rt);
     }
 
+    fn ask_quit(&mut self, event_loop: &ActiveEventLoop) -> crate::CloseAnswer {
+        if !self.started || self.finished { return crate::CloseAnswer::Proceed; }
+        let answer = self.rt.request_close(crate::CloseKind::Quit);
+        self.drain(event_loop, false);
+        self.publish();
+        answer
+    }
+
+    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { self.rt.settle_close(crate::CloseKind::Quit) }
+
+    fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
+
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.win.as_ref().filter(|w| w.visible);
         let minimized = shown.is_some_and(|w| w.window.is_minimized() == Some(true));
@@ -164,6 +176,7 @@ impl<S: 'static> AnyHost for Host<S> {
             self.rt.refuse_file_dialog("cannot open a file dialog while the window is hidden");
         }
         self.hidden_input(event_loop);
+        self.geometry_turn(event_loop);
         self.a11y_turn();
         false
     }

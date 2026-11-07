@@ -14,6 +14,8 @@ pub(super) struct NativeWindow {
     pub(super) stats: Arc<Mutex<SurfaceStats>>,
     /// The event loop and slot once the host exists, and the requests made before it did.
     pub(super) route: Mutex<(Option<(EventLoopProxy<WakeEvent>, usize)>, Vec<Request>)>,
+    /// What `App::on_geometry` last reported.
+    geometry: Mutex<Option<super::WindowGeometry>>,
 }
 
 /// A window's native reference, refreshed across App close/reopen without owning the window.
@@ -57,6 +59,10 @@ impl WindowHandle {
     /// The window's frame counts: redraws, presents, failed drawable acquisitions, loop turns
     /// and pacing: current totals, and per-second rates updated once a second while it draws.
     pub fn surface_stats(&self) -> SurfaceStats { crate::frame::surface_stats::read(&self.native.stats) }
+    /// Where the window is and how it shows, as `App::on_geometry` last reported it: save it at
+    /// quit to reopen the window there (`App::restore_geometry`). None before it first shows.
+    pub fn geometry(&self) -> Option<super::WindowGeometry> { self.native.geometry.lock().unwrap().clone() }
+    pub(crate) fn set_geometry(&self, geometry: super::WindowGeometry) { *self.native.geometry.lock().unwrap() = Some(geometry); }
     pub(super) fn window(&self) -> Result<Arc<Window>, String> {
         self.native.window.lock().unwrap().upgrade().ok_or_else(|| "window is closed".into())
     }

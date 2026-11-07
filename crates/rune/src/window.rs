@@ -47,6 +47,8 @@ mod event_loop;
 mod events;
 mod file_drop;
 pub(crate) mod frame;
+pub(crate) mod geometry;
+pub use geometry::{WindowGeometry, WindowState};
 mod handle;
 pub use handle::WindowHandle;
 use handle::native_window_number;
@@ -54,6 +56,7 @@ mod lifecycle;
 #[cfg(target_os = "macos")]
 mod mac;
 mod pacing;
+pub(crate) mod quitting;
 pub(crate) use pacing::{
     HiddenPace, Missed, OCCLUDED_MAX, OCCLUDED_RETRY, TIMEOUT_RETRY, TIMER_FRAME, acquire, acquire_checked,
     timer_deadline, timer_wants_frame,
@@ -90,7 +93,16 @@ pub(crate) enum WakeEvent {
     /// the host answers at the end of the turn this wakes.
     #[cfg_attr(not(feature = "accessibility"), allow(dead_code))]
     A11y(usize),
+    /// Something asked the app to quit; every window's `App::on_close_request` is asked.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Quit(crate::platform::quit::QuitFrom),
+    /// The system is ending the app without waiting (`SIGTERM`): every window's `on_close` runs.
+    #[cfg_attr(not(all(unix, not(target_os = "ios"), not(target_os = "android"))), allow(dead_code))]
+    SessionEnd,
 }
+
+/// `App::on_geometry`'s hook.
+pub(crate) type OnGeometry<S> = fn(&mut S, &WindowGeometry, &mut Tx) -> bool;
 
 /// What `Windows` needs of a host, whatever its state type: an app window or an overlay.
 pub(crate) trait AnyHost {
@@ -119,6 +131,12 @@ pub(crate) trait AnyHost {
     fn apply_pending(&mut self, _event_loop: &ActiveEventLoop) {}
     /// Shows, restores and activates it as the default reopen.
     fn reopen(&mut self, _event_loop: &ActiveEventLoop) {}
+    /// Asks `App::on_close_request` whether the app may quit; overlays never object.
+    fn ask_quit(&mut self, _event_loop: &ActiveEventLoop) -> crate::CloseAnswer { crate::CloseAnswer::Proceed }
+    /// The answer to the quit `ask_quit` asked, once there is one.
+    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { None }
+    /// Forgets the quit: a late answer changes nothing.
+    fn withdraw_quit(&mut self) {}
 }
 
 /// Builds every host, attaching its shortcut and menu guards, before any resumes: a window's
@@ -138,9 +156,11 @@ struct Windows {
     hosts: Vec<Option<Box<dyn AnyHost>>>,
     // Weak pool preserves release_gpu_when_closed when the last GPU owner closes.
     gpu: Rc<RefCell<Weak<Gpu>>>,
+    quitting: Option<quitting::Quitting>,
 }
 impl Windows {
     fn cleanup(&mut self, event_loop: &ActiveEventLoop) {
+        self.settle_quit(event_loop);
         for host in &mut self.hosts {
             if let Some(h) = host.as_mut().filter(|h| h.finished()) {
                 h.cancel_menus();
@@ -258,6 +278,8 @@ impl ApplicationHandler<WakeEvent> for Windows {
         {
             let proxy = self.proxy.clone();
             crate::platform::reopen::install(move || proxy.send_event(WakeEvent::Reopen).is_ok());
+            let proxy = self.proxy.clone();
+            crate::platform::quit::install(move || proxy.send_event(WakeEvent::Quit(crate::platform::quit::QuitFrom::AppKit)).is_ok());
         }
         crate::open_url::incoming::settle();
         // A window opened at launch took it; a GPU kept for a later one would sit idle until then.
@@ -272,6 +294,16 @@ impl ApplicationHandler<WakeEvent> for Windows {
             WakeEvent::Reopen => {
                 self.reopen(event_loop);
                 self.cleanup(event_loop);
+                return;
+            }
+            WakeEvent::Quit(from) => {
+                self.ask_quit(event_loop, *from);
+                self.cleanup(event_loop);
+                return;
+            }
+            WakeEvent::SessionEnd => {
+                self.end_session();
+                event_loop.exit();
                 return;
             }
         };
@@ -333,6 +365,10 @@ struct Host<S: 'static> {
     keep_running: bool,
     on_close: Option<fn(&mut S, &mut Tx)>,
     on_reopen: Option<fn(&mut S, bool, &mut Tx) -> bool>,
+    on_geometry: Option<OnGeometry<S>>,
+    geometry: geometry::Watch,
+    /// `App::restore_geometry`, until the window it opens is created.
+    restore: Option<WindowGeometry>,
     /// Its place among the windows receiving links (`App::on_open_url`).
     _open_urls: Option<crate::open_url::incoming::Listening>,
     /// When it last hid, in `reopen::stamp` order.
@@ -406,7 +442,7 @@ impl<S: 'static> Host<S> {
             let _ = proxy.send_event(WakeEvent::App(slot));
         });
         let (open, keep_running, on_close, release_gpu) = (app.open, app.keep_running, app.on_close, app.release_gpu);
-        let on_reopen = app.on_reopen;
+        let (on_reopen, on_close_request, on_geometry, restore) = (app.on_reopen, app.on_close_request, app.on_geometry, app.restore_geometry.take());
         #[cfg(target_os = "macos")]
         let present_log = args.trace.as_ref().map(|_| Arc::default());
         let mut app = app;
@@ -439,6 +475,8 @@ impl<S: 'static> Host<S> {
         }
         rt.on_focus = on_focus;
         rt.app_ime.hook = on_ime;
+        if let Some(hook) = on_close_request { rt.on_close_request(hook); }
+        rt.closing.set_wake(waker.clone());
         rt.set_modifier_keys(modifier_keys);
         rt.set_srgb_blend(srgb_blend); rt.set_font_smoothing(font_smoothing);
         rt.set_system_reduced_motion(crate::platform::preferences::reduced_motion());
@@ -484,6 +522,9 @@ impl<S: 'static> Host<S> {
             keep_running,
             on_close,
             on_reopen,
+            on_geometry,
+            geometry: Default::default(),
+            restore,
             _open_urls: None,
             hidden_at: None,
             release_gpu,
@@ -738,11 +779,14 @@ impl<S: 'static> Host<S> {
     fn try_create(&mut self, event_loop: &ActiveEventLoop, token: Option<String>, focus: bool) -> Result<(), String> {
         // A released window reopens at the height its content reached while it was gone.
         let built = self.shown && self.build_for_show();
+        let restored = self.restored_frame(event_loop);
+        if let Some((_, size)) = restored { self.spec.size = size; }
         let size = self.args.size.unwrap_or(self.spec.size);
         let launcher = self.launcher();
         let visible = !launcher && (self.started || self.options.visible);
         #[allow(unused_mut)]
         let mut attrs = self.options.attributes(self.rt.window_title.current().unwrap_or(self.spec.title), size, self.spec.min_size, visible).with_active(focus);
+        if let Some((Some(position), _)) = restored { attrs = attrs.with_position(position); }
         #[cfg(target_os = "macos")]
         if self.macos_window.nonactivating_panel { attrs = attrs.with_visible(false).with_active(false); }
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
@@ -770,6 +814,8 @@ impl<S: 'static> Host<S> {
         let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
         #[cfg(target_os = "windows")]
         crate::platform::win32::follow_suggested_rect(&window);
+        #[cfg(target_os = "windows")]
+        crate::platform::quit::watch_session_end(&window);
         #[cfg(target_os = "windows")]
         let cloak = crate::platform::win32::Cloak::default();
         #[cfg(target_os = "windows")]
@@ -948,6 +994,8 @@ impl<S: 'static> Host<S> {
         });
         if launcher { self.win.as_mut().unwrap().first_frame.prepare(); }
         self.apply_placement(event_loop);
+        self.restore_state();
+        self.geometry.dirty = true;
         #[cfg(target_os = "macos")]
         if visible && let Some(w) = &self.win && w.native.panel.is_some() { w.show(focus); }
         if let Some(created) = self.on_created.take() { created(self.native_handle.clone()); }

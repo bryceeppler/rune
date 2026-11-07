@@ -136,7 +136,7 @@ impl<S: 'static> Host<S> {
                 self.shell(event_loop);
             }
             WakeEvent::A11y(_) => self.a11y_receive(),
-            WakeEvent::Reopen => {}
+            WakeEvent::Reopen | WakeEvent::Quit(_) | WakeEvent::SessionEnd => {}
         }
     }
 
@@ -173,6 +173,7 @@ impl<S: 'static> Host<S> {
             return;
         }
         self.a11y_window_event(&event);
+        self.geometry.dirty |= matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(_));
         if !matches!(event, WindowEvent::RedrawRequested) && let Some(w) = &mut self.win { w.quiet = false; }
         #[cfg(target_os = "macos")]
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(_))
@@ -198,6 +199,7 @@ impl<S: 'static> Host<S> {
             }
             WindowEvent::CloseRequested => {
                 self.close(event_loop);
+                self.shell(event_loop);
                 return;
             }
             WindowEvent::HoveredFile(path) => { self.files.file(path, false); return; }

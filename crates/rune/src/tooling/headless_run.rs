@@ -124,6 +124,10 @@ pub enum ScriptEvent {
     Focus(bool),
     /// `{"reopen": true}`: the app reopened, as a click on its macOS Dock icon does.
     Reopen,
+    /// `{"quit": true}`: the system asked the app to quit, as macOS Quit or ⌘Q does. A
+    /// `--desktop` run asks every window's `App::on_close_request` and, once all proceed, closes
+    /// every window and prints `rune-quit`; the recording runs on to its end.
+    Quit,
     /// `{"type": "resize", "dw": …, "dh": …, "dur": …}`: a person resizing the window, one step
     /// a frame, (dw, dh) points from its size when the resize began.
     Resize { dw: f32, dh: f32 },

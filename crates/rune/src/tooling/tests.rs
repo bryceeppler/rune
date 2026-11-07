@@ -167,7 +167,7 @@ fn marks_are_inert_events_that_times_can_name() {
 }
 
 /// Headless runs publish the process's `headless_run`, so tests that render one take turns.
-static HEADLESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static HEADLESS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn mark_names_win_over_offsets_and_offsets_must_be_complete() {
@@ -530,9 +530,9 @@ fn desktop_case(name: &str, script: &str, at: f64, extra: &[&str], windows: impl
 }
 
 /// Window pixels at (20, 20) to (120, 80) of the output, and at (160, 40) to (220, 100).
-fn left() -> crate::WindowOptions { crate::WindowOptions { position: Some((20, 20)), physical_size: Some((100, 60)), ..Default::default() } }
-fn right() -> crate::WindowOptions { crate::WindowOptions { position: Some((160, 40)), physical_size: Some((60, 60)), ..Default::default() } }
-fn focus_of(run: &HeadlessRun, t: f64, key: &str) -> (bool, bool) {
+pub(super) fn left() -> crate::WindowOptions { crate::WindowOptions { position: Some((20, 20)), physical_size: Some((100, 60)), ..Default::default() } }
+pub(super) fn right() -> crate::WindowOptions { crate::WindowOptions { position: Some((160, 40)), physical_size: Some((60, 60)), ..Default::default() } }
+pub(super) fn focus_of(run: &HeadlessRun, t: f64, key: &str) -> (bool, bool) {
     let f = run.windows_at(t).into_iter().find(|f| f.key == key).unwrap();
     (f.visible, f.focused)
 }
