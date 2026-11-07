@@ -359,7 +359,7 @@ impl<S: 'static> Host<S> {
                 rt.set_titlebar_inset(place_chrome(&l.window, chrome));
                 if !focused {
                     rt.cancel_composition();
-                    l.window.set_ime_allowed(false);
+                    super::platform_sync::reset_ime(&l.window, false);
                     self.ime_allowed = false;
                     // A minimized or occluded window skips redraw.
                     l.apply_cursor(rt, false);
@@ -368,8 +368,7 @@ impl<S: 'static> Host<S> {
                 } else {
                     let ime_allowed = rt.ime_area.is_some() && !rt.has_secure_focus();
                     if std::mem::take(&mut rt.ime_reset) || ime_allowed != self.ime_allowed {
-                        l.window.set_ime_allowed(false);
-                        l.window.set_ime_allowed(ime_allowed);
+                        super::platform_sync::reset_ime(&l.window, ime_allowed);
                         self.ime_allowed = ime_allowed;
                     }
                     if let Some(a) = rt.ime_area {
