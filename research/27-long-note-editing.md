@@ -105,7 +105,10 @@ building, diffing and laying out every field each commit, about 2.2 ms at 1,600 
 ## Done: one layout per paragraph
 
 A text of several hard paragraphs now lays out one Parley layout per paragraph, cached under that paragraph's text, spans, pills and block, and stacks them in a `TextLayout` (`text/paragraphs.rs`).
-A paragraph ends where Parley ends one and moves to the next block: at `\n`, `\r\n`, a lone `\r`, U+2028 or U+2029.
+A stacked paragraph ends at a `\n`, where Parley always ends a paragraph and monospace tab stops restart their columns.
+Parley's other hard breaks (`\r`, U+2028, U+2029, and a `\r\n` that a style change or inline box splits in two) stay inside it; it lays out with one block per paragraph Parley makes of it, a count read back from its layout.
+Characters with no script of their own take the script of the text before them, which picks their fallback fonts and shaping, so a paragraph that starts with them splits off only where the text before it gives them the script they would take alone; a text whose only script is Latin splits at every `\n`.
+A property test edits random text with every hard break, spans that split `\r\n`, pills, monospace tabs, mixed scripts, blocks, widths and scales, and checks each stack against one layout of the same text.
 An edit's stack starts from the last one built, so only the paragraphs it touches are laid out.
 A stack stays cached only while a node shows it or for two commits; its paragraphs then stay or go under the layout cache's stale budget like any other layout.
 Carets, hits, line moves, selection boxes, decorations, pills, glyphs and accessibility lines go through the stack, and its tests check each against one layout of the same text.
