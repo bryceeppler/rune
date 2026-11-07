@@ -1,9 +1,18 @@
-//! A text node's laid-out lines. A text of several hard paragraphs (each ended by a hard line
-//! break, as Parley breaks lines: `\n`, `\r\n`, `\r`, U+2028 or U+2029) lays out one Parley
-//! layout per paragraph, each cached under that paragraph's text, spans, block and style, and
-//! stacks them, so an edit reshapes only the paragraph it touches.
+//! A text node's laid-out lines. A text of several paragraphs (each up to and including a
+//! `\n`) lays out one Parley layout per paragraph, each cached under that paragraph's text,
+//! spans, blocks and style, and stacks them, so an edit reshapes only the paragraph it touches.
 //!
-//! A paragraph's layout holds the break that ends it, so each line keeps the text range, break
+//! A text splits only at `\n`: Parley always ends a paragraph there, and monospace tab stops
+//! count their columns from there. Characters with no script of their own (spaces, digits,
+//! punctuation, marks, emoji) take the script of the text before them, which picks their
+//! fallback fonts and shaping, so a `\n` splits only where the paragraph after it gives them
+//! the script they take in the whole text ([`paragraph_ends`]). Parley's other hard breaks
+//! (`\r`, U+2028, U+2029, and a `\r\n` that a style change splits in two) stay inside a stacked
+//! paragraph's layout. Each of Parley's paragraphs takes the next block, so a stacked paragraph
+//! lays out with as many blocks as its layout has hard breaks, a count read back from the
+//! layout itself.
+//!
+//! A paragraph's layout holds the `\n` that ends it, so each line keeps the text range, break
 //! reason and newline cluster it has in one layout of the whole text. Parley adds an empty
 //! line after a final break; the stack drops it from every paragraph but the last, where the
 //! whole text has it too, indented by its own block. Paragraph tops are the whole text's line
@@ -14,6 +23,8 @@
 
 use std::ops::Range;
 use std::rc::Weak;
+
+use swash::text::{Codepoint as _, Script};
 
 use parley::BoundingBox;
 use parley::editing::Cursor;
@@ -61,13 +72,25 @@ struct Source {
     wrap_anywhere: bool,
 }
 
-/// One paragraph of a text being stacked: its bytes, spans, pills and blocks.
+/// One paragraph of a text being stacked: its bytes, spans and pills, the text's blocks and
+/// the first of them it takes, and whether it is the text's last.
 struct Draft<'a> {
     start: usize,
     end: usize,
     spans: &'a [Span],
     pills: &'a [PillChip],
     blocks: &'a [crate::edit::Block],
+    block: usize,
+    last: bool,
+}
+
+impl Draft<'_> {
+    /// The blocks it lays out with when its layout has `breaks` hard breaks: one for each of
+    /// Parley's paragraphs it shows, the last paragraph's own or the empty one after a final
+    /// break included.
+    fn blocks(&self, breaks: usize) -> &[crate::edit::Block] {
+        clip(self.blocks, self.block..self.block + breaks + self.last as usize)
+    }
 }
 
 impl Stacks {
@@ -100,15 +123,14 @@ impl Source {
         if paras.get(*at).is_none_or(|q| q.start != old_start) {
             *at = paras.partition_point(|q| q.start < old_start);
         }
-        let i = *at;
-        let q = paras.get(i).filter(|q| q.start == old_start && q.len == p.end - p.start)?;
+        let q = paras.get(*at).filter(|q| q.start == old_start && q.len == p.end - p.start)?;
         *at += 1;
         let local = |s: &Span, start: usize, len: usize| {
             ((s.start as usize).max(start) - start, ((s.end as usize).min(start + len)) - start, s.mono, s.weight.map(f32::to_bits), s.size.map(f32::to_bits), s.italic)
         };
         let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.icon.is_some());
         let (spans, pills) = (&self.spans[q.spans.clone()], &self.pills[q.pills.clone()]);
-        (para_blocks(&self.blocks, i, q.start + q.len == self.text.len() && ends_in_break(&self.text)) == p.blocks
+        (clip(&self.blocks, q.blocks.clone()) == p.blocks(q.breaks)
             && spans.len() == p.spans.len()
             && spans.iter().zip(p.spans).all(|(a, b)| local(a, q.start, q.len) == local(b, p.start, q.len))
             && pills.len() == p.pills.len()
@@ -117,38 +139,92 @@ impl Source {
     }
 }
 
-/// The blocks paragraph `k` lays out with: its own, and with `trailing` (it ends a text that
-/// ends in a break) the empty paragraph's after it.
-fn para_blocks(blocks: &[crate::edit::Block], k: usize, trailing: bool) -> &[crate::edit::Block] {
-    blocks.get(k..(k + 1 + trailing as usize).min(blocks.len())).unwrap_or(&[])
-}
-
-fn ends_in_break(text: &str) -> bool { text.ends_with(['\n', '\r', '\u{2028}', '\u{2029}']) }
-
-/// The end of the first hard paragraph of `bytes` at or after `from`: past the line break that
-/// ends it, or the end of the text.
-fn hard_end(bytes: &[u8], from: usize) -> usize {
-    let mut i = from;
-    while let Some(&b) = bytes.get(i) {
-        match b {
-            b'\n' => return i + 1,
-            b'\r' => return i + 1 + (bytes.get(i + 1) == Some(&b'\n')) as usize,
-            0xE2 if bytes.get(i + 1) == Some(&0x80) && matches!(bytes.get(i + 2), Some(0xA8 | 0xA9)) => return i + 3,
-            _ => i += 1,
+/// Where `text`'s stacked paragraphs end: after each `\n` where the paragraph after it lays
+/// out alone as it does in the whole text. Parley gives a character with no script of its own
+/// the script of the last character before it that has one, or at the text's start the text's
+/// first script, or Latin; a paragraph laid out alone has only its own characters to go by. A
+/// text whose only script is Latin splits at every `\n`.
+fn paragraph_ends(text: &str) -> Vec<usize> {
+    struct Scripts {
+        first: Option<Script>,
+        last: Option<Script>,
+        starts_with_one: bool,
+    }
+    let mut ends: Vec<usize> = text.match_indices('\n').map(|(i, _)| i + 1).filter(|&e| e < text.len()).collect();
+    ends.push(text.len());
+    if !non_ascii(text).any(|(_, c)| scripted(c).is_some_and(|s| s != Script::Latin)) {
+        return ends;
+    }
+    let mut start = 0;
+    let paras: Vec<Scripts> = ends.iter().map(|&end| {
+        let mut scripts = text[start..end].chars().filter_map(scripted);
+        let first = scripts.next();
+        let starts_with_one = text[start..end].chars().next().and_then(scripted).is_some();
+        start = end;
+        Scripts { first, last: scripts.next_back().or(first), starts_with_one }
+    }).collect();
+    let mut before = Vec::with_capacity(paras.len());
+    paras.iter().fold(None, |last, p| { before.push(last); p.last.or(last) });
+    let (mut kept, mut first, mut after) = (vec![text.len()], None, None);
+    for j in (1..paras.len()).rev() {
+        first = paras[j].first.or(first);
+        let alone = first.unwrap_or(Script::Latin);
+        let splits = paras[j].starts_with_one || match before[j] {
+            Some(last) => last == alone,
+            None => first.is_some() || after.unwrap_or(Script::Latin) == Script::Latin,
+        };
+        if splits {
+            kept.push(ends[j - 1]);
+            after = first.or(after);
+            first = None;
         }
     }
-    bytes.len()
+    kept.reverse();
+    let whole_first = paras.iter().find_map(|p| p.first).unwrap_or(Script::Latin);
+    while kept.len() > 1 && whole_first != Script::Latin && text[..kept[0]].chars().all(|c| scripted(c).is_none()) {
+        kept.remove(0);
+    }
+    kept
 }
 
-/// `text`'s hard paragraphs, each with the line break that ends it.
-fn hard_paragraphs(text: &str) -> impl Iterator<Item = &str> {
-    let mut start = 0;
+/// The script of a character that has one of its own, as Parley tells them apart.
+fn scripted(c: char) -> Option<Script> {
+    if c.is_ascii() {
+        return c.is_ascii_alphabetic().then_some(Script::Latin);
+    }
+    Some(c.script()).filter(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown))
+}
+
+/// `text`'s characters past ASCII, and their bytes.
+fn non_ascii(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
+    let mut at = 0;
     std::iter::from_fn(move || {
-        let end = (start < text.len()).then(|| hard_end(text.as_bytes(), start))?;
-        let piece = &text[start..end];
-        start = end;
-        Some(piece)
+        at += text.as_bytes()[at..].iter().position(|b| !b.is_ascii())?;
+        let c = text[at..].chars().next()?;
+        let found = (at, c);
+        at += c.len_utf8();
+        Some(found)
     })
+}
+
+fn clip<T>(all: &[T], r: Range<usize>) -> &[T] {
+    &all[r.start.min(all.len())..r.end.min(all.len())]
+}
+
+/// The hard breaks Parley takes in `text` when no style change or inline box falls inside a
+/// `\r\n`, which then takes two.
+fn likely_breaks(text: &str) -> usize {
+    let b = text.as_bytes();
+    (0..b.len()).filter(|&i| match b[i] {
+        b'\n' => true,
+        b'\r' => b.get(i + 1) != Some(&b'\n'),
+        0xE2 => b.get(i + 1) == Some(&0x80) && matches!(b.get(i + 2), Some(0xA8 | 0xA9)),
+        _ => false,
+    }).count()
+}
+
+fn hard_breaks(layout: &Layout<Ink>) -> usize {
+    layout.lines().filter(|l| l.break_reason() == parley::BreakReason::Explicit).count()
 }
 
 /// How many bytes `a` and `b` share from the start, and then from the end.
@@ -188,6 +264,9 @@ struct Para {
     plain: bool,
     spans: Range<usize>,
     pills: Range<usize>,
+    /// The text's blocks it laid out with, and the hard breaks Parley took in it.
+    blocks: Range<usize>,
+    breaks: usize,
 }
 
 /// One layout of a [`TextLayout`] and where it sits in the text. Parley's bytes, inks, pill
@@ -261,8 +340,12 @@ impl<'a> TextLine<'a> {
         m
     }
 
+    /// Its bytes in the text; for a line holding only an inline box, Parley's `usize::MAX..0`.
     pub(crate) fn text_range(&self) -> Range<usize> {
         let r = self.line.text_range();
+        if r.start > r.end {
+            return r;
+        }
         r.start + self.start..r.end + self.start
     }
 
@@ -485,9 +568,10 @@ impl Stack {
 /// the widest, which a paragraph doesn't know.
 fn stacks(text: &str, spans: &[Span], max_width: Option<f32>, align: Alignment) -> bool {
     (max_width.is_some() || align == Alignment::Start)
-        && hard_end(text.as_bytes(), 0) < text.len()
+        && text.len() > 1
+        && text.as_bytes()[..text.len() - 1].contains(&b'\n')
         && spans.windows(2).all(|w| w[0].end <= w[1].start)
-        && !text.chars().any(right_to_left)
+        && !non_ascii(text).any(|(_, c)| right_to_left(c))
 }
 
 /// A character of a right-to-left script's block, or a right-to-left mark or embedding.
@@ -560,20 +644,19 @@ impl TextSystem {
         }).and_then(|l| Some((l.stack.upgrade()?, l)));
         let (prefix, suffix) = last.as_ref().map_or((0, 0), |(_, l)| shared(l.text.as_bytes(), text.as_bytes()));
         let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |(old, _)| old.paras.len() + 1));
-        let trails = ends_in_break(text);
         let mut at = 0;
         let (mut y, mut lines, mut full_width, mut width, mut all_plain) = (0f64, 0usize, 0f32, 0f32, true);
-        let (mut s, mut q, mut start) = (0usize, 0usize, 0usize);
-        for (k, piece) in hard_paragraphs(text).enumerate() {
-            let end = start + piece.len();
+        let (mut s, mut q, mut start, mut block) = (0usize, 0usize, 0usize, 0usize);
+        for end in paragraph_ends(text) {
+            let piece = &text[start..end];
             while s < spans.len() && (spans[s].end as usize) <= start { s += 1; }
             let s1 = s + spans[s..].iter().take_while(|sp| (sp.start as usize) < end).count();
             while q < pills.len() && (pills[q].start as usize) < start { q += 1; }
             let q1 = q + pills[q..].iter().take_while(|p| (p.start as usize) < end).count();
-            let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], blocks: para_blocks(blocks, k, trails && end == text.len()) };
+            let draft = Draft { start, end, spans: &spans[s..s1], pills: &pills[q..q1], blocks, block, last: end == text.len() };
             let old = last.as_ref().and_then(|(old, l)| l.same(old, text, prefix, suffix, &draft, &mut at));
-            let layout = match old {
-                Some(old) => old.layout.clone(),
+            let (layout, breaks) = match old {
+                Some(old) => (old.layout.clone(), old.breaks),
                 None => {
                     local_spans.clear();
                     local_spans.extend(draft.spans.iter().map(|sp| Span {
@@ -583,7 +666,12 @@ impl TextSystem {
                     }));
                     local_pills.clear();
                     local_pills.extend(draft.pills.iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
-                    self.layout_keyed(None, piece, &local_spans, draft.blocks, &local_pills, style, scale, max_width, align, wrap_anywhere, true)
+                    let lay = |ts: &mut Self, breaks| ts.layout_keyed(None, piece, &local_spans, draft.blocks(breaks), &local_pills, style, scale, max_width, align, wrap_anywhere, true);
+                    let likely = likely_breaks(piece);
+                    let layout = lay(self, likely);
+                    let breaks = hard_breaks(&layout);
+                    let layout = if draft.blocks(breaks) == draft.blocks(likely) { layout } else { lay(self, breaks) };
+                    (layout, breaks)
                 }
             };
             let shown = if end == text.len() { layout.len() } else { layout.len().saturating_sub(1) };
@@ -596,9 +684,10 @@ impl TextSystem {
             full_width = full_width.max(layout.full_width());
             width = width.max(layout.width());
             all_plain &= is_plain;
-            paras.push(Para { layout, start, len: piece.len(), y: top, line: lines, lines: shown, height, plain: is_plain, spans: s..s1, pills: q..q1 });
+            let laid_with = block..block + breaks + draft.last as usize;
+            paras.push(Para { layout, start, len: piece.len(), y: top, line: lines, lines: shown, height, plain: is_plain, spans: s..s1, pills: q..q1, blocks: laid_with, breaks });
             lines += shown;
-            (q, start) = (q1, end);
+            (q, start, block) = (q1, end, block + breaks);
         }
         (self.stacks.spans, self.stacks.pills) = (local_spans, local_pills);
         let unwrapped_width = max_width.is_none().then_some(width);

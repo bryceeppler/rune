@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Ime, Key, KeyEvent, Mods, TextEdit, TextStyle, text_input};
+use crate::{Block, Ime, Key, KeyEvent, Mods, Span, TextEdit, TextStyle, text_input};
 
 const STYLE: TextStyle = TextStyle::new(15.5, 400.0).lh(25.0);
 
@@ -206,4 +206,53 @@ fn undo_and_redo_reshape_nothing() {
     assert_eq!(rt.state.text, typed);
     assert_eq!(rt.text.shaped, shaped, "redo found every paragraph shaped");
     assert_laid_out_whole(&mut rt);
+}
+
+/// A composition holding line breaks lays out as one layout of the text it shows: each break
+/// Parley takes moves the lines after it to the next block, also a `\r\n` that the code
+/// block's spans split in two.
+#[test]
+fn a_composition_with_line_breaks_takes_one_layouts_blocks() {
+    let mut differ = Vec::new();
+    for pre in ["a\nb", "a\r\nb", "a\rb", "a\u{2028}b", "\r\n", "\r", "a\r\n\rb"] {
+        for at in [0, 2, 5, 9] {
+            let mut edit = TextEdit::from_parts("aa\nbb\nccc", vec![], vec![Block::Quote, Block::Bullet(1), Block::Code]);
+            edit.focused = true;
+            edit.set_caret(at);
+            let mut rt = Runtime::new(edit, view, (420.0, 2400.0), Env::new(true, 2.0));
+            rt.frame(0.0);
+            rt.ime(Ime::Enabled);
+            rt.ime(Ime::Preedit(pre.into(), Some((0, pre.len()))));
+            rt.frame(0.0);
+            let (layout, whole) = layouts(&mut rt);
+            if layout.lines().map(|l| (l.text_range(), l.metrics())).ne(whole.lines().map(|w| (w.text_range(), *w.metrics()))) {
+                differ.push((pre, at));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "compositions laid out apart from one layout: {differ:?}");
+}
+
+/// Monospace tabs after a `\r`, U+2028 or U+2029 fill to the stops they reach in one layout
+/// of the text, which counts their columns from the last `\n`.
+#[test]
+fn monospace_tabs_after_any_line_break_stop_where_one_layout_stops() {
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        col().size(420.0, 2400.0).child(crate::rich(s.text.clone(), vec![Span::new(0, s.text.len()).mono()]).font(STYLE).key("tabs").w_full())
+    }
+    let mut differ = Vec::new();
+    for prefix in ["", "a", "ab", "abc"] {
+        for sep in ["\n", "\r\n", "\r", "\u{2028}", "\u{2029}"] {
+            let mut rt = Runtime::new(TextEdit::new(format!("{prefix}{sep}x\ty\nz")), view, (420.0, 2400.0), Env::new(true, 2.0));
+            rt.frame(0.0);
+            let n = rt.nodes.iter().find(|n| n.key.as_deref() == Some("tabs")).unwrap();
+            let (spec, layout) = (n.text.as_deref().unwrap().clone(), n.text_layout.clone().unwrap());
+            let w = (n.local.w - n.inset[0] - n.inset[2]) * rt.env.scale;
+            let whole = rt.text.layout_rich(&spec.content, &spec.spans, spec.style, rt.env.scale, Some(w));
+            if layout.lines().map(|l| l.metrics().advance).ne(whole.lines().map(|w| w.metrics().advance)) {
+                differ.push((prefix, sep));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "tabs that stop apart from one layout's: {differ:?}");
 }

@@ -114,17 +114,121 @@ fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
 }
 
 /// Parley ends a paragraph at `\r`, `\r\n`, U+2028 and U+2029 as at `\n`, and indents each by
-/// its own block: a stack's paragraphs end there too, so the same lines indent.
+/// its own block: a stacked paragraph holding such a break indents the same lines.
 #[test]
-fn every_hard_break_ends_a_paragraph_with_its_own_block() {
+fn every_hard_break_parley_takes_moves_to_the_next_block() {
     let blocks = vec![Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code, Block::Quote];
     for sep in ["\r", "\r\n", "\u{2028}", "\u{2029}"] {
         let n = Note { text: format!("first{sep}second\nthird{sep}fourth{sep}"), spans: Vec::new(), blocks: blocks.clone(), pills: Vec::new() };
         let (whole, stacked) = lay_out(&mut TextSystem::default(), &n, 2.0, Some(400.0));
-        assert_eq!(stacked.pieces().count(), 4, "{sep:?}");
         assert_line_for_line(&whole, &stacked, &format!("{sep:?}"));
         queries_match(&n);
     }
+}
+
+/// Spaces, digits, punctuation and emoji take the script of the text before them, which picks
+/// their fallback fonts: a paragraph starting with them stacks apart only where the text before
+/// it gives them the script it would give them alone, so it lays out as in one layout. Latin
+/// text splits at every `\n`.
+#[test]
+fn a_paragraph_starting_without_a_script_takes_the_one_before_it() {
+    let mut ts = TextSystem::default();
+    for (text, pieces) in [
+        ("first\n\n- item\n123 end\n", 4),
+        ("かな\n👍🏽 ond\nかな\n", 2),
+        ("かな\n- かな\n\nabc\n", 3),
+        ("123\nかな\nabc", 2),
+        ("abc\n\nかな\n(かな)\n", 4),
+    ] {
+        let whole = ts.layout_blocks(text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start);
+        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, false, true);
+        assert_eq!(stacked.pieces().count(), pieces, "{text:?}");
+        assert_line_for_line(&whole, &stacked, text);
+    }
+}
+
+/// Random texts, edited a step at a time with each stack built from the one before, lay out
+/// stacked as one layout of the same text, line for line and caret for caret: every hard break
+/// Parley takes, `\r\n`s a span boundary or pill splits, monospace tabs, hidden marks, pills,
+/// blocks, wrap widths and scales.
+#[test]
+fn random_edits_lay_out_stacked_as_one_layout() {
+    const STEPS: usize = 400;
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move |n: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % n.max(1) as u64) as usize
+    };
+    let tokens = ["word", "ab", " ", "\t", "\t", "e\u{301}", "漢字", "かな", "1", "(", "👍🏽", "\n", "\n", "\r\n", "\r\n", "\r", "\u{2028}", "\u{2029}"];
+    let kinds = [Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code];
+    let mut ts = TextSystem::default();
+    let (mut text, mut spans, mut blocks) = (String::from("first\tline\nsecond\n"), Vec::<Span>::new(), vec![Block::Paragraph]);
+    let mut stacked_steps = 0;
+    for step in 0..STEPS {
+        let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
+        let (at, removed, inserted) = if text.len() > 200 || (bounds.len() > 2 && next(4) == 0) {
+            let a = next(bounds.len() - 1);
+            let b = (a + 1 + next(if text.len() > 200 { 40 } else { 4 })).min(bounds.len() - 1);
+            (bounds[a], bounds[b] - bounds[a], String::new())
+        } else {
+            (bounds[next(bounds.len())], 0, (0..1 + next(3)).map(|_| tokens[next(tokens.len())]).collect::<String>())
+        };
+        text.replace_range(at..at + removed, &inserted);
+        let moved = |v: u32| {
+            let v = v as usize;
+            (if v >= at + removed { v - removed + inserted.len() } else if v > at { at } else { v }) as u32
+        };
+        spans = spans.iter().map(|s| Span { start: moved(s.start), end: moved(s.end), ..s.clone() }).filter(|s| s.start < s.end).collect();
+        let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
+        if step % 3 == 0 {
+            let mut fresh = Vec::new();
+            for _ in 0..next(6) {
+                let (a, b) = (bounds[next(bounds.len())], bounds[next(bounds.len())]);
+                if a == b {
+                    continue;
+                }
+                let sp = Span::new(a.min(b), a.max(b));
+                fresh.push(match next(6) {
+                    0 | 1 => sp.mono(),
+                    2 => sp.size(0.01).color(Color::TRANSPARENT),
+                    3 => sp.weight(700.0).underline(Color::WHITE),
+                    4 => sp.bg(Color::WHITE, 2.0),
+                    _ => sp.size(31.0),
+                });
+            }
+            spans = flatten_spans(&fresh);
+        }
+        if step % 5 == 0 {
+            blocks = (0..2 + text.len() / 4).map(|_| kinds[next(kinds.len())]).collect();
+        }
+        let mut pills = Vec::new();
+        if step % 4 == 1 {
+            let a = next(bounds.len() - 1);
+            let b = (a + 1 + next(4)).min(bounds.len() - 1);
+            if !text[bounds[a]..bounds[b]].contains('\n') {
+                pills.push(PillChip { start: bounds[a] as u32, end: bounds[b] as u32, icon: None, bg: None, fg: None });
+            }
+        }
+        let style = if step / 13 % 3 == 0 { TextStyle { family: Family::Mono, ..STYLE } } else { STYLE };
+        let (scale, width, anywhere) = ([1.0, 2.0][step / 11 % 2], [Some(60.0), Some(160.0), Some(400.0), None][step / 7 % 4], step % 2 == 0);
+        let stacked = ts.layout_text(None, &text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, anywhere, true);
+        let whole = ts.layout_blocks_inner(&text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, anywhere, true);
+        let what = format!("step {step}: {text:?}, spans {:?}, blocks {blocks:?}, pills {:?}", spans.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(), pills.iter().map(|p| (p.start, p.end)).collect::<Vec<_>>());
+        assert_line_for_line(&whole, &stacked, &what);
+        if step % 4 == 0 {
+            for &b in &bounds {
+                let cur = parley::editing::Cursor::from_byte_index(&whole, b, parley::layout::Affinity::Downstream);
+                assert_eq!(stacked.caret_box(b, 1.0), cursor_geometry(&cur, &whole, 1.0), "caret at {b}, {what}");
+                assert_eq!(stacked.move_line(b, true), move_line(&whole, b, true), "down from {b}, {what}");
+                assert_eq!(stacked.line_edge(b, true), line_edge(&whole, b, true), "line end from {b}, {what}");
+            }
+        }
+        stacked_steps += (stacked.pieces().count() > 1) as usize;
+        ts.end_commit();
+    }
+    assert!(stacked_steps > STEPS * 3 / 4, "{stacked_steps} of {STEPS} steps stacked");
 }
 
 /// A text ending in a hard break ends in an empty paragraph indented by its own block, also
