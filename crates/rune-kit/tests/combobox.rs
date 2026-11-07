@@ -56,7 +56,7 @@ fn opening_takes_focus_and_reveals_the_offscreen_selection() {
     assert!(last.visible[3] > 0.0);
     key(&mut rt, Key::Text("099".into()), Mods::default());
     assert_eq!(rt.state.combo.search.text, "099");
-    assert_eq!(rt.state.other.text, "");
+    assert_eq!(rt.state.other.text, "pending", "the composition commits in the field it began in");
 }
 
 #[test]
