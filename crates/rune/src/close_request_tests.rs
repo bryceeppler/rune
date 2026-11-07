@@ -125,6 +125,19 @@ fn input_given_while_a_save_runs_asks_again_before_the_window_goes() {
 }
 
 #[test]
+fn a_quit_that_proceeded_asks_again_when_input_reaches_its_window() {
+    let mut rt = runtime(Some(true));
+    assert_eq!(rt.request_close(CloseKind::Quit), CloseAnswer::Proceed);
+    // Another window is still saving, so the quit is undecided when this one hears a key.
+    type_text(&mut rt, "x");
+    rt.frame(0.016);
+    assert_eq!(rt.settle_close(CloseKind::Quit), Some(CloseAnswer::Proceed));
+    assert_eq!((rt.state.asked.len(), rt.state.saved.as_str()), (2, "x"), "the hook is asked again with the key");
+    rt.withdraw_close(CloseKind::Quit);
+    assert_eq!(rt.settle_close(CloseKind::Quit), None, "a decided quit is withdrawn");
+}
+
+#[test]
 fn a_quit_waits_for_every_window_and_any_cancel_ends_it() {
     use CloseAnswer::*;
     assert_eq!(all_of([]), Proceed);

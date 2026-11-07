@@ -6,10 +6,16 @@
 //! loop and answers "later"; the loop asks each window's hook and `reply` answers AppKit.
 //!
 //! Windows asks with `WM_QUERYENDSESSION` and can't wait: the query asks each window's hook,
-//! and while one saves the session waits, the app named in the shutdown screen until its quit
-//! settles (`on_session`). `WM_ENDSESSION` then ends the session, after which the process may
-//! die at any moment, so each window's `on_close` runs before it returns. A desktop session on
-//! Unix ends with `SIGTERM`, which runs `on_close` too (`on_sigterm`).
+//! and once all proceed each window's `on_close` runs before the query answers; while one saves
+//! the session waits, the app named in the shutdown screen until its quit settles
+//! (`on_session`). `WM_ENDSESSION` then ends the session, after which the process may die at any
+//! moment, so the `on_close` still due runs before it returns. A desktop session on Unix ends
+//! with `SIGTERM`, which runs `on_close` too (`on_sigterm`).
+//!
+//! The one path that can't reach the app synchronously: a step that arrives while a handler runs
+//! a message loop of its own (a modal dialog), which holds the app's state borrowed. A query
+//! there makes the session wait, so only a forced end can arrive that way, and its `on_close`
+//! runs once the handler returns, if the process lives that long (`quitting::session_later`).
 
 /// Who asked the app to quit, and so who hears the answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -177,6 +183,7 @@ mod unix {
 #[cfg(target_os = "windows")]
 mod win {
     use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
@@ -188,16 +195,16 @@ mod win {
     const SUBCLASS: usize = 0x5255_4e45;
 
     thread_local! {
-        static SESSION: RefCell<Option<Box<dyn FnMut(SessionStep) -> SessionReply>>> = const { RefCell::new(None) };
+        static SESSION: RefCell<Option<Rc<dyn Fn(SessionStep) -> SessionReply>>> = const { RefCell::new(None) };
         /// The window the shutdown screen names while the session waits on the app.
         static BLOCKED: Cell<HWND> = const { Cell::new(std::ptr::null_mut()) };
     }
 
     /// Runs `step` on the event loop's thread for each session step, inside the window
-    /// procedure that hears it: the query's answer goes back to Windows, and the end returns
-    /// only once `step` has.
-    pub(crate) fn on_session(step: impl FnMut(SessionStep) -> SessionReply + 'static) {
-        SESSION.with(|s| *s.borrow_mut() = Some(Box::new(step)));
+    /// procedure that hears it, a step inside another included: the query's answer goes back to
+    /// Windows, and the end returns only once `step` has.
+    pub(crate) fn on_session(step: impl Fn(SessionStep) -> SessionReply + 'static) {
+        SESSION.with(|s| *s.borrow_mut() = Some(Rc::new(step)));
     }
 
     /// Makes `window` hear the session for `on_session`.
@@ -215,8 +222,8 @@ mod win {
     }
 
     fn step(step: SessionStep) -> SessionReply {
-        // A step inside another (a hook that pumped messages) refuses rather than reenter.
-        SESSION.with(|s| s.try_borrow_mut().ok().and_then(|mut s| s.as_mut().map(|f| f(step)))).unwrap_or(SessionReply::Refuses)
+        let Some(f) = SESSION.with(|s| s.borrow().clone()) else { return SessionReply::Ends };
+        f(step)
     }
 
     unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, _: usize) -> LRESULT {

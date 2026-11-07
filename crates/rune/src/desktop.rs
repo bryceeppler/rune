@@ -98,10 +98,8 @@ impl Desk {
     /// button would and the run prints `rune-quit`.
     fn settle_quit(&mut self, t: f64) {
         let Some(answers) = &mut self.quitting else { return };
-        for (answer, m) in answers.iter_mut().zip(&mut self.members) {
-            if *answer == crate::CloseAnswer::Pending { *answer = m.settle_quit().unwrap_or(crate::CloseAnswer::Proceed); }
-        }
-        let verdict = crate::close_request::all_of(answers.iter().copied());
+        let members = &mut self.members;
+        let verdict = crate::close_request::settle_all(answers, |i| members[i].settle_quit());
         if verdict == crate::CloseAnswer::Pending { return; }
         self.quitting = None;
         for m in &mut self.members { m.withdraw_quit(); }

@@ -151,8 +151,10 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// The request of `kind` in flight: None when there is none, `Pending` while the app holds
-    /// it, and its answer once it has one, which this takes. A proceed waits for input still
-    /// queued, and asks the hook again when the app was given input after it was asked.
+    /// it, and its answer once it has one. A cancel, and a window's proceed, are taken; a quit's
+    /// proceed stays until the quit across windows is decided (`withdraw_close`), since another
+    /// window may still be saving. A proceed waits for input still queued, and asks the hook
+    /// again when the app was given input after it was asked.
     pub fn settle_close(&mut self, kind: CloseKind) -> Option<CloseAnswer> {
         let queued = self.has_pending_input();
         let (answer, heard) = match self.closing.slot(kind).as_ref()? {
@@ -164,6 +166,7 @@ impl<S: 'static> Runtime<S> {
             CloseAnswer::Pending => Some(CloseAnswer::Pending),
             CloseAnswer::Proceed if queued => Some(CloseAnswer::Pending),
             CloseAnswer::Proceed if heard != self.closing.heard => { self.ask_close(kind); self.settle_close(kind) }
+            CloseAnswer::Proceed if kind == CloseKind::Quit => Some(CloseAnswer::Proceed),
             CloseAnswer::Proceed | CloseAnswer::Cancel => {
                 *self.closing.slot(kind) = None;
                 Some(answer)
@@ -208,6 +211,17 @@ pub(crate) fn all_of(answers: impl IntoIterator<Item = CloseAnswer>) -> CloseAns
         (CloseAnswer::Pending, _) | (_, CloseAnswer::Pending) => CloseAnswer::Pending,
         _ => CloseAnswer::Proceed,
     })
+}
+
+/// Where a quit stands across windows given each window's answer so far, one per window, and
+/// `settle`, which reads window `i`'s request again (None when it holds none, which proceeds).
+/// A cancel ends the quit; every other answer is read again each time, since input that reaches
+/// a window after it proceeded asks it again (`Runtime::settle_close`).
+pub(crate) fn settle_all(answers: &mut [CloseAnswer], mut settle: impl FnMut(usize) -> Option<CloseAnswer>) -> CloseAnswer {
+    for (i, answer) in answers.iter_mut().enumerate() {
+        if *answer != CloseAnswer::Cancel { *answer = settle(i).unwrap_or(CloseAnswer::Proceed); }
+    }
+    all_of(answers.iter().copied())
 }
 
 #[cfg(test)]

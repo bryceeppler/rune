@@ -4,7 +4,7 @@
 //! the app without asking (`end_session`) runs every window's `App::on_close` instead.
 
 use super::*;
-use crate::close_request::{CloseAnswer, all_of};
+use crate::close_request::{CloseAnswer, settle_all};
 use crate::platform::quit::{QuitFrom, SessionReply, SessionStep};
 
 type Hosts = [Option<Box<dyn AnyHost>>];
@@ -40,15 +40,10 @@ impl Quitting {
         Quitting { from, answers: hosts.iter_mut().map(|h| h.as_mut().map_or(CloseAnswer::Proceed, |h| h.ask_quit())).collect() }
     }
 
-    /// Collects the answers that arrived. Once the quit is decided, every window's request is
-    /// withdrawn and this is the verdict; `Pending` until then.
+    /// Reads every window's answer again (`settle_all`). Once the quit is decided, every
+    /// window's request is withdrawn and this is the verdict; `Pending` until then.
     fn settle(&mut self, hosts: &mut Hosts) -> CloseAnswer {
-        for (answer, host) in self.answers.iter_mut().zip(hosts.iter_mut()) {
-            if *answer == CloseAnswer::Pending {
-                *answer = host.as_mut().and_then(|h| h.settle_quit()).unwrap_or(CloseAnswer::Proceed);
-            }
-        }
-        let verdict = all_of(self.answers.iter().copied());
+        let verdict = settle_all(&mut self.answers, |i| hosts.get_mut(i).and_then(|h| h.as_mut()).and_then(|h| h.settle_quit()));
         if verdict != CloseAnswer::Pending { withdraw(hosts); }
         verdict
     }
@@ -64,10 +59,13 @@ fn end(hosts: &mut Hosts) {
 }
 
 /// Windows ending the session hears `hosts` from inside a window procedure, without the loop.
-/// The query asks every window's hook as a quit: the session may end once all proceed, waits
-/// while one saves, the loop finishing the quit when it answers (`Windows::settle_quit`), and is
-/// refused when one cancels. The end runs every window's `on_close`, the app's synchronous last
-/// chance; a session that goes on after all forgets the quit the query asked.
+/// The query asks every window's hook as a quit: once all proceed every window closes, running
+/// `on_close`, before the query answers that the session may end, so the app's last save never
+/// waits on `WM_ENDSESSION`. The session waits while a window saves, the loop finishing the quit
+/// when it answers (`Windows::settle_quit`), and is refused when one cancels. The end runs every
+/// window's `on_close` still due: the synchronous last chance of a session Windows ends without
+/// a query, or forces after the app made it wait. A session that goes on after all forgets the
+/// quit the query asked.
 pub(super) fn session(hosts: &mut Hosts, quitting: &mut Option<Quitting>, step: SessionStep) -> SessionReply {
     match step {
         SessionStep::Query => {
@@ -76,7 +74,7 @@ pub(super) fn session(hosts: &mut Hosts, quitting: &mut Option<Quitting>, step: 
             let verdict = quit.settle(hosts);
             if verdict != CloseAnswer::Pending { *quitting = None; }
             match verdict {
-                CloseAnswer::Proceed => SessionReply::Ends,
+                CloseAnswer::Proceed => { end(hosts); SessionReply::Ends }
                 CloseAnswer::Pending => SessionReply::Waits,
                 CloseAnswer::Cancel => SessionReply::Refuses,
             }
@@ -93,8 +91,13 @@ pub(super) fn session(hosts: &mut Hosts, quitting: &mut Option<Quitting>, step: 
     }
 }
 
-/// A session step that arrived while an event holds the windows: the loop takes it once that
-/// event ends, the query as a quit the session waits for.
+/// A session step that arrived while an event holds the windows, from a message loop that
+/// event's handler runs (a modal dialog an app opens), whose handler holds the window's state
+/// borrowed, so nothing of the app can run safely until it returns. The query makes the session
+/// wait and reaches the loop as a quit once that event ends, so a session Windows asks about
+/// never ends on this path. An end that arrives here, which only a forced session end can bring
+/// after that wait, can't run `on_close` before it returns: the loop runs it once the event
+/// ends, if Windows has not ended the process by then.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(super) fn session_later(step: SessionStep) -> SessionReply {
     match step {

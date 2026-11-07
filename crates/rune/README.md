@@ -557,8 +557,12 @@ app.run();
   `proceed()` ask the hook again, so a save that started before the last keystroke never ends
   the window.
   Windows asks before a session ends (`WM_QUERYENDSESSION`): every window's hook is asked as
-  a quit, and while one saves the session waits, the shutdown screen naming the app, which
-  exits once every window proceeds. Endings the system won't wait for run `on_close` alone,
+  a quit; once all proceed each window's `on_close` runs before the query answers, and while one
+  saves the session waits, the shutdown screen naming the app, which exits once every window
+  proceeds. A window that proceeded and then gets input is asked again before the quit ends.
+  The one gap: a forced session end that arrives while a handler runs its own message loop (a
+  modal dialog) can't reach the app, whose state that handler holds, so its `on_close` runs once
+  the handler returns, if Windows hasn't ended the process by then. Endings the system won't wait for run `on_close` alone,
   synchronously, after the window's queued input, before the process can end: a Windows session
   end (`WM_ENDSESSION`), `SIGTERM` on macOS and Linux, and a display server that goes away.
   Headless runs ask too: a `--desktop` script's `{"quit": true}` is a system quit, and a test

@@ -41,11 +41,25 @@ fn windows(answers: &[Option<CloseAnswer>]) -> (Vec<Option<Box<dyn AnyHost>>>, V
 use CloseAnswer::{Cancel, Proceed};
 
 #[test]
-fn the_session_may_end_once_every_window_proceeds() {
+fn a_session_query_every_window_approves_closes_them_before_it_answers() {
     let (mut hosts, hooks) = windows(&[Some(Proceed), Some(Proceed)]);
     let mut quitting = None;
     assert_eq!(session(&mut hosts, &mut quitting, SessionStep::Query), SessionReply::Ends);
-    assert!(quitting.is_none() && hooks.iter().all(|h| h.borrow().asked == 1 && !h.borrow().closed));
+    assert!(quitting.is_none() && hooks.iter().all(|h| h.borrow().asked == 1));
+    assert!(hooks.iter().all(|h| h.borrow().closed), "on_close runs inside the query, not at a WM_ENDSESSION that may come too late");
+}
+
+#[test]
+fn input_after_a_window_proceeds_keeps_the_quit_waiting_for_it() {
+    let (mut hosts, hooks) = windows(&[Some(Proceed), None]);
+    let mut quit = Quitting::ask(&mut hosts, QuitFrom::Rune);
+    assert_eq!(quit.settle(&mut hosts), CloseAnswer::Pending, "Settings is saving");
+    // Input reached the note after it proceeded, so its request is asked again and holds.
+    hooks[0].borrow_mut().now = None;
+    hooks[1].borrow_mut().later = Some(Proceed);
+    assert_eq!(quit.settle(&mut hosts), CloseAnswer::Pending, "the note's earlier proceed no longer counts");
+    hooks[0].borrow_mut().later = Some(Proceed);
+    assert_eq!(quit.settle(&mut hosts), Proceed);
 }
 
 #[test]
