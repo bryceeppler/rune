@@ -55,6 +55,7 @@ impl El {
     /// A strikethrough line across bytes `start..end` in `color` (`None`: the span's or text's
     /// colour). Wrapped lines each get their own segment.
     pub fn strike(mut self, start: usize, end: usize, color: Option<Color>) -> Self {
+        self.sync_input_rich();
         if let Some(t) = &mut self.text && start < end {
             t.strikes.push((start as u32, end as u32, color));
         }
@@ -169,7 +170,8 @@ impl El {
     }
 
     /// Rebuilds a field's spans, strikes, blocks and links from its edit, if a builder changed
-    /// what they come from since the last time.
+    /// what they come from since the last time. `.strike` and `.link` rebuild first, so the
+    /// strikes and links they add stay.
     pub(crate) fn sync_input_rich(&mut self) {
         if let (Some(inp), Some(t)) = (&mut self.input, &mut self.text) {
             sync_rich(inp, t);
@@ -292,6 +294,7 @@ impl El {
     /// boxes take the pointer, which shows a hand over them; the rest of the text stays
     /// transparent to input. Each link is a Tab stop that Enter or Space presses.
     pub fn link(mut self, link: Link) -> Self {
+        self.sync_input_rich();
         if let Some(t) = &mut self.text {
             t.links.push(link);
             self.focus.enabled = true;
@@ -454,7 +457,6 @@ impl El {
         self
     }
 }
-
 
 /// [`El::sync_input_rich`] for a field's spec and text.
 pub(crate) fn sync_rich(inp: &mut crate::el::InputSpec, t: &mut TextSpec) {
