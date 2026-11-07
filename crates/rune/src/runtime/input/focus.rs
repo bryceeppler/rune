@@ -191,6 +191,7 @@ impl<S: 'static> Runtime<S> {
         }
         self.keyboard_focus = keyboard;
         self.sync_side_focus();
+        self.close_composition_off_focus();
         changed
     }
     pub(super) fn sync_requested_focus(&mut self, nodes: &mut Vec<Node>) -> bool {
