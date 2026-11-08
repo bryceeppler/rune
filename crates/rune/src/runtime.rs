@@ -431,6 +431,8 @@ pub struct Runtime<S: 'static> {
     /// The button holding `capture` (`El::pointer_buttons`).
     capture_button: crate::PointerButton,
     secondary_capture: Option<String>,
+    /// A secondary gesture that dismissed the modal it landed outside of, for the frame after.
+    secondary_through: Option<secondary::Through>,
     capture_inside: bool,
     /// The pointer left while a press held it; the leave lands on release.
     left_in_capture: bool,
@@ -853,6 +855,7 @@ impl<S: 'static> Runtime<S> {
             capture: None,
             capture_button: crate::PointerButton::Primary,
             secondary_capture: None,
+            secondary_through: None,
             capture_inside: false,
             left_in_capture: false,
             drag_data: 0.0,

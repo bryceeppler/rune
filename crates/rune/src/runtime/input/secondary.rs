@@ -2,7 +2,32 @@
 //! which element's menu it opens.
 use super::*;
 
+/// Where a secondary gesture that dismissed a modal went down and, once it has, came up.
+pub(crate) struct Through {
+    down: (f32, f32),
+    up: Option<(f32, f32)>,
+}
+
 impl<S: 'static> Runtime<S> {
+    /// The open modal a press at (x, y) falls outside of, when outside presses dismiss it:
+    /// nothing the modal holds is drawn there.
+    fn dismissed_from_outside(&self, x: f32, y: f32) -> Option<String> {
+        let modal = self.active_modal()?;
+        let outside = self.nodes[modal].handlers.modal.as_ref().is_some_and(|m| m.outside)
+            && !(0..self.nodes.len()).any(|i| self.modal_members[i] && !self.subtree_exiting(i) && self.node_contains(i, x, y));
+        outside.then(|| self.nodes[modal].path.clone())
+    }
+
+    /// Hands a gesture that dismissed a modal to what is under it, once the modal has gone. A
+    /// modal still open then, one the dismiss kept or a new one, takes nothing.
+    pub(crate) fn replay_secondary_through(&mut self) {
+        if self.queue.iter().any(|a| matches!(a, Action::Dismiss(_))) { return; }
+        let Some(through) = self.secondary_through.take() else { return };
+        if self.active_modal().is_some() { return; }
+        self.secondary_down(through.down.0, through.down.1);
+        if let Some((x, y)) = through.up { self.secondary_up(x, y); }
+    }
+
     /// The nearest element with `on_secondary_press` (or a link with `on_link_secondary`) at
     /// (x, y), else the selectable text there (its Copy menu): an app's context menu on a row
     /// wins over its text's.
@@ -22,18 +47,31 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// Capture a secondary gesture without activating primary actions or text selection.
+    /// Outside a modal that outside presses dismiss, it dismisses the modal, and the frame
+    /// after, which no longer has it, takes the gesture as if it had just begun there, so a
+    /// second right-click opens its own menu as AppKit's, Windows' and GTK's do.
     pub fn secondary_down(&mut self, x: f32, y: f32) {
         self.pointer = Some((x, y));
         self.release_hover_hold();
         self.keyboard_focus = false;
         self.dismiss_help();
         self.secondary_capture = self.secondary_target(x, y).map(str::to_owned);
+        if self.secondary_capture.is_none() && let Some(modal) = self.dismissed_from_outside(x, y) {
+            self.queue.push(Action::Dismiss(modal));
+            self.secondary_through = Some(Through { down: (x, y), up: None });
+            return;
+        }
         let i = self.secondary_capture.as_ref().and_then(|p| self.nodes.iter().position(|n| &n.path == p));
         self.secondary_link_down(i, x, y);
     }
 
     pub fn secondary_up(&mut self, x: f32, y: f32) {
         self.pointer = Some((x, y));
+        if let Some(through) = &mut self.secondary_through {
+            through.up = Some((x, y));
+            self.leave_after_release();
+            return;
+        }
         let down_link = self.take_secondary_link();
         if let Some(path) = self.secondary_capture.take()
             && self.secondary_target(x, y) == Some(path.as_str())

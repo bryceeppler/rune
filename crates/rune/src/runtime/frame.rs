@@ -101,7 +101,7 @@ impl<S: 'static> Runtime<S> {
 
     /// The last frame no longer shows the window: state, its size or queued input changed since.
     pub(crate) fn stale(&self) -> bool {
-        self.needs_commit() || self.relayout || !self.queue.is_empty()
+        self.needs_commit() || self.relayout || !self.queue.is_empty() || self.secondary_through.is_some()
     }
 
     /// A live-edit patch arrived that the next frame hasn't rebuilt the view with yet.
@@ -329,6 +329,7 @@ impl<S: 'static> Runtime<S> {
     /// frame or a sleeping host's gap belongs to old tracks, never to targets first observed
     /// on this frame.
     pub(crate) fn frame_split(&mut self, catch_up: f64, dt: f64) -> bool {
+        self.replay_secondary_through();
         // Like a native shell: the logical clock follows host time (timers, poll), while
         // animations step by the frame's own dt, so idle time never lands on a fresh commit.
         let elapsed = catch_up + dt;
