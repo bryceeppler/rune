@@ -144,6 +144,37 @@ pub use crate::el::visual::{Visual, VisualCold};
 pub(crate) struct ModalSpec {
     pub dismiss: PressFn,
     pub outside: bool,
+    pub kind: ModalKind,
+}
+
+/// What a modal is, which decides where a right-click outside it goes ([`El::modal_kind`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModalKind {
+    /// A dialog, sheet or alert: a right-click outside it dismisses it when an outside press
+    /// does, and reaches nothing behind it.
+    #[default]
+    Dialog,
+    /// A context or pop-up menu: a right-click outside it dismisses it and goes on to what is
+    /// under the pointer, which opens its own menu, as AppKit's, Windows' and GTK's menus do.
+    Menu,
+}
+
+/// What a right-click outside a modal does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutsideRightClick {
+    Nothing,
+    Dismisses,
+    DismissesAndPassesOn,
+}
+
+impl ModalSpec {
+    pub(crate) fn outside_right_click(&self) -> OutsideRightClick {
+        match (self.outside, self.kind) {
+            (false, _) => OutsideRightClick::Nothing,
+            (true, ModalKind::Dialog) => OutsideRightClick::Dismisses,
+            (true, ModalKind::Menu) => OutsideRightClick::DismissesAndPassesOn,
+        }
+    }
 }
 
 /// A vertical scroll viewport.
@@ -1115,8 +1146,14 @@ impl El {
     }
     /// Trap focus and make the background inert while mounted. Escape requests dismissal.
     pub fn modal<S: 'static>(mut self, click_outside: bool, dismiss: impl Fn(&mut S) + 'static) -> Self {
-        self.handlers.modal = Some(ModalSpec { outside: click_outside,
+        self.handlers.modal = Some(ModalSpec { outside: click_outside, kind: ModalKind::Dialog,
             dismiss: Rc::new(move |s, _| dismiss(downcast::<S>(s))) });
+        self
+    }
+    /// What this [`El::modal`] is: a [`ModalKind::Dialog`] unless set, or a
+    /// [`ModalKind::Menu`], whose outside right-click goes on to what is under it.
+    pub fn modal_kind(mut self, kind: ModalKind) -> Self {
+        if let Some(h) = self.handlers.get_mut_if_some() && let Some(m) = &mut h.modal { m.kind = kind; }
         self
     }
     pub fn modal_click_outside(mut self, enabled: bool) -> Self {

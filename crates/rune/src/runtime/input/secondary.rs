@@ -1,6 +1,7 @@
 //! The secondary gesture (right-click, macOS control-click, the Menu key and Shift+F10):
 //! which element's menu it opens.
 use super::*;
+use crate::el::OutsideRightClick;
 
 /// Where a secondary gesture that dismissed a modal went down and, once it has, came up.
 pub(crate) struct Through {
@@ -9,13 +10,13 @@ pub(crate) struct Through {
 }
 
 impl<S: 'static> Runtime<S> {
-    /// The open modal a press at (x, y) falls outside of, when outside presses dismiss it:
-    /// nothing the modal holds is drawn there.
-    fn dismissed_from_outside(&self, x: f32, y: f32) -> Option<String> {
+    /// The open modal a press at (x, y) falls outside of, where nothing it holds is drawn, and
+    /// what a right-click there does to it.
+    fn modal_outside(&self, x: f32, y: f32) -> Option<(String, OutsideRightClick)> {
         let modal = self.active_modal()?;
-        let outside = self.nodes[modal].handlers.modal.as_ref().is_some_and(|m| m.outside)
-            && !(0..self.nodes.len()).any(|i| self.modal_members[i] && !self.subtree_exiting(i) && self.node_contains(i, x, y));
-        outside.then(|| self.nodes[modal].path.clone())
+        let rule = self.nodes[modal].handlers.modal.as_ref()?.outside_right_click();
+        let inside = (0..self.nodes.len()).any(|i| self.modal_members[i] && !self.subtree_exiting(i) && self.node_contains(i, x, y));
+        (!inside).then(|| (self.nodes[modal].path.clone(), rule))
     }
 
     /// Hands a gesture that dismissed a modal to what is under it, once the modal has gone. A
@@ -47,9 +48,11 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// Capture a secondary gesture without activating primary actions or text selection.
-    /// Outside a modal that outside presses dismiss, it dismisses the modal, and the frame
-    /// after, which no longer has it, takes the gesture as if it had just begun there, so a
-    /// second right-click opens its own menu as AppKit's, Windows' and GTK's do.
+    /// Outside a modal, it does what the modal's [`ModalKind`](crate::ModalKind) says: outside a
+    /// menu that outside presses dismiss, it dismisses the menu, and the frame after, which no
+    /// longer has it, takes the gesture as if it had just begun there, so a second right-click
+    /// opens its own menu; outside a dialog it dismisses it when an outside press does and
+    /// reaches nothing behind it.
     pub fn secondary_down(&mut self, x: f32, y: f32) {
         self.pointer = Some((x, y));
         self.release_hover_hold();
@@ -57,9 +60,9 @@ impl<S: 'static> Runtime<S> {
         self.keyed_since_press = false;
         self.dismiss_help();
         self.secondary_capture = self.secondary_target(x, y).map(str::to_owned);
-        if self.secondary_capture.is_none() && let Some(modal) = self.dismissed_from_outside(x, y) {
-            self.queue.push(Action::Dismiss(modal));
-            self.secondary_through = Some(Through { down: (x, y), up: None });
+        if self.secondary_capture.is_none() && let Some((modal, rule)) = self.modal_outside(x, y) {
+            if rule != OutsideRightClick::Nothing { self.queue.push(Action::Dismiss(modal)); }
+            if rule == OutsideRightClick::DismissesAndPassesOn { self.secondary_through = Some(Through { down: (x, y), up: None }); }
             return;
         }
         let i = self.secondary_capture.as_ref().and_then(|p| self.nodes.iter().position(|n| &n.path == p));

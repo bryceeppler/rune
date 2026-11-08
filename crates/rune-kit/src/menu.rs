@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use rune::{El, Icon, PointerPress, TextStyle, Tx, col, el, icon, row, text};
+use rune::{El, Icon, ModalKind, PointerPress, TextStyle, Tx, col, el, icon, row, text};
 
 use crate::overlay::{Placement, fit_scroll_bar, menu_anchor, scrim};
 use crate::{Acts, Kit, State, shadows};
@@ -261,7 +261,7 @@ pub(crate) type Modal = Box<dyn FnOnce(El) -> El>;
 pub(crate) fn dismissal<S: 'static>(key: String, close: impl Fn(&mut S) + 'static) -> (El, Modal) {
     let close = Rc::new(close);
     let outside = close.clone();
-    (scrim(key, move |s: &mut S| outside(s)), Box::new(move |e: El| e.modal(true, move |s: &mut S| close(s))))
+    (scrim(key, move |s: &mut S| outside(s)), Box::new(move |e: El| e.modal(true, move |s: &mut S| close(s)).modal_kind(ModalKind::Menu)))
 }
 
 /// Mounts a dismissal's scrim into `layer` and hands back its modal.

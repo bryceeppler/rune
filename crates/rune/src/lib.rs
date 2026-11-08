@@ -103,6 +103,7 @@ pub use el::Drag;
 pub use el::El;
 pub use el::GrowthSpec;
 pub use el::LiveRegion;
+pub use el::ModalKind;
 pub use el::Outline;
 pub use el::Phase;
 pub use el::PillStyle;
