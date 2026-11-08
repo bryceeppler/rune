@@ -513,3 +513,38 @@ fn presses_land_on_targets_inside_a_scrolled_viewport() {
     rt.frame(1.0 / 120.0);
     assert_eq!(rt.state, [4]);
 }
+
+/// A Note editor taller than its text, inside a scrolled page, whose padding is the page's
+/// margin: a press on any blank part of the field, its padding included, keeps it focused with
+/// the caret at the nearest place.
+#[test]
+fn a_press_on_blank_space_in_a_field_focuses_it_at_the_nearest_place() {
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let field = text_input(s, style()).key("note").w_full().min_h(320.0).px(48.0).pt(12.0).pb(80.0).on_edit(|s: &mut TextEdit| s);
+        col().w_full().h_full().child(col().key("scroll").w_full().grow(1.0).min_h(0.0).child(field).scroll(crate::ScrollSpec { stick_bottom: false }))
+    }
+    let text = "Title\n\nfirst line";
+    let last_line = text.len() - "first line".len();
+    for (what, (fx, dy), from_bottom, want) in [
+        ("below the last line, above the padding", (0.9, -120.0), true, text.len()),
+        ("in the bottom padding at the left", (0.0, -10.0), true, last_line),
+        ("in the left padding by the first line", (0.0, 18.0), false, 0),
+    ] {
+        for focused in [true, false] {
+            let mut edit = TextEdit::new(text).rich();
+            edit.focused = focused;
+            edit.set_caret(if want == 0 { text.len() } else { 0 });
+            let mut rt = Runtime::new(edit, view, (500.0, 600.0), Env::new(true, 1.0));
+            rt.frame(0.0);
+            let r = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("note")).unwrap().rect;
+            let (x, y) = (r[0] + 4.0 + (r[2] - 8.0) * fx, if from_bottom { r[1] + r[3] } else { r[1] } + dy);
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.frame(1.0 / 60.0);
+            let case = format!("focused first {focused}, a press {what} at ({x}, {y})");
+            assert!(rt.state.focused, "{case}: the field is focused");
+            assert!(rt.focused.as_deref().is_some_and(|k| k.ends_with("/note")), "{case}: {:?} has focus", rt.focused);
+            assert_eq!((rt.state.anchor, rt.state.focus), (want, want), "{case}: the caret");
+        }
+    }
+}
