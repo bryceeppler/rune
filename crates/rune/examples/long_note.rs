@@ -24,8 +24,11 @@
 //! `--blocks` splits the note at blank lines into one field per block, as an app that keys its
 //! Markdown blocks, and runs the cases that don't move the caret between fields.
 //!
+//! `--mixed` writes the note in mixed scripts (accented Latin, Han, kana, Hebrew, Arabic and
+//! Ethiopic, which few app fonts cover) and types kana, Han and accented letters.
+//!
 //! cargo build --profile perf -p rune --example long_note --features frame-profile
-//! target/perf/examples/long_note [--sizes 5,50,200] [--samples 60] [--only type_mid,scroll] [--gpu] [--blocks]
+//! target/perf/examples/long_note [--sizes 5,50,200] [--samples 60] [--only type_mid,scroll] [--gpu] [--blocks] [--mixed]
 //!
 //! Prints `METRIC size=.. case=.. metric=.. median=.. p95=.. max=..` per measurement, and
 //! `MEMORY size=..` lines. `cpu_ms` is thread CPU of the input and the frame it commits;
@@ -86,8 +89,11 @@ fn note(bytes: usize) -> String {
         seed ^= seed << 17;
         (seed % n as u64) as usize
     };
+    const MIXED: &[&str] = &["café", "naïve", "漢字", "東京", "かな", "ひらがな", "שלום", "مرحبا", "ሰላም", "amber", "the", "of",
+        "and", "señor", "für", "日本語", "カタカナ", "עולם", "كتاب", "ቤት", "lantern", "with", "über", "中文"];
+    let list = if MIXED_SCRIPTS.get() { MIXED } else { WORDS };
     let words = |next: &mut dyn FnMut(usize) -> usize, n: usize| {
-        (0..n).map(|_| WORDS[next(WORDS.len())]).collect::<Vec<_>>().join(" ")
+        (0..n).map(|_| list[next(list.len())]).collect::<Vec<_>>().join(" ")
     };
     let mut out = String::new();
     let mut section = 0;
@@ -111,7 +117,7 @@ fn note(bytes: usize) -> String {
                 0 => {
                     out += "```rust\n";
                     for i in 0..5 + next(6) {
-                        let (indent, name, call) = ("    ".repeat(next(3)), WORDS[next(WORDS.len())], WORDS[next(WORDS.len())]);
+                        let (indent, name, call) = ("    ".repeat(next(3)), list[next(list.len())], list[next(list.len())]);
                         out += &format!("{indent}let {name}_{i} = {call}(\"{}\");\n", words(&mut next, 2));
                     }
                     out += "```\n\n";
@@ -213,6 +219,7 @@ fn runtime(text: &str, caret: usize) -> Runtime<State> {
 
 thread_local! {
     static BLOCKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MIXED_SCRIPTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn find(rt: &Runtime<State>, key: &str) -> rune::runtime::ElementInfo {
@@ -270,10 +277,13 @@ fn main() {
         Draw { gpu, renderer, out }
     });
     BLOCKS.set(args.iter().any(|a| a == "--blocks"));
+    MIXED_SCRIPTS.set(args.iter().any(|a| a == "--mixed"));
+    let typed: [&str; 4] = if MIXED_SCRIPTS.get() { ["あ", "漢", "é", " "] } else { ["a", "b", "c", " "] };
     let paste = paste_text();
     for &kb in &sizes {
         let text = note(kb * 1024);
-        let mid = text[..text.len() / 2].rfind(' ').unwrap_or(0) + 1;
+        let half = (0..=text.len() / 2).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+        let mid = text[..half].rfind(' ').unwrap_or(0) + 1;
         println!("NOTE size={kb}k bytes={} lines={}", text.len(), text.lines().count());
 
         if run("memory") {
@@ -298,7 +308,7 @@ fn main() {
             for _ in 0..3 { rt.ime(Ime::Commit("w".into())); rt.frame(1.0 / 120.0); }
             settle(&mut rt, &mut d);
             let rows: Vec<_> = (0..samples).map(|i| {
-                let ch = ["a", "b", "c", " "][i % 4];
+                let ch = typed[i % 4];
                 timed(&mut rt, &mut d, |rt| rt.ime(Ime::Commit(ch.into())))
             }).collect();
             assert!(caret_in_view(&rt).is_some(), "{case}: caret in view after typing");
