@@ -12,6 +12,8 @@ pub(super) struct LinkState {
     focus: Option<usize>,
     /// The link a secondary press began on, in the captured text.
     secondary: Option<usize>,
+    /// The pill chip a press began on in a field with `on_pill_press`: (field path, pill id).
+    pill: Option<(String, String)>,
 }
 
 /// Where node `n`'s text starts inside its border box `rect` (points, x0 y0 x1 y1), its text
@@ -213,6 +215,48 @@ impl<S: 'static> Runtime<S> {
         if p == path && self.capture_inside && self.link_at(i, x, y) == Some(k) {
             self.queue.push(Action::Link(p, k));
         }
+    }
+
+    /// The id of the pill whose chip field `i` draws under window point (x, y), when the field
+    /// takes pill presses.
+    pub(super) fn pill_at(&self, i: usize, x: f32, y: f32) -> Option<String> {
+        let n = &self.nodes[i];
+        let input = n.input.as_ref().filter(|input| input.pill_press.is_some())?;
+        let (spec, layout) = (n.text.as_ref()?, n.text_layout.as_ref()?);
+        let [lx, ly] = self.to_local(i, x, y);
+        let scroll = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
+        let s = self.env.scale;
+        let (px, py) = ((lx - n.inset[0] + scroll) * s, (ly - n.inset[1]) * s);
+        let chips = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s);
+        let k = chips.into_iter().find(|(_, r)| contains([r[0], r[1], r[0] + r[2], r[1] + r[3]], px, py))?.0;
+        let pill = spec.pills.get(k)?;
+        let (_, _, id) = input.edit.display_pills().into_iter().find(|&(a, b, _)| (a, b) == (pill.start, pill.end))?;
+        Some(id.to_owned())
+    }
+
+    /// Pointer down on field `i`: a press that begins on a pill chip is the chip's, and the
+    /// field's caret and focus stay as they were.
+    pub(super) fn pill_down(&mut self, i: usize, x: f32, y: f32) -> bool {
+        let Some(id) = self.pill_at(i, x, y) else { return false };
+        self.links.pill = Some((self.nodes[i].path.clone(), id));
+        true
+    }
+
+    /// Pointer up: a press that began and ends on the same pill chip presses it.
+    pub(super) fn pill_up(&mut self, path: &str, x: f32, y: f32) {
+        let Some((p, id)) = self.links.pill.take() else { return };
+        let Some(i) = self.nodes.iter().position(|n| n.path == p) else { return };
+        if p == path && self.capture_inside && self.pill_at(i, x, y).as_deref() == Some(id.as_str()) {
+            self.queue.push(Action::PillPress(p, id));
+        }
+    }
+
+    /// Runs the `on_pill_press` handler of field `path` for pill `id`.
+    pub(super) fn press_pill(&mut self, path: &str, id: &str, tx: &mut Tx) -> bool {
+        let Some(f) = self.node(path).and_then(|n| n.input.as_ref()?.pill_press.clone()) else { return false };
+        log_event!(self, "pill {path} {id}");
+        (f.0)(states!(self), id, tx);
+        true
     }
 
     /// Runs the `on_link` handler of node `path` for link `k`.

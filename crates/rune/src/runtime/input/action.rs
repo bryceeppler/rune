@@ -25,6 +25,8 @@ pub(super) enum Action {
     Press(String, crate::PointerButton),
     DoublePress(String),
     Link(String, usize),
+    /// `El::on_pill_press`: the field and the pill's id.
+    PillPress(String, String),
     /// `El::on_link_secondary`: the text, its link and the press.
     LinkSecondary(String, usize, PointerEvent),
     SecondaryPress(String, PointerEvent),
@@ -64,7 +66,7 @@ impl Action {
         match self {
             Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(..) | Action::ImeFinish | Action::Paste(..)
             | Action::Files(_) | Action::Press(..) | Action::DoublePress(_) | Action::SecondaryPress(..)
-            | Action::Link(..) | Action::LinkSecondary(..) | Action::Drag(..) | Action::DragRepeat(..)
+            | Action::Link(..) | Action::PillPress(..) | Action::LinkSecondary(..) | Action::Drag(..) | Action::DragRepeat(..)
             | Action::DragStart(_) | Action::DragEnd(..) | Action::PointerMove(..) | Action::Wheel(..)
             | Action::Gesture(..) | Action::Dismiss(_) | Action::FocusControl(_) | Action::A11y(..)
             | Action::ClipboardRead(..) | Action::FileDialog(..) => true,
@@ -135,6 +137,7 @@ pub(super) fn live_only_handler(action: &Action) -> Option<&'static str> {
         Action::Press(..) => "on_press",
         Action::DoublePress(_) => "on_double_press",
         Action::Link(..) => "on_link",
+        Action::PillPress(..) => "on_pill_press",
         Action::LinkSecondary(..) => "on_link_secondary",
         Action::SecondaryPress(..) => "on_secondary_press",
         Action::Drag(..) | Action::DragRepeat(..) => "on_drag",
@@ -154,7 +157,7 @@ pub(super) fn live_only_handler(action: &Action) -> Option<&'static str> {
 pub(super) fn action_path(action: &Action) -> Option<&str> {
     match action {
         Action::PointerMove(path, _) | Action::DrawnLayout(path, ..) | Action::Layout(path, _) | Action::Hover(path) | Action::HoverChange(path, _) | Action::SelectionChange(path, _) | Action::Press(path, _) | Action::DoublePress(path)
-        | Action::Link(path, _) | Action::LinkSecondary(path, ..) | Action::SecondaryPress(path, _) | Action::Drag(path, ..) | Action::DragRepeat(path, ..) | Action::DragStart(path)
+        | Action::Link(path, _) | Action::PillPress(path, _) | Action::LinkSecondary(path, ..) | Action::SecondaryPress(path, _) | Action::Drag(path, ..) | Action::DragRepeat(path, ..) | Action::DragStart(path)
         | Action::DragEnd(path, _) => Some(path),
         Action::Wheel(_, chain, _) | Action::Gesture(chain, _) => chain.first().map(String::as_str),
         _ => None,
@@ -412,6 +415,7 @@ impl<S: 'static> Runtime<S> {
                 true
             }
             Action::Link(path, k) => self.press_link(&path, k, &mut one),
+            Action::PillPress(path, id) => self.press_pill(&path, &id, &mut one),
             Action::LinkSecondary(path, k, point) => self.secondary_press_link(&path, k, point, &mut one),
             Action::SecondaryPress(path, point) => {
                 let Some(n) = self.node(&path).filter(|n| !self.is_exiting(n.id)) else { return false };

@@ -196,6 +196,7 @@ pub struct InputSpec {
     pub(crate) key: Option<InputKeyFn>,
     pub(crate) change: Option<PressFn>,
     pub(crate) paste: Option<InputPasteFn>,
+    pub(crate) pill_press: Option<LinkFn>,
 }
 
 impl std::fmt::Debug for InputSpec {
@@ -706,6 +707,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         key: None,
         change: None,
         paste: None,
+        pill_press: None,
     }));
     e.sync_input_pills();
     e
@@ -889,6 +891,16 @@ impl El {
     pub fn on_input_paste<S: 'static>(mut self, f: impl Fn(&mut S, &crate::ClipboardContent, &mut Tx) -> bool + 'static) -> Self {
         if let Some(input) = &mut self.input {
             input.paste = Some(Rc::new(move |s, content, tx| f(downcast::<S>(s), content, tx)));
+        }
+        self
+    }
+    /// Called with a [`Mark::Pill`](crate::Mark::Pill)'s id when a primary press begins and
+    /// ends on its chip in this field: a checkbox or a chip that acts as a button. The press
+    /// leaves the field's caret, selection and focus where they were, so typing goes on where
+    /// it was; the chip shows the pointing hand.
+    pub fn on_pill_press<S: 'static>(mut self, f: impl Fn(&mut S, &str, &mut Tx) + 'static) -> Self {
+        if let Some(input) = &mut self.input {
+            input.pill_press = Some(LinkFn(Rc::new(move |s, id, tx| f(downcast::<S>(s), id, tx))));
         }
         self
     }

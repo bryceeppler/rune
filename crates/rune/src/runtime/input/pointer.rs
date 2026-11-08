@@ -210,7 +210,13 @@ impl<S: 'static> Runtime<S> {
         self.press_moved = false;
         self.press_cancelled = false;
         if let Some(ji) = self.textbox_input(ti) {
-            self.input_down(ji, x, y);
+            if self.pill_down(ji, x, y) {
+                self.capture = Some((self.nodes[ji].path.clone(), Drag { phase: Phase::Down, x, y, w: 0.0, h: 0.0, start_x: x, start_y: y, dx: 0.0, dy: 0.0, data: 0.0, clicks: 1, cancelled: false }));
+                self.capture_button = crate::PointerButton::Primary;
+                self.capture_inside = true;
+            } else {
+                self.input_down(ji, x, y);
+            }
             return;
         }
         // Clicking a link leaves focus where it is (a composer keeps typing). Selectable text
@@ -300,6 +306,7 @@ impl<S: 'static> Runtime<S> {
             self.queue.push(Action::Drag(path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, ..d }, button));
         }
         self.link_up(&path, x, y);
+        self.pill_up(&path, x, y);
         if has_press && self.capture_inside && !selected {
             self.queue.push(Action::Press(path.clone(), button));
         }
@@ -354,6 +361,9 @@ impl<S: 'static> Runtime<S> {
         let Some(mut i) = target else {
             return crate::el::Cursor::Default;
         };
+        if self.nodes[i].input.is_some() && self.pill_at(i, x, y).is_some() {
+            return crate::el::Cursor::Pointer;
+        }
         if self.nodes[i].handlers.cursor.is_none() && (self.nodes[i].input.is_some() || self.nodes[i].role == "textbox") {
             return crate::el::Cursor::Text;
         }

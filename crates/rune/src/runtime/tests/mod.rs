@@ -13,6 +13,7 @@ mod group_opacity;
 mod id_pruning;
 mod ime_focus;
 mod input_clipboard;
+mod pill_press;
 mod layout_hover;
 mod layout_reads;
 mod layout_rows;

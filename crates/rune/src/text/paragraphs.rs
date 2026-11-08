@@ -302,6 +302,11 @@ impl<'a> Piece<'a> {
         self.pills.map_or(all, |r| all.get(r.clone()).unwrap_or(&[]))
     }
 
+    /// The index in the text's pills of the first one [`Piece::pills`] gives.
+    pub(crate) fn first_pill(&self) -> usize {
+        self.pills.map_or(0, |r| r.start)
+    }
+
     /// The text's ink for this layout's `ink`.
     pub(crate) fn ink(&self, ink: u16) -> u16 {
         match self.spans {

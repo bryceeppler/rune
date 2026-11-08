@@ -20,9 +20,22 @@ pub(crate) fn pill_chips(
     for piece in layout.pieces_in_band(band) {
         let pills = piece.pills(pills);
         if !pills.is_empty() {
-            chips(piece.layout, piece.start, pills, size, scale, [origin[0], origin[1] + piece.y], bg, out, icons);
+            chips(piece.layout, piece.start, pills, size, scale, [origin[0], origin[1] + piece.y], bg, &mut |_, chip| out.push(chip), icons);
         }
     }
+}
+
+/// Where each pill's chips draw in `layout` (device px, layout top-left at the origin), by the
+/// pill's index in `pills`: what a press on a chip lands on.
+pub(crate) fn pill_chip_rects(layout: &TextLayout, pills: &[PillChip], size: f32, scale: f32) -> Vec<(usize, [f32; 4])> {
+    let mut rects = Vec::new();
+    for piece in layout.pieces_in_band(f32::NEG_INFINITY..f32::INFINITY) {
+        let (first, local) = (piece.first_pill(), piece.pills(pills));
+        if !local.is_empty() {
+            chips(piece.layout, piece.start, local, size, scale, [0.0, piece.y], Color::TRANSPARENT, &mut |i, chip| rects.push((first + i, chip.deco.rect)), &mut Vec::new());
+        }
+    }
+    rects
 }
 
 /// [`pill_chips`] for one layout whose text starts at byte `start` of the text `pills` index.
@@ -35,7 +48,7 @@ fn chips(
     scale: f32,
     origin: [f32; 2],
     bg: Color,
-    out: &mut Vec<PaintedDeco>,
+    out: &mut dyn FnMut(usize, PaintedDeco),
     icons: &mut Vec<(&'static Icon, u32, [f32; 2], Option<Color>)>,
 ) {
     let pm = PillMetrics::new(size);
@@ -91,7 +104,7 @@ fn chips(
                 let (top, bot) = ((base - asc - 1.0 * scale).round(), (base + desc + 1.0 * scale).round());
                 let x0 = gr_x0.min(m.inline_min_coord + m.offset);
                 let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-                out.push(PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
                 continue;
             };
             let rtl_lead = gr_x0 <= gr_x1 && (lead.x - gr_x1).abs() < 1.0;
@@ -124,7 +137,7 @@ fn chips(
             let top = (base - asc - 1.0 * scale).round();
             let bot = (base + desc + 1.0 * scale).round();
             let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-            out.push(PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+            out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
             if let Some(icon) = pill.icon {
                 let px = (pm.icon * scale).round().max(1.0);
                 let ix = if rtl_lead { rect[0] + rect[2] - pm.pad * scale - px } else { rect[0] + pm.pad * scale };

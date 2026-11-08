@@ -21,6 +21,7 @@ impl<S: 'static> Runtime<S> {
             Action::DoublePress(p) => ("on_double_press", 3, Some(p)),
             Action::SecondaryPress(p, _) => ("on_secondary_press", 3, Some(p)),
             Action::Link(p, _) => ("on_link", 3, Some(p)),
+            Action::PillPress(p, _) => ("on_pill_press", 3, Some(p)),
             Action::LinkSecondary(p, ..) => ("on_link_secondary", 3, Some(p)),
             Action::Dismiss(p) => ("dismiss", 3, Some(p)),
             Action::Key { .. } | Action::Physical(..) => (if editing() { "key_edit" } else { "key" }, 3, focused),
