@@ -33,6 +33,15 @@ impl<S: 'static> Runtime<S> {
         self.secondary_link_down(i, x, y);
     }
 
+    /// The byte of input `ji`'s text a secondary gesture is on, once a composition open there
+    /// has committed where it began, as a primary press commits it first, so the menu acts on
+    /// the text the person sees and nothing later from that composition's session lands.
+    fn secondary_text(&mut self, ji: usize, point: Option<(f32, f32)>) -> Option<usize> {
+        let path = self.nodes[ji].path.clone();
+        self.finish_composition_in(&path);
+        self.input_text_at(ji, point)
+    }
+
     pub fn secondary_up(&mut self, x: f32, y: f32) {
         self.pointer = Some((x, y));
         let down_link = self.take_secondary_link();
@@ -41,7 +50,7 @@ impl<S: 'static> Runtime<S> {
         {
             let i = self.nodes.iter().position(|n| n.path == path);
             let mut point = i.map_or(PointerEvent { x, y, window_x: x, window_y: y, text: None }, |i| self.pointer_event(i, x, y));
-            point.text = i.and_then(|i| self.textbox_input(i)).and_then(|ji| self.input_text_at(ji, Some((x, y))));
+            point.text = i.and_then(|i| self.textbox_input(i)).and_then(|ji| self.secondary_text(ji, Some((x, y))));
             let link = i.and_then(|i| self.secondary_link_at(i, x, y));
             // Like a primary link press, it must end on the link it began on; one that moved
             // onto, off or between links opens nothing.
@@ -81,7 +90,7 @@ impl<S: 'static> Runtime<S> {
             if let Some(f) = n.handlers.on_secondary_press.clone() {
                 let path = n.path.clone();
                 let mut point = self.pointer_event(index, x, y);
-                point.text = input.and_then(|ji| self.input_text_at(ji, None));
+                point.text = input.and_then(|ji| self.secondary_text(ji, None));
                 log_event!(self, "secondary press {path}");
                 f(states!(self), point, tx);
                 return true;

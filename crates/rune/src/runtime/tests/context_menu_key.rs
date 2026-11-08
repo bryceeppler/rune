@@ -72,3 +72,51 @@ fn a_secondary_press_on_a_text_input_reports_the_text_it_is_on() {
     rt.frame(0.0);
     assert_eq!(rt.state.texts, [Some(7), None], "the Menu key reports the caret, and an element without an input no text");
 }
+
+#[test]
+fn a_secondary_press_commits_an_open_composition_where_it_began_and_reports_the_committed_text() {
+    #[derive(Default)]
+    struct State { field: crate::TextEdit, texts: Vec<Option<usize>>, changes: usize }
+    fn view(s: &State, _: &mut Cx<State>) -> El {
+        col().size(300.0, 100.0)
+            .child(crate::text_input(&s.field, crate::TextStyle::new(16.0, 400.0)).single_line()
+                .key("field").size(300.0, 40.0).on_edit(|s: &mut State| &mut s.field)
+                .on_input_change(|s: &mut State, _| s.changes += 1)
+                .on_secondary_press_local(|s: &mut State, p, _| s.texts.push(p.text)))
+    }
+    for menu_key in [false, true] {
+        let mut field = crate::TextEdit::new("one two");
+        field.focused = true;
+        let mut rt = Runtime::new(State { field, ..State::default() }, view, (300.0, 100.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+        rt.key(KeyEvent { key: Key::End, mods: Mods::default() });
+        rt.frame(0.0);
+        let [x, y, _, height] = rt.ime_area.expect("the caret after two");
+        let two = (x - 8.0, y + height * 0.5);
+        rt.key(KeyEvent { key: Key::Home, mods: Mods::default() });
+        rt.frame(0.0);
+        let session = rt.ime_session();
+        rt.ime(crate::Ime::Preedit("xy".into(), None));
+        rt.frame(0.0);
+        assert!(rt.state.field.preedit.is_some(), "the field composes at its start");
+        if menu_key {
+            rt.key(KeyEvent { key: Key::ContextMenu, mods: Mods::default() });
+        } else {
+            rt.secondary_down(two.0, two.1);
+            rt.secondary_up(two.0, two.1);
+        }
+        rt.frame(0.0);
+        assert_eq!(rt.state.field.text, "xyone two", "the composition commits where it began");
+        assert!(rt.state.field.preedit.is_none());
+        assert!(rt.state.changes > 0, "the field hears its commit");
+        let reported = rt.state.texts.last().copied().flatten().expect("the press reports text");
+        if menu_key {
+            assert_eq!(reported, 2, "the caret after the committed text");
+        } else {
+            assert!((6..=9).contains(&reported), "inside two in the committed text: {reported}");
+        }
+        rt.ime_in(session, crate::Ime::Commit("late".into()));
+        rt.frame(0.0);
+        assert_eq!(rt.state.field.text, "xyone two", "the ended session's late commit lands nowhere");
+    }
+}

@@ -3,3 +3,6 @@
   caret for the Menu key and Shift+F10, so an editor's context menu can act on the word there
   (a spelling menu's suggestions) without moving the caret. The Menu key's menu for a focused
   text input now opens below its caret rather than below the whole field.
+  A secondary press or the Menu key on a text input with an open composition first commits it
+  where it began and ends its input method session, as a primary press does, so the reported
+  byte is in the committed text.
