@@ -543,3 +543,31 @@ fn a_mark_after_a_hard_break_in_rtl_text_has_range_boxes() {
     let lines: Vec<usize> = range_boxes(&layout, 0, text.len(), false).iter().map(|&(_, line)| line).collect();
     assert!(lines.contains(&0) && lines.contains(&(layout.len() - 1)), "selecting all covers the first and last lines: {lines:?}");
 }
+
+/// Characters in scripts Rune names no fonts for draw in the font fontconfig picks for them,
+/// whenever an installed font has them; the Latin around them stays on the app's font.
+#[cfg(target_os = "linux")]
+#[test]
+fn characters_no_loaded_font_has_draw_in_a_system_font() {
+    let installed = |ch: char| {
+        std::process::Command::new("fc-list").arg(format!(":charset={:x}", ch as u32)).arg("file").output()
+            .is_ok_and(|out| !out.stdout.is_empty())
+    };
+    let samples = ["ሰላም", "ᏣᎳᎩ", "ꆈꌠꁱ", "ᐃᓄᒃᑎᑐᑦ", "ᠮᠣᠩᠭᠣᠯ", "ⴰⵣⵓⵍ", "𠀋"];
+    let mut drawn = 0;
+    for sample in samples {
+        if !sample.chars().all(installed) {
+            eprintln!("skipping {sample}: no installed font has it");
+            continue;
+        }
+        let mut ts = TextSystem::default();
+        let latin = faces(&mut ts, "a", &[], TextStyle::new(13.0, 400.0));
+        let glyphs = faces(&mut ts, &format!("a {sample} b"), &[], TextStyle::new(13.0, 400.0));
+        assert!(glyphs.iter().all(|(_, id)| *id != 0), "tofu in {sample}: {glyphs:?}");
+        assert_eq!(glyphs.first().map(|g| &g.0), latin.first().map(|g| &g.0), "the Latin before {sample} keeps its font");
+        assert_eq!(glyphs.last().map(|g| &g.0), latin.first().map(|g| &g.0), "the Latin after {sample} keeps its font");
+        drawn += 1;
+    }
+    eprintln!("{drawn} of {} samples have an installed font", samples.len());
+}
+
