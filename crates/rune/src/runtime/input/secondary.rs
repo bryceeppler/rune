@@ -26,6 +26,7 @@ impl<S: 'static> Runtime<S> {
         self.pointer = Some((x, y));
         self.release_hover_hold();
         self.keyboard_focus = false;
+        self.keyed_since_press = false;
         self.dismiss_help();
         self.secondary_capture = self.secondary_target(x, y).map(str::to_owned);
         let i = self.secondary_capture.as_ref().and_then(|p| self.nodes.iter().position(|n| &n.path == p));
