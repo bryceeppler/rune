@@ -1,0 +1,1 @@
+- A press in a composing text field away from its composition, on the text or in the field's padding, now commits the composition where it began and puts the caret where the press landed, as a press in the committed text would. Before, the press did nothing, so typing went on at the composition. A press on the composition itself still leaves it to the input method.

@@ -77,10 +77,20 @@ impl InputClick {
     }
 }
 
-fn hit(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single: bool) -> Hit {
+/// The displayed byte nearest `(x, y)` and its side.
+fn display_hit(l: &TextLayout, x: f32, y: f32, s: f32, single: bool) -> (usize, Affinity) {
     let h = (l.height() - 1e-3).max(0.0);
     let ys = if single || x < 0.0 { (y * s).clamp(0.0, h) } else { (y * s).max(0.0) };
-    let (index, affinity) = l.hit(x * s, ys);
+    l.hit(x * s, ys)
+}
+
+/// Whether a press at `(x, y)` lands on `e`'s shown composition, its ends included.
+fn on_composition(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single: bool) -> bool {
+    e.display().1.is_some_and(|(a, b)| (a..=b).contains(&display_hit(l, x, y, s, single).0))
+}
+
+fn hit(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single: bool) -> Hit {
+    let (index, affinity) = display_hit(l, x, y, s, single);
     let caret = e.model_index(index);
     let cluster = if affinity == Affinity::Upstream
         && let Some((cluster, hard_break)) = index.checked_sub(1).and_then(|b| l.cluster_at(b))
@@ -230,16 +240,20 @@ impl<S: 'static> Runtime<S> {
         let scroll = self.input_scroll.get(&path).copied().unwrap_or(0.0);
         match step {
             Step::Down { clicks, shift } => {
-                self.set_focus(Some(path), false);
+                self.set_focus(Some(path.clone()), false);
                 let e = access(states!(self));
                 e.set_single_line(single);
                 e.break_history_group();
                 e.clear_pending();
                 if e.preedit.is_some() {
-                    self.input_click.clear();
-                    one.instant = true;
-                    return true;
+                    if layout.as_ref().is_none_or(|l| on_composition(e, l, x + scroll, y, s, single)) {
+                        self.input_click.clear();
+                        one.instant = true;
+                        return true;
+                    }
+                    self.finish_composition_in(&path);
                 }
+                let e = access(states!(self));
                 if let Some(l) = layout {
                     let h = hit(e, &l, x + scroll, y, s, single);
                     if shift {

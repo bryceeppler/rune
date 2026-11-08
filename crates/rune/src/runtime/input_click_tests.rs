@@ -548,3 +548,58 @@ fn a_press_on_blank_space_in_a_field_focuses_it_at_the_nearest_place() {
         }
     }
 }
+
+/// A press in a composing field away from its composition, on the text or in the padding,
+/// commits the composition where it began and puts the caret where the same press puts it in
+/// the committed text; a press on the composition leaves it to the input method.
+#[test]
+fn a_press_away_from_a_composition_commits_it_where_it_began_and_moves_the_caret() {
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let field = text_input(s, style()).key("note").w_full().min_h(320.0).px(48.0).pt(12.0).pb(80.0).on_edit(|s: &mut TextEdit| s);
+        col().w_full().h_full().child(col().key("scroll").w_full().grow(1.0).min_h(0.0).child(field).scroll(crate::ScrollSpec { stick_bottom: false }))
+    }
+    let arabic = "\u{639}\u{631}\u{628}";
+    let text = "Title\n\nfirst line";
+    let composed = format!("Ti{arabic}tle\n\nfirst line");
+    let field = |text: &str, composing: bool| {
+        let mut edit = TextEdit::new(text).rich();
+        edit.focused = true;
+        edit.set_caret(2);
+        let mut rt = Runtime::new(edit, view, (500.0, 600.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+        if composing {
+            rt.ime(Ime::Preedit(arabic.into(), None));
+            rt.frame(1.0 / 60.0);
+        }
+        rt
+    };
+    let press = |text: &str, composing: bool, (fx, dy): (f32, f32), from_bottom: bool| {
+        let mut rt = field(text, composing);
+        let r = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("note")).unwrap().rect;
+        let (x, y) = (r[0] + 4.0 + (r[2] - 8.0) * fx, if from_bottom { r[1] + r[3] } else { r[1] } + dy);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(2.0 / 60.0);
+        rt
+    };
+    for (what, at, from_bottom) in [
+        ("in the left padding by the first line", (0.0, 18.0), false),
+        ("below the last line", (0.9, -120.0), true),
+        ("on the text of the last line", (0.12, 128.0), false),
+    ] {
+        let mut rt = press(text, true, at, from_bottom);
+        let plain = press(&composed, false, at, from_bottom);
+        assert_eq!((rt.state.text.as_str(), rt.state.preedit.is_none()), (composed.as_str(), true), "a press {what}: the composition commits where it began");
+        assert_eq!((rt.state.anchor, rt.state.focus), (plain.state.anchor, plain.state.focus), "a press {what}: the caret lands as in the committed text");
+        assert_ne!(plain.state.focus, 2 + arabic.len(), "a press {what} lands away from the composition's end");
+        rt.ime_in(0, Ime::Commit(arabic.into()));
+        rt.frame(3.0 / 60.0);
+        assert_eq!(rt.state.text, composed, "a press {what}: the ended session's late commit is dropped");
+    }
+    let mut rt = field(text, true);
+    let [x, y, _, h] = rt.ime_area.expect("the composition's caret");
+    rt.pointer_down(x - 3.0, y + h / 2.0);
+    rt.pointer_up(x - 3.0, y + h / 2.0);
+    rt.frame(4.0 / 60.0);
+    assert_eq!(rt.state.preedit.as_ref().map(|(p, _)| p.as_str()), Some(arabic), "a press on the composition leaves it open");
+}
