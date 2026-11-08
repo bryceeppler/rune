@@ -70,5 +70,28 @@ fn a_frame_saved_at_one_scale_fits_a_screen_at_another() {
 }
 
 fn within(frame: [i32; 4], area: [i32; 4]) -> bool {
-    frame[0] >= area[0] && frame[1] >= area[1] && frame[0] + frame[2] <= area[0] + area[2] && frame[1] + frame[3] <= area[1] + area[3]
+    let ([x, y, w, h], [ax, ay, aw, ah]) = (frame.map(i64::from), area.map(i64::from));
+    x >= ax && y >= ay && x + w <= ax + aw && y + h <= ay + ah
 }
+
+const EXTREMES: [i32; 9] = [i32::MIN, i32::MIN + 1, -100_000, -1, 0, 1, 700, 100_000, i32::MAX];
+
+#[test]
+fn any_saved_frame_fits_wholly_on_a_present_screen() {
+    let windows = Screen { area: [-1920, 0, 1920, 1040], units: 1.5, slack: 12, primary: false };
+    let layouts: [&[Screen]; 3] = [&[LAPTOP], &[LAPTOP, MONITOR], &[windows, LAPTOP]];
+    for screens in layouts {
+        for x in EXTREMES { for y in EXTREMES { for w in EXTREMES { for h in EXTREMES {
+            let saved = WindowGeometry { frame: Some([x, y, w, h]), size: (800.0, 600.0), scale: 1.0, ..Default::default() };
+            let placed = std::panic::catch_unwind(|| saved.fitted(screens, 1.0));
+            let Ok(placed) = placed else { panic!("fitting {:?} panicked", [x, y, w, h]) };
+            let frame = placed.frame.unwrap();
+            let home = screens.iter().find(|s| within(frame, grown(s)));
+            assert!(home.is_some(), "{:?} fitted to {frame:?}, off every screen", [x, y, w, h]);
+            assert!(frame[2] > 0 && frame[3] > 0, "{:?} fitted to the empty frame {frame:?}", [x, y, w, h]);
+            assert!(placed.size.0 > 0.0 && placed.size.1 > 0.0, "{:?} opens with content {:?}", [x, y, w, h], placed.size);
+        }}}}
+    }
+}
+
+fn grown(s: &Screen) -> [i32; 4] { [s.area[0] - s.slack, s.area[1] - s.slack, s.area[2] + 2 * s.slack, s.area[3] + 2 * s.slack] }
