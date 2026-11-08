@@ -13,12 +13,12 @@ pub(crate) const MAX_RICH_BYTES: usize = 4 * 1024 * 1024;
 /// Elements dropped with everything inside them.
 const DROP_WITH_CONTENT: &[&str] = &[
     "script", "iframe", "object", "applet", "noscript", "noembed", "noframes", "template", "frameset",
-    "svg", "math", "xml", "portal", "fencedframe",
+    "svg", "math", "xml", "portal", "fencedframe", "title",
 ];
 /// Elements dropped on their own; their content (if any) is sanitised as ordinary markup.
 const DROP_TAG: &[&str] = &[
     "base", "link", "meta", "embed", "frame", "param", "form",
-    "title", "textarea", "xmp", "plaintext", "listing",
+    "textarea", "xmp", "plaintext", "listing",
 ];
 /// Attributes that hold a URL (or, for `srcset`, a list of them).
 const URL_ATTRIBUTES: &[&str] = &[
@@ -476,7 +476,9 @@ mod tests {
             ("<!--[if gte mso 9]><xml>x</xml><![endif]-->t", "t"),
             ("<![if !supportLists]>t<![endif]>", "t"),
             ("<!DOCTYPE html><html><body>t</body></html>", "<html><body>t</body></html>"),
-            ("<title><!--</title><script>x</script>-->t", "t"),
+            ("<title><!--</title><script>x</script>-->t", "-->t"),
+            ("<html><head><title>Hidden document title</title></head><body><p>Visible body</p></body></html>", "<html><head></head><body><p>Visible body</p></body></html>"),
+            ("<title>never closed", ""),
             ("<textarea><div title=\"</textarea><script>x</script>\"></div></textarea>t", "<div title=\"&lt;/textarea&gt;&lt;script&gt;x&lt;/script&gt;\"></div>t"),
             ("<xmp><script>x</script></xmp>t", "t"),
             ("<plaintext><script>x</script>", ""),
