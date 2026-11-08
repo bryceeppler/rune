@@ -571,3 +571,25 @@ fn characters_no_loaded_font_has_draw_in_a_system_font() {
     eprintln!("{drawn} of {} samples have an installed font", samples.len());
 }
 
+
+/// Latin text never asks the system for a font, and a character no font has stays one box.
+#[test]
+fn latin_text_asks_the_system_for_nothing() {
+    let mut ts = TextSystem::default();
+    let glyphs = faces(&mut ts, "Hello, “café” — naïve…\tdone", &[], TextStyle::new(13.0, 400.0));
+    assert!(glyphs.iter().all(|(_, id)| *id != 0));
+    assert!(ts.system_fallback.routes("a \u{378} b").is_empty(), "nothing was asked about");
+}
+
+/// A letter sharing a cluster with a character its font lacks (a skin tone modifier with no
+/// emoji before it) keeps the app's font, in that text and every later one.
+#[test]
+fn a_letter_beside_a_missing_character_keeps_its_font() {
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(13.0, 400.0);
+    let inter = faces(&mut ts, "b", &[], style)[0].0.clone();
+    faces(&mut ts, "ab\u{1f3fd} ሰ", &[], style);
+    let latin = faces(&mut ts, "b é", &[], style);
+    assert!(latin.iter().all(|(face, _)| *face == inter), "{latin:?}");
+}
+

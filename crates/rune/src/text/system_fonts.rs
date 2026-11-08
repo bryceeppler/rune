@@ -145,7 +145,7 @@ pub(super) fn register_cjk_fallbacks(collection: &mut Collection, loaded: &mut L
 pub(super) type LoadedFiles = HashMap<std::path::PathBuf, Vec<FamilyId>>;
 
 /// The families of `paths`, in order, loading each file the first time.
-fn load_files(collection: &mut Collection, loaded: &mut LoadedFiles, paths: impl IntoIterator<Item = std::path::PathBuf>) -> Vec<FamilyId> {
+pub(super) fn load_files(collection: &mut Collection, loaded: &mut LoadedFiles, paths: impl IntoIterator<Item = std::path::PathBuf>) -> Vec<FamilyId> {
     let mut families: Vec<FamilyId> = Vec::new();
     for path in paths {
         let ids = loaded.entry(path).or_insert_with_key(|path| {

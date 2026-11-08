@@ -34,6 +34,7 @@ mod language;
 pub use language::set_language;
 mod line_break;
 mod span;
+mod system_fallback;
 mod system_fonts;
 mod default_fonts;
 #[cfg(all(test, target_os = "macos"))]
@@ -168,6 +169,7 @@ pub struct TextSystem {
     /// Bit `i` is set once `fallback::SCRIPT_FONTS[i]` has been looked up.
     scripts: u64,
     font_files: LoadedFiles,
+    system_fallback: system_fallback::SystemFallback,
     pub atlas: Atlas,
     color_glyphs: GlyphMap<ColorGlyph>,
     color_pixels: Vec<crate::pixels::Pixels>,
@@ -262,6 +264,7 @@ impl TextSystem {
             slot_system_mono: names_system_mono(families.0) || names_system_mono(families.1),
             scripts: 0,
             font_files,
+            system_fallback: Default::default(),
             atlas: Atlas::new(),
             color_glyphs: GlyphMap::default(),
             color_pixels: Vec::new(),
@@ -576,6 +579,7 @@ impl TextSystem {
         };
         let mono = with_symbols(self.mono.as_str());
         let language = self.language;
+        let mono_at = |range: &std::ops::Range<usize>| spans.iter().any(|s| s.mono && (s.start as usize) < range.end && range.start < s.end as usize);
         // Routed clusters try their fallback first, then the run's own stack (mono spans included).
         // Each of the four {math, emoji} × {sans, mono} stacks is built at most once.
         let mut stacks: [Option<Vec<FontFamilyName<'_>>>; 4] = Default::default();
@@ -585,7 +589,7 @@ impl TextSystem {
             if fonts.is_empty() {
                 continue;
             }
-            let mono_span = spans.iter().any(|s| s.mono && (s.start as usize) < range.end && range.start < s.end as usize);
+            let mono_span = mono_at(&range);
             let stack = 2 * (route == Route::Emoji) as usize + mono_span as usize;
             stacks[stack].get_or_insert_with(|| {
                 let base = if mono_span { &mono } else { &sans };
@@ -593,13 +597,20 @@ impl TextSystem {
             });
             routed.push((range, stack));
         }
+        let system_stacks = |fallback: &system_fallback::SystemFallback| -> Vec<(std::ops::Range<usize>, Vec<FontFamilyName<'_>>)> {
+            fallback.routes(text).into_iter().map(|(range, family)| {
+                let base = if mono_at(&range) { &mono } else { &sans };
+                let stack = std::iter::once(FontFamilyName::Named(family.to_string().into())).chain(base.iter().cloned()).collect();
+                (range, stack)
+            }).collect()
+        };
         let span_range = |s: &Span| (s.start as usize).min(text.len())..(s.end as usize).min(text.len());
         // `exact` overrides the predicted spacing with each run's own, by byte range.
         // Code never takes ligatures (`->` stays two characters); later features override earlier.
         let off = [b"liga", b"clig", b"calt", b"dlig"].map(|tag| parley::FontFeature::new(parley::setting::Tag::new(tag), 0));
         let unligated: Vec<parley::FontFeature> = features.iter().chain(&off).copied().collect();
         type Spacings = [(std::ops::Range<usize>, f32)];
-        let build = |lcx: &mut LayoutContext<Ink>, fcx: &mut FontContext, exact: &Spacings, widen: &Spacings| {
+        let build = |lcx: &mut LayoutContext<Ink>, fcx: &mut FontContext, exact: &Spacings, widen: &Spacings, system: &[(std::ops::Range<usize>, Vec<FontFamilyName<'_>>)]| {
             let mut b = lcx.ranged_builder(fcx, text, scale, true);
             b.push_default(FontFamily::from(sans.as_slice()));
             b.push_default(StyleProperty::Locale(language));
@@ -667,6 +678,9 @@ impl TextSystem {
             for (range, stack) in &routed {
                 b.push(FontFamily::from(stacks[*stack].as_deref().unwrap_or_default()), range.clone());
             }
+            for (range, stack) in system {
+                b.push(FontFamily::from(stack.as_slice()), range.clone());
+            }
             for (range, v) in exact {
                 b.push(StyleProperty::LetterSpacing(*v), range.clone());
             }
@@ -693,7 +707,12 @@ impl TextSystem {
             break_lines(&mut layout);
             layout
         };
-        let mut layout = build(&mut self.layout_cx, &mut self.font_cx, &[], &widen);
+        let mut system = system_stacks(&self.system_fallback);
+        let mut layout = build(&mut self.layout_cx, &mut self.font_cx, &[], &widen, &system);
+        if !text.is_ascii() && self.system_fallback.resolve(&mut self.font_cx, &mut self.font_files, &layout, text) {
+            system = system_stacks(&self.system_fallback);
+            layout = build(&mut self.layout_cx, &mut self.font_cx, &[], &widen, &system);
+        }
         // The spacing each run got, against the spacing its own font needs.
         let given = |at: usize| {
             spans.iter().zip(&span_spacing).rev().find_map(|(s, v)| v.filter(|_| span_range(s).contains(&at))).unwrap_or(base_spacing)
@@ -717,7 +736,7 @@ impl TextSystem {
             }
         }
         if mismatch {
-            layout = build(&mut self.layout_cx, &mut self.font_cx, &exact, &widen);
+            layout = build(&mut self.layout_cx, &mut self.font_cx, &exact, &widen, &system);
         }
         layout.align(align, AlignmentOptions::default());
         let l = Rc::new(layout);
