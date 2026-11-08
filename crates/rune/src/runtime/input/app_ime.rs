@@ -173,6 +173,18 @@ impl<S: 'static> Runtime<S> {
         !stays && self.finish_composition()
     }
 
+    /// Commits the open composition in field `path` before something else edits that field,
+    /// which would otherwise clear it. A composition in another field stays open.
+    pub(in crate::runtime) fn finish_composition_in(&mut self, path: &str) -> bool {
+        let here = match &self.app_ime.open {
+            Some(Composition { owner: Owner::Field { model, .. }, .. }) => {
+                self.node(path).and_then(|n| n.input.as_ref()).is_some_and(|i| i.edit.is_model(model))
+            }
+            _ => false,
+        };
+        here && self.finish_composition()
+    }
+
     /// A removed field's finished composition commits once the view shows its model again.
     pub(super) fn place_unplaced(&mut self) {
         for model in std::mem::take(&mut self.app_ime.unplaced) {

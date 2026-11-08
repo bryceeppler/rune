@@ -86,7 +86,22 @@ impl<S: 'static> Runtime<S> {
         // gives a key equivalent to the menu bar before the text view: an app's shortcut wins.
         if !repeat && self.selection_key(ev, one) { return true; }
         if !repeat && self.context_menu_key(ev, one) { return true; }
+        if self.shifted_paste(ev) {
+            self.paste_request = Some(self.paste_target());
+            return true;
+        }
         self.page_scroll(ev) || self.playground_key(ev, one)
+    }
+
+    /// The plain primary V pastes before any handler hears it.
+    pub(crate) fn pastes_before_keys(&self, ev: &KeyEvent) -> bool {
+        ev.key == crate::Key::Command('v') && !ev.mods.shift && !ev.mods.alt && self.accepts_paste()
+    }
+
+    /// The primary V with Shift or Option reaches handlers first, so an app can bind Paste as
+    /// Plain Text, and pastes only when none takes it.
+    fn shifted_paste(&self, ev: &KeyEvent) -> bool {
+        ev.key == crate::Key::Command('v') && (ev.mods.shift || ev.mods.alt) && self.accepts_paste()
     }
 
     /// `AppSpec::on_key`, given the stage's state while the playground shows one of the app's.

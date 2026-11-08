@@ -17,7 +17,7 @@ use winit::raw_window_handle::HasWindowHandle;
 use crate::app::{Shared, WindowRequest};
 use crate::compose::{Compositor, Frame};
 use crate::frame::clock::FrameClock;
-use crate::edit::{Ime, Key};
+use crate::edit::Ime;
 use crate::el::{Shell, Tx};
 use crate::render::{Gpu, Renderer};
 use crate::runtime::{Env, Runtime, TitlebarAction, Waker};

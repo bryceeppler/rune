@@ -209,6 +209,9 @@ impl<S: 'static> Runtime<S> {
         self.press_down_t = now;
         self.press_moved = false;
         self.press_cancelled = false;
+        if self.textbox_input(ti).is_none() && self.chip_under(ti, x, y).is_some() {
+            return;
+        }
         if let Some(ji) = self.textbox_input(ti) {
             if self.pill_down(ji, x, y) {
                 self.capture = Some((self.nodes[ji].path.clone(), Drag { phase: Phase::Down, x, y, w: 0.0, h: 0.0, start_x: x, start_y: y, dx: 0.0, dy: 0.0, data: 0.0, clicks: 1, cancelled: false }));

@@ -220,6 +220,13 @@ impl<S: 'static> Runtime<S> {
     /// The id of the pill whose chip field `i` draws under window point (x, y), when the field
     /// takes pill presses.
     pub(super) fn pill_at(&self, i: usize, x: f32, y: f32) -> Option<String> {
+        self.nodes[i].input.as_ref()?.access.as_ref()?;
+        self.chip_under(i, x, y)
+    }
+
+    /// A pill chip of a field that takes pill presses under (x, y), whether or not the field
+    /// can be edited: a press there belongs to the chip.
+    pub(super) fn chip_under(&self, i: usize, x: f32, y: f32) -> Option<String> {
         let n = &self.nodes[i];
         let input = n.input.as_ref().filter(|input| input.pill_press.is_some())?;
         let (spec, layout) = (n.text.as_ref()?, n.text_layout.as_ref()?);
@@ -256,6 +263,7 @@ impl<S: 'static> Runtime<S> {
     /// Runs the `on_pill_press` handler of field `path` for pill `id`.
     pub(super) fn press_pill(&mut self, path: &str, id: &str, tx: &mut Tx) -> bool {
         let Some(f) = self.node(path).and_then(|n| n.input.as_ref()?.pill_press.clone()) else { return false };
+        self.finish_composition_in(path);
         log_event!(self, "pill {path} {id}");
         (f.0)(states!(self), id, tx);
         true
