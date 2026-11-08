@@ -63,14 +63,17 @@ impl WindowGeometry {
     /// screen. The frame is rescaled to that screen's units, since the window keeps its size in
     /// points, then moved and shrunk to lie wholly on it, and the content shrinks by what the
     /// frame lost, but never below `min`. A frame with no area is placed from the content size.
+    /// Displays with no area are skipped while any display has one.
     /// The content is always finite and at least `min`; the frame is unchanged without screens.
     pub(crate) fn fitted(&self, screens: &[Screen], units: f64, min: (f32, f32)) -> WindowGeometry {
         let at_least = |v: f32, min: f32| if v.is_finite() { v.max(min) } else { min };
         let content = (at_least(self.size.0, min.0), at_least(self.size.1, min.1));
         let frame = self.frame.filter(|f| f[2] > 0 && f[3] > 0);
-        let overlap = |s: &&Screen| frame.map_or(0, |f| overlap(f, s.area));
-        let best = screens.iter().max_by_key(overlap).filter(|s| overlap(s) > 0);
-        let Some(screen) = best.or_else(|| screens.iter().find(|s| s.primary)).or(screens.first()) else {
+        let has_area = |s: &Screen| s.area[2] > 0 && s.area[3] > 0;
+        let open: Vec<&Screen> = if screens.iter().any(has_area) { screens.iter().filter(|s| has_area(s)).collect() } else { screens.iter().collect() };
+        let overlap = |s: &&&Screen| frame.map_or(0, |f| overlap(f, s.area));
+        let best = open.iter().max_by_key(overlap).filter(|s| overlap(s) > 0);
+        let Some(screen) = best.or_else(|| open.iter().find(|s| s.primary)).or(open.first()).copied() else {
             return WindowGeometry { size: content, ..self.clone() };
         };
         let per_point = if screen.units.is_finite() && screen.units > 0.0 { screen.units } else { 1.0 };
