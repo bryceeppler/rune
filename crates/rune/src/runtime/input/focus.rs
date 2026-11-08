@@ -439,7 +439,8 @@ impl<S: 'static> Runtime<S> {
         }
         let Some(i) = self.active_modal() else { return };
         let path = self.nodes[i].path.clone();
-        if !self.modal_stack.iter().any(|(p, _)| p == &path) {
+        let opened = !self.modal_stack.iter().any(|(p, _)| p == &path);
+        if opened {
             // A field in the modal that asked for focus took it earlier in this commit; closing
             // returns to what had focus before.
             let inside = self.focused_index().is_some_and(|j| self.allowed(j));
@@ -452,7 +453,9 @@ impl<S: 'static> Runtime<S> {
         }
         if !self.focused_index().is_some_and(|j| self.allowed(j)) {
             let target = self.tab_order().first().map(|&j| self.nodes[j].path.clone()).unwrap_or(path);
-            self.set_focus(Some(target), self.keyboard_focus);
+            // A modal a key opened shows its first control focused, as a menu opened with F10
+            // highlights its first item, so the next Return chooses it.
+            self.set_focus(Some(target), self.keyboard_focus || (opened && self.keyed_since_press));
         }
     }
 

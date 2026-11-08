@@ -553,6 +553,9 @@ pub struct Runtime<S: 'static> {
     slack_dt: f32,
     focused: Option<String>,
     keyboard_focus: bool,
+    /// A key has come since the last pointer press, so a modal opening now was opened from
+    /// the keyboard.
+    keyed_since_press: bool,
     /// The pointer focused a `focus_highlight` row, so its highlight shows without a key.
     hover_focus: bool,
     /// Type-select's typed prefix and when its last key arrived (`now_clock`).
@@ -926,6 +929,7 @@ impl<S: 'static> Runtime<S> {
             slack_dt: 0.0,
             focused: None,
             keyboard_focus: false,
+            keyed_since_press: false,
             hover_focus: false,
             typeahead: (String::new(), f64::NEG_INFINITY),
             held: None,

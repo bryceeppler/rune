@@ -9,6 +9,7 @@ impl<S: 'static> Runtime<S> {
         one.focused = self.focused_key();
         if matches!(ev.key, crate::Key::Modifier { .. }) { return !repeat && self.route_modifier(ev, one); }
         one.key_repeat = repeat;
+        self.keyed_since_press = true;
         let shown = self.keyboard_focus || self.hover_focus;
         self.keyboard_focus |= focus::navigates(ev);
         // With no focused element, app-owned navigation (e.g. a toolbar)

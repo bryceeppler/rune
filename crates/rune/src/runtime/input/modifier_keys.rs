@@ -176,6 +176,7 @@ impl<S: 'static> Runtime<S> {
     /// order, and to nothing built in: no editing, selection, focus traversal or focus ring.
     pub(super) fn route_modifier(&mut self, ev: &KeyEvent, one: &mut Tx) -> bool {
         if !self.modifier_keys.enabled { return false; }
+        self.keyed_since_press = true;
         one.key_repeat = false;
         let app_first = self.focused.is_none();
         if app_first && let Some(f) = self.on_key && Tx::took(self.app_key(f, ev, one), one) { return true; }
