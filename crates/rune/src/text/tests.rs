@@ -525,3 +525,21 @@ fn run_lookups_off_a_grapheme_start_find_nothing() {
     rt.frame(0.0);
     assert_eq!(rt.instances.iter().filter(|i| i.params[1] == crate::render::KIND_GLYPH).count(), 2);
 }
+
+/// A combining mark straight after a hard break in right-to-left text ends its line on the
+/// mark; every range of it still has boxes, line for line.
+#[test]
+fn a_mark_after_a_hard_break_in_rtl_text_has_range_boxes() {
+    let mut ts = TextSystem::default();
+    let text = "eשלום\r\n\r\u{301}\u{2028}y";
+    let layout = ts.layout_blocks(text, &[], &[], &[], TextStyle::new(15.5, 400.0), 1.0, Some(148.0), Alignment::Start);
+    let bytes: Vec<usize> = (0..=text.len()).filter(|&i| text.is_char_boundary(i)).collect();
+    for &a in &bytes {
+        for &b in bytes.iter().filter(|&&b| b > a) {
+            let boxes = range_boxes(&layout, a, b, false);
+            assert!(boxes.iter().all(|(bb, _)| bb.x1 >= bb.x0 && bb.y1 > bb.y0), "boxes {a}..{b}: {boxes:?}");
+        }
+    }
+    let lines: Vec<usize> = range_boxes(&layout, 0, text.len(), false).iter().map(|&(_, line)| line).collect();
+    assert!(lines.contains(&0) && lines.contains(&(layout.len() - 1)), "selecting all covers the first and last lines: {lines:?}");
+}

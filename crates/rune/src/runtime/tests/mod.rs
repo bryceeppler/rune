@@ -28,6 +28,7 @@ mod pointer_hit;
 mod relayout;
 mod remount;
 mod reveal_chain;
+mod rtl_ime;
 mod scroll_carried;
 mod scroll_children;
 mod scroll_growth;
