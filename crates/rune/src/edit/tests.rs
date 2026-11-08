@@ -1019,3 +1019,23 @@ fn assert_invariants(e: &TextEdit, ctx: &str) {
 
 
 include!("rich_tests.rs");
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn off_the_mac_ctrl_arrows_move_by_word_and_home_and_end_by_line() {
+    let ctrl = |key| KeyEvent { key, mods: Mods { cmd: true, ctrl: true, ..Mods::default() } };
+    let mut e = TextEdit::new("one two\nthree four");
+    e.set_caret(e.text.len());
+    e.key(&ctrl(Key::Left), None);
+    assert_eq!(e.focus, "one two\nthree ".len(), "Ctrl+Left steps back one word");
+    e.key(&ctrl(Key::Right), None);
+    assert_eq!(e.focus, e.text.len(), "Ctrl+Right steps over one word");
+    e.key(&k(Key::Home), None);
+    assert_eq!(e.focus, "one two\n".len(), "Home goes to the line's start");
+    e.key(&k(Key::End), None);
+    assert_eq!(e.focus, e.text.len(), "End goes to the line's end");
+    e.key(&ctrl(Key::Home), None);
+    assert_eq!(e.focus, 0, "Ctrl+Home goes to the text's start");
+    e.key(&ctrl(Key::End), None);
+    assert_eq!(e.focus, e.text.len(), "Ctrl+End goes to the text's end");
+}

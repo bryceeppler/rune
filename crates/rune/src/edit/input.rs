@@ -83,7 +83,8 @@ impl TextEdit {
         }
         if ev.is_command_chord() { return out; }
         if !matches!(&ev.key, Key::Text(s) if !s.contains(['\r', '\n'])) { self.break_history_group(); }
-        let word = m.alt || (m.ctrl && !cfg!(target_os = "macos"));
+        let mac = cfg!(target_os = "macos");
+        let word = m.alt || (m.ctrl && !mac);
         match &ev.key {
             Key::Text(s) => {
                 if s.chars().any(|c| !c.is_control() || (!self.is_single_line() && matches!(c, '\n' | '\r' | '\t'))) {
@@ -208,19 +209,23 @@ impl TextEdit {
                 }
             }
             Key::Left => {
-                let i = if m.cmd { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
+                let i = if m.cmd && mac { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
                 self.move_h(i, m.shift);
             }
             Key::Right if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Down if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Right => {
-                let i = if m.cmd { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
+                let i = if m.cmd && mac { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
                 self.move_h(i, m.shift);
             }
-            Key::Home => self.set(0, m.shift),
+            // Windows and Linux move Home and End along the line, and to the text's ends with Ctrl.
+            Key::Home => {
+                let i = if mac || m.cmd { 0 } else { self.line_edge(layout, false) };
+                self.set(i, m.shift)
+            }
             Key::End => {
-                let n = self.text.len();
-                self.set(n, m.shift)
+                let i = if mac || m.cmd { self.text.len() } else { self.line_edge(layout, true) };
+                self.set(i, m.shift)
             }
             Key::Up | Key::Down => {
                 let down = ev.key == Key::Down;
