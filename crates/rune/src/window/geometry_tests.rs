@@ -79,7 +79,9 @@ const EXTREMES: [i32; 9] = [i32::MIN, i32::MIN + 1, -100_000, -1, 0, 1, 700, 100
 #[test]
 fn any_saved_geometry_fits_wholly_on_a_present_screen_at_least_its_minimum() {
     let windows = Screen { area: [-1920, 0, 1920, 1040], units: 1.5, slack: 12, primary: false };
-    let layouts: [&[Screen]; 3] = [&[LAPTOP], &[LAPTOP, MONITOR], &[windows, LAPTOP]];
+    let gone = Screen { area: [0, 0, 0, 0], units: 1.0, slack: 0, primary: true };
+    let side = Screen { area: [100, 100, 1920, 1080], units: 1.0, slack: 0, primary: false };
+    let layouts: [&[Screen]; 4] = [&[LAPTOP], &[LAPTOP, MONITOR], &[windows, LAPTOP], &[gone, side]];
     let min = (420.0, 400.0);
     let sizes = [(800.0, 600.0), (-1.0, -1.0), (f32::NAN, f32::INFINITY), (1e30, 0.0)];
     let units = [1.0, 2.0, 0.0, -1.0, f64::NAN];
@@ -104,6 +106,16 @@ fn a_frame_with_no_area_centres_its_content_on_the_primary_screen() {
     let saved = WindowGeometry { frame: Some([1400, 900, -1, -1]), size: (800.0, 600.0), scale: 1.0, ..Default::default() };
     let placed = saved.fitted(&[LAPTOP, MONITOR], 1.0, (420.0, 400.0));
     assert_eq!((placed.frame, placed.size), (Some([356, 203, 800, 600]), (800.0, 600.0)));
+}
+
+/// A primary display that reports no area is no place for a window; it opens on the usable one.
+#[test]
+fn a_frame_off_every_display_skips_a_primary_with_no_area() {
+    let gone = Screen { area: [0, 0, 0, 0], units: 1.0, slack: 0, primary: true };
+    let side = Screen { area: [100, 100, 1920, 1080], units: 1.0, slack: 0, primary: false };
+    let placed = WindowGeometry { frame: Some([10_000, 10_000, 800, 600]), size: (800.0, 600.0), scale: 1.0, ..Default::default() }
+        .fitted(&[gone, side], 1.0, (420.0, 400.0));
+    assert_eq!(placed.frame, Some([660, 340, 800, 600]), "centred on the usable display");
 }
 
 #[test]
