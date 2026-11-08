@@ -5,17 +5,22 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use parley::{FontContext, PositionedLayoutItem};
+use std::hash::{Hash, Hasher};
+
+use parley::FontContext;
 use parley::fontique::FamilyId;
 use unicode_segmentation::GraphemeCursor;
 
 use super::system_fonts::{LoadedFiles, load_files};
-use super::{FxHashMap, Ink, Layout};
+use super::hash::KeyHasher;
+use super::{FxHashMap, FxHashSet, Ink, Layout};
 
 /// Characters remembered at most; past it they are forgotten and asked about again.
 const MAX_CHARS: usize = 4096;
 /// System font files loaded for characters at most.
 const MAX_FILES: usize = 64;
+/// Runs remembered as drawn whole at most; past it they are forgotten and checked again.
+const MAX_RUNS: usize = 16384;
 
 #[derive(Default)]
 pub(super) struct SystemFallback {
@@ -27,6 +32,9 @@ pub(super) struct SystemFallback {
     /// The families the system's answers loaded, which later characters try first.
     families: Vec<FamilyId>,
     files: usize,
+    /// Runs whose font has every drawable character of their text, by `run_key`, so a shaping
+    /// of the same runs skips them.
+    covered: FxHashSet<u64>,
 }
 
 impl SystemFallback {
@@ -54,14 +62,21 @@ impl SystemFallback {
     pub(super) fn resolve(&mut self, fcx: &mut FontContext, loaded: &mut LoadedFiles, layout: &Layout<Ink>, text: &str) -> bool {
         let mut missing: Vec<char> = Vec::new();
         for line in layout.lines() {
-            for item in line.items() {
-                let PositionedLayoutItem::GlyphRun(glyphs) = item else { continue };
-                if !glyphs.glyphs().any(|g| g.id == 0) {
+            for run in line.runs() {
+                let font = run.font();
+                let content = text.get(run.text_range()).unwrap_or_default();
+                let key = run_key(font.data.id(), font.index, content);
+                if self.covered.contains(&key) {
                     continue;
                 }
-                let run = glyphs.run();
-                let font = run.font();
                 let Some(face) = swash::FontRef::from_index(font.data.as_ref(), font.index as usize) else { continue };
+                if content.chars().all(|ch| !drawable(ch) || face.charmap().map(ch) != 0) {
+                    if self.covered.len() >= MAX_RUNS {
+                        self.covered.clear();
+                    }
+                    self.covered.insert(key);
+                    continue;
+                }
                 for cluster in run.clusters().filter(|c| c.glyphs().any(|g| g.id == 0)) {
                     for ch in text.get(cluster.text_range()).unwrap_or_default().chars() {
                         if drawable(ch) && face.charmap().map(ch) == 0 && !self.found.contains_key(&ch) && !missing.contains(&ch) {
@@ -94,6 +109,13 @@ impl SystemFallback {
         self.any |= drawn;
         drawn
     }
+}
+
+/// A run's font, face and text, which decide whether the font has every character in it.
+fn run_key(blob: u64, index: u32, text: &str) -> u64 {
+    let mut h = KeyHasher::default();
+    (blob, index, text).hash(&mut h);
+    h.finish()
 }
 
 /// The grapheme of `text` holding byte `at`.
