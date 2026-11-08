@@ -45,7 +45,7 @@ impl<S: 'static> Runtime<S> {
     }
     /// Queue a key press with its physical code and logical key, as a native host sends them
     /// (a script's `{"type": "key", "code": …}`), and its `Tx::key_base`.
-    pub(crate) fn physical_key_input(&mut self, event: PhysicalInput, key: KeyEvent, base: Option<char>) {
+    pub fn physical_key_input(&mut self, event: PhysicalInput, key: KeyEvent, base: Option<char>) {
         self.observe_mods(&event);
         self.physical_then(event, Some(key), base, None);
     }
