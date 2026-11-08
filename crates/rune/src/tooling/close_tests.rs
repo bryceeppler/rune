@@ -139,7 +139,8 @@ fn a_window_saved_on_a_display_that_is_gone_opens_wholly_on_a_present_one() {
     let _turn = HEADLESS.lock().unwrap_or_else(|e| e.into_inner());
     // The run's one display is the backdrop's 120 by 80 points.
     let saved = WindowGeometry { frame: Some([2400, 300, 60, 40]), size: (60.0, 40.0), scale: 2.0, ..Default::default() };
-    let run = run(r#"[{"t": 0.1, "type": "key", "name": "m"}]"#, move || vec![doc("a", false, crate::WindowOptions::default(), Some(saved))]);
+    let small = crate::WindowOptions { min_size: Some((40.0, 30.0)), ..Default::default() };
+    let run = run(r#"[{"t": 0.1, "type": "key", "name": "m"}]"#, move || vec![doc("a", false, small, Some(saved))]);
     let [x, y, w, h] = run.windows_at(0.0)[0].frame;
     assert_eq!([x, y, w, h], [30.0, 20.0, 60.0, 40.0], "centred on the display present");
     let reported = GEOMETRY.lock().unwrap().first().cloned().unwrap().1;

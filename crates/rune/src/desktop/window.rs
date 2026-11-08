@@ -99,8 +99,8 @@ pub(crate) struct Window<S: 'static> {
     on_close: Option<fn(&mut S, &mut crate::Tx)>,
     on_reopen: Option<fn(&mut S, bool, &mut crate::Tx) -> bool>,
     on_geometry: Option<crate::window::OnGeometry<S>>,
-    /// `App::restore_geometry`, until the window first opens.
-    restore: Option<crate::WindowGeometry>,
+    /// `App::restore_geometry` and the window's minimum content size, until it first opens.
+    restore: Option<(crate::WindowGeometry, (f32, f32))>,
     /// What `on_geometry` last heard.
     reported: Option<crate::WindowGeometry>,
     keep_running: bool,
@@ -143,6 +143,7 @@ impl<S: 'static> Window<S> {
         let titlebar_inset = if options.borderless { 0.0 } else { app.chrome.titlebar_inset() };
         let playground = app.playground.take();
         let (spec, state, shared) = app.into_parts(own.scene.as_deref());
+        let restore = restore.map(|saved| (saved, options.size_limits(spec.min_size).0));
         let shortcuts = crate::shortcuts::Guard::attach(&shared, Arc::new(|| {}), true, false);
         let menus = crate::native_menu::Guard::attach(&shared, true);
         let size = own.size.unwrap_or(spec.size);
@@ -298,10 +299,10 @@ impl<S: 'static> Member for Window<S> {
     fn features(&self) -> wgpu::Features { self.comp.as_ref().map_or(wgpu::Features::empty(), |c| c.features()) }
 
     fn start(&mut self, desktop: &VirtualDesktop) {
-        if let Some(saved) = self.restore.take() {
+        if let Some((saved, min)) = self.restore.take() {
             let screens: Vec<_> = desktop.displays.iter()
                 .map(|d| crate::window::geometry::Screen::in_points(d.frame.map(|v| v.round() as i32), d.primary)).collect();
-            let placed = saved.fitted(&screens, 1.0);
+            let placed = saved.fitted(&screens, 1.0, min);
             if let Some([x, y, ..]) = placed.frame { return self.resize([x as f32, y as f32, placed.size.0, placed.size.1]); }
         }
         let display = desktop.display_at(self.position);

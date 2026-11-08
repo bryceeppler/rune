@@ -62,27 +62,45 @@ impl WindowGeometry {
     /// the screen the frame overlaps most, keeping its place there, else centred on the primary
     /// screen. The frame is rescaled to that screen's units, since the window keeps its size in
     /// points, then moved and shrunk to lie wholly on it, and the content shrinks by what the
-    /// frame lost. Unchanged without a frame or screens.
-    pub(crate) fn fitted(&self, screens: &[Screen], units: f64) -> WindowGeometry {
-        let Some(frame) = self.frame else { return self.clone() };
-        let overlap = |s: &Screen| {
-            let span = |a: i32, al: i32, b: i32, bl: i32| (i64::from(a) + i64::from(al)).min(i64::from(b) + i64::from(bl)) - i64::from(a.max(b));
-            let (w, h) = (span(frame[0], frame[2], s.area[0], s.area[2]), span(frame[1], frame[3], s.area[1], s.area[3]));
-            if w > 0 && h > 0 { w * h } else { 0 }
+    /// frame lost, but never below `min`. A frame with no area is placed from the content size.
+    /// The content is always finite and at least `min`; the frame is unchanged without screens.
+    pub(crate) fn fitted(&self, screens: &[Screen], units: f64, min: (f32, f32)) -> WindowGeometry {
+        let at_least = |v: f32, min: f32| if v.is_finite() { v.max(min) } else { min };
+        let content = (at_least(self.size.0, min.0), at_least(self.size.1, min.1));
+        let frame = self.frame.filter(|f| f[2] > 0 && f[3] > 0);
+        let overlap = |s: &&Screen| frame.map_or(0, |f| overlap(f, s.area));
+        let best = screens.iter().max_by_key(overlap).filter(|s| overlap(s) > 0);
+        let Some(screen) = best.or_else(|| screens.iter().find(|s| s.primary)).or(screens.first()) else {
+            return WindowGeometry { size: content, ..self.clone() };
         };
-        let best = screens.iter().max_by_key(|s| overlap(s)).filter(|s| overlap(s) > 0);
-        let Some(screen) = best.or_else(|| screens.iter().find(|s| s.primary)).or(screens.first()) else { return self.clone() };
-        let ratio = if units > 0.0 { screen.units / units } else { 1.0 };
-        let rescale = |v: i32| (f64::from(v) * ratio).round() as i32;
-        let (want_w, want_h) = (rescale(frame[2]), rescale(frame[3]));
-        let ([ax, ay, aw, ah], slack) = (screen.area, screen.slack);
-        let (w, h) = (want_w.min(aw + 2 * slack), want_h.min(ah + 2 * slack));
-        let (x, y) = if best.is_some() { (frame[0], frame[1]) } else { (ax + (aw - w) / 2, ay + (ah - h) / 2) };
-        let placed = [x.clamp(ax - slack, ax + aw + slack - w), y.clamp(ay - slack, ay + ah + slack - h), w, h];
-        let lost = |was: i32, now: i32| (f64::from(was - now) / screen.units) as f32;
-        let size = (self.size.0 - lost(want_w, w), self.size.1 - lost(want_h, h));
-        WindowGeometry { frame: Some(placed), size, ..self.clone() }
+        let per_point = if screen.units.is_finite() && screen.units > 0.0 { screen.units } else { 1.0 };
+        let ratio = if units.is_finite() && units > 0.0 { per_point / units } else { 1.0 };
+        let want = |saved: Option<i32>, content: f32| saved.map_or(f64::from(content) * per_point, |v| f64::from(v) * ratio);
+        let want = (want(frame.map(|f| f[2]), content.0), want(frame.map(|f| f[3]), content.1));
+        let [ax, ay, aw, ah] = screen.area.map(i64::from);
+        let slack = i64::from(screen.slack.max(0));
+        let span = |want: f64, room: i64, min: f32| (want.round() as i64).min(room).max((f64::from(min) * per_point).ceil() as i64).max(1);
+        let (w, h) = (span(want.0, aw + 2 * slack, min.0), span(want.1, ah + 2 * slack, min.1));
+        let (x, y) = match (best, frame) {
+            (Some(_), Some(f)) => (i64::from(f[0]), i64::from(f[1])),
+            _ => (ax + (aw - w) / 2, ay + (ah - h) / 2),
+        };
+        let place = |v: i64, a: i64, room: i64, len: i64| v.min(a + room + slack - len).max(a - slack);
+        let placed = [place(x, ax, aw, w), place(y, ay, ah, h), w, h].map(|v| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32);
+        let fit = |content: f32, want: f64, now: i64, min: f32| {
+            let lost = ((want - now as f64).max(0.0) / per_point) as f32;
+            (content - lost).min((now as f64 / per_point) as f32).max(min)
+        };
+        let size = (fit(content.0, want.0, w, min.0), fit(content.1, want.1, h, min.1));
+        WindowGeometry { frame: self.frame.map(|_| placed), size, ..self.clone() }
     }
+}
+
+/// The area two frames share, in square desktop units.
+fn overlap(a: [i32; 4], b: [i32; 4]) -> i64 {
+    let span = |a: i32, al: i32, b: i32, bl: i32| (i64::from(a) + i64::from(al)).min(i64::from(b) + i64::from(bl)) - i64::from(a.max(b));
+    let (w, h) = (span(a[0], a[2], b[0], b[2]), span(a[1], a[3], b[1], b[3]));
+    if w > 0 && h > 0 { w * h } else { 0 }
 }
 
 /// Desktop units per point at `scale`.
@@ -205,7 +223,8 @@ impl<S: 'static> Host<S> {
     pub(super) fn restored_frame(&mut self, event_loop: &ActiveEventLoop) -> Option<(Option<Position>, (f32, f32))> {
         let saved = self.restore.as_ref()?;
         let wayland = is_wayland(event_loop);
-        let placed = saved.fitted(&screens(event_loop), units_per_point(saved.scale));
+        let min = self.options.size_limits(self.spec.min_size).0;
+        let placed = saved.fitted(&screens(event_loop), units_per_point(saved.scale), min);
         let position = placed.frame.filter(|_| !wayland).map(|[x, y, ..]| if cfg!(target_os = "macos") {
             Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y)))
         } else {

@@ -5,7 +5,7 @@ const MONITOR: Screen = Screen { area: [1512, -300, 2560, 1415], units: 1.0, sla
 
 /// Where a window saved with `frame`, in points, opens on `screens`.
 fn fit(frame: [i32; 4], screens: &[Screen]) -> [i32; 4] {
-    WindowGeometry { frame: Some(frame), scale: 1.0, ..Default::default() }.fitted(screens, 1.0).frame.unwrap()
+    WindowGeometry { frame: Some(frame), scale: 1.0, ..Default::default() }.fitted(screens, 1.0, (0.0, 0.0)).frame.unwrap()
 }
 
 #[test]
@@ -49,10 +49,10 @@ fn no_screens_leaves_the_frame_as_saved() {
 #[test]
 fn a_fitted_geometry_shrinks_its_content_by_what_the_frame_lost() {
     let saved = WindowGeometry { frame: Some([0, 0, 2000, 1000]), size: (1000.0, 486.0), scale: 2.0, ..Default::default() };
-    let placed = saved.fitted(&[Screen { area: [0, 0, 1600, 1000], units: 2.0, slack: 0, primary: true }], 2.0);
+    let placed = saved.fitted(&[Screen { area: [0, 0, 1600, 1000], units: 2.0, slack: 0, primary: true }], 2.0, (0.0, 0.0));
     assert_eq!((placed.frame, placed.size), (Some([0, 0, 1600, 1000]), (800.0, 486.0)));
     let wayland = WindowGeometry { frame: None, ..saved.clone() };
-    assert_eq!(wayland.fitted(&[LAPTOP], 1.0), wayland, "without a frame only the size restores");
+    assert_eq!(wayland.fitted(&[LAPTOP], 1.0, (0.0, 0.0)), wayland, "without a frame only the size restores");
 }
 
 #[test]
@@ -60,12 +60,12 @@ fn a_frame_saved_at_one_scale_fits_a_screen_at_another() {
     // Saved at 1 pixel a point on a monitor that is gone; the screen left has 2.
     let saved = WindowGeometry { frame: Some([2400, 0, 600, 400]), size: (600.0, 400.0), scale: 1.0, ..Default::default() };
     let screen = Screen { area: [0, 0, 800, 600], units: 2.0, slack: 0, primary: true };
-    let placed = saved.fitted(&[screen], 1.0);
+    let placed = saved.fitted(&[screen], 1.0, (0.0, 0.0));
     assert_eq!((placed.frame, placed.size), (Some([0, 0, 800, 600]), (400.0, 300.0)));
     let opened = [0, 0, (placed.size.0 * 2.0) as i32, (placed.size.1 * 2.0) as i32];
     assert!(within(opened, screen.area), "the window it opens, {opened:?}, lies on the screen");
     let roomy = Screen { area: [0, 0, 2000, 1600], ..screen };
-    let placed = saved.fitted(&[roomy], 1.0);
+    let placed = saved.fitted(&[roomy], 1.0, (0.0, 0.0));
     assert_eq!((placed.frame, placed.size), (Some([400, 400, 1200, 800]), (600.0, 400.0)), "it keeps its size in points");
 }
 
@@ -77,21 +77,40 @@ fn within(frame: [i32; 4], area: [i32; 4]) -> bool {
 const EXTREMES: [i32; 9] = [i32::MIN, i32::MIN + 1, -100_000, -1, 0, 1, 700, 100_000, i32::MAX];
 
 #[test]
-fn any_saved_frame_fits_wholly_on_a_present_screen() {
+fn any_saved_geometry_fits_wholly_on_a_present_screen_at_least_its_minimum() {
     let windows = Screen { area: [-1920, 0, 1920, 1040], units: 1.5, slack: 12, primary: false };
     let layouts: [&[Screen]; 3] = [&[LAPTOP], &[LAPTOP, MONITOR], &[windows, LAPTOP]];
-    for screens in layouts {
+    let min = (420.0, 400.0);
+    let sizes = [(800.0, 600.0), (-1.0, -1.0), (f32::NAN, f32::INFINITY), (1e30, 0.0)];
+    let units = [1.0, 2.0, 0.0, -1.0, f64::NAN];
+    for screens in layouts { for size in sizes { for units in units {
         for x in EXTREMES { for y in EXTREMES { for w in EXTREMES { for h in EXTREMES {
-            let saved = WindowGeometry { frame: Some([x, y, w, h]), size: (800.0, 600.0), scale: 1.0, ..Default::default() };
-            let placed = std::panic::catch_unwind(|| saved.fitted(screens, 1.0));
-            let Ok(placed) = placed else { panic!("fitting {:?} panicked", [x, y, w, h]) };
+            let saved = WindowGeometry { frame: Some([x, y, w, h]), size, scale: units, ..Default::default() };
+            let case = format!("{:?} with content {size:?} at {units} units", [x, y, w, h]);
+            let Ok(placed) = std::panic::catch_unwind(|| saved.fitted(screens, units, min)) else { panic!("fitting {case} panicked") };
             let frame = placed.frame.unwrap();
             let home = screens.iter().find(|s| within(frame, grown(s)));
-            assert!(home.is_some(), "{:?} fitted to {frame:?}, off every screen", [x, y, w, h]);
-            assert!(frame[2] > 0 && frame[3] > 0, "{:?} fitted to the empty frame {frame:?}", [x, y, w, h]);
-            assert!(placed.size.0 > 0.0 && placed.size.1 > 0.0, "{:?} opens with content {:?}", [x, y, w, h], placed.size);
+            let Some(home) = home else { panic!("{case} fitted to {frame:?}, off every screen") };
+            assert!(f64::from(frame[2]) >= f64::from(min.0) * home.units && f64::from(frame[3]) >= f64::from(min.1) * home.units, "{case} fitted to {frame:?}, under its minimum");
+            let (cw, ch) = placed.size;
+            assert!(cw >= min.0 && ch >= min.1 && cw.is_finite() && ch.is_finite(), "{case} opens with content {:?}", placed.size);
+            assert!(f64::from(cw) * home.units <= f64::from(frame[2]) && f64::from(ch) * home.units <= f64::from(frame[3]), "{case} opens content {:?} larger than its frame {frame:?}", placed.size);
         }}}}
-    }
+    }}}
+}
+
+#[test]
+fn a_frame_with_no_area_centres_its_content_on_the_primary_screen() {
+    let saved = WindowGeometry { frame: Some([1400, 900, -1, -1]), size: (800.0, 600.0), scale: 1.0, ..Default::default() };
+    let placed = saved.fitted(&[LAPTOP, MONITOR], 1.0, (420.0, 400.0));
+    assert_eq!((placed.frame, placed.size), (Some([356, 203, 800, 600]), (800.0, 600.0)));
+}
+
+#[test]
+fn a_frame_under_the_minimum_grows_to_it() {
+    let placed = WindowGeometry { frame: Some([100, 100, 50, 50]), size: (40.0, 20.0), scale: 1.0, ..Default::default() }
+        .fitted(&[LAPTOP], 1.0, (420.0, 400.0));
+    assert_eq!((placed.frame, placed.size), (Some([100, 100, 420, 400]), (420.0, 400.0)));
 }
 
 fn grown(s: &Screen) -> [i32; 4] { [s.area[0] - s.slack, s.area[1] - s.slack, s.area[2] + 2 * s.slack, s.area[3] + 2 * s.slack] }
