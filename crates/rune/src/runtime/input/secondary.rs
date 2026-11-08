@@ -56,8 +56,9 @@ impl<S: 'static> Runtime<S> {
 
     /// The Menu key, or Shift+F10, that nothing before it took: the focused element's context
     /// menu. That is its focused link's `on_link_secondary`, else its own or its nearest
-    /// ancestor's `on_secondary_press`, at the bottom-left of the focused link or element, where
-    /// a menu opens below it as AppKit's and Windows' keyboard menus do.
+    /// ancestor's `on_secondary_press`, at the bottom-left of the focused link or element, or of
+    /// a focused text input's caret, where a menu opens below it as AppKit's and Windows'
+    /// keyboard menus do.
     pub(super) fn context_menu_key(&mut self, ev: &KeyEvent, tx: &mut Tx) -> bool {
         let m = ev.mods;
         let plain = !m.cmd && !m.ctrl && !m.alt && !m.logo;
@@ -68,7 +69,11 @@ impl<S: 'static> Runtime<S> {
         };
         let Some(focused) = self.focused_index().filter(|&i| menu_key && self.can_focus(i)) else { return false };
         if self.focused_link_menu(focused, tx) { return true; }
-        let [x, _, _, y] = self.drawn_box(focused);
+        let input = self.textbox_input(focused);
+        let [x, y] = match input.and(self.ime_area) {
+            Some([x, y, _, h]) => [x, y + h],
+            None => { let [x, _, _, y] = self.drawn_box(focused); [x, y] }
+        };
         let mut index = focused;
         loop {
             let n = &self.nodes[index];
@@ -76,7 +81,7 @@ impl<S: 'static> Runtime<S> {
             if let Some(f) = n.handlers.on_secondary_press.clone() {
                 let path = n.path.clone();
                 let mut point = self.pointer_event(index, x, y);
-                point.text = self.textbox_input(focused).and_then(|ji| self.input_text_at(ji, None));
+                point.text = input.and_then(|ji| self.input_text_at(ji, None));
                 log_event!(self, "secondary press {path}");
                 f(states!(self), point, tx);
                 return true;

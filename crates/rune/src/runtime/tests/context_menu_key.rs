@@ -29,17 +29,17 @@ fn the_menu_key_opens_nothing_for_a_focused_link_whose_subtree_is_inert() {
 #[test]
 fn a_secondary_press_on_a_text_input_reports_the_text_it_is_on() {
     #[derive(Default)]
-    struct State { field: crate::TextEdit, texts: Vec<Option<usize>> }
+    struct State { field: crate::TextEdit, texts: Vec<Option<usize>>, at: Option<PointerPress> }
     fn view(s: &State, _: &mut Cx<State>) -> El {
         col().size(300.0, 100.0)
             .child(crate::text_input(&s.field, crate::TextStyle::new(16.0, 400.0)).single_line()
                 .key("field").size(300.0, 40.0).on_edit(|s: &mut State| &mut s.field)
-                .on_secondary_press_local(|s: &mut State, p, _| s.texts.push(p.text)))
+                .on_secondary_press_local(|s: &mut State, p, _| { s.texts.push(p.text); s.at = Some(p.window()); }))
             .child(el().key("plain").size(300.0, 40.0).on_secondary_press_local(|s: &mut State, p, _| s.texts.push(p.text)))
     }
     let mut field = crate::TextEdit::new("one two");
     field.focused = true;
-    let mut rt = Runtime::new(State { field, texts: Vec::new() }, view, (300.0, 100.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(State { field, texts: Vec::new(), at: None }, view, (300.0, 100.0), Env::new(true, 1.0));
     rt.frame(0.0);
     rt.key(KeyEvent { key: Key::Home, mods: Mods::default() });
     rt.frame(0.0);
@@ -62,8 +62,11 @@ fn a_secondary_press_on_a_text_input_reports_the_text_it_is_on() {
     assert_eq!(rt.state.field.focus, 0, "a secondary press leaves the caret where it was");
     rt.state.texts.clear();
     rt.key(KeyEvent { key: Key::End, mods: Mods::default() });
+    rt.frame(0.0);
+    let [x, y, _, height] = rt.ime_area.expect("the field's caret");
     rt.key(KeyEvent { key: Key::ContextMenu, mods: Mods::default() });
     rt.frame(0.0);
+    assert_eq!(rt.state.at, Some(PointerPress { x, y: y + height }), "the Menu key's menu opens below the caret");
     rt.secondary_down(10.0, 60.0);
     rt.secondary_up(10.0, 60.0);
     rt.frame(0.0);
