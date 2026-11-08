@@ -196,6 +196,21 @@ impl<S: 'static> Runtime<S> {
         self.queue.push(Action::Focus(path, ix, iy));
     }
 
+    /// The byte of input `ji`'s text under window point (x, y), as a press there would place
+    /// the caret, or the caret itself without a point.
+    pub(in crate::runtime) fn input_text_at(&mut self, ji: usize, point: Option<(f32, f32)>) -> Option<usize> {
+        let n = &self.nodes[ji];
+        let input = n.input.as_ref()?;
+        let (access, single) = (input.access.clone()?, input.single_line);
+        let Some((x, y)) = point else { return Some(access(states!(self)).focus) };
+        let layout = n.text_layout.clone()?;
+        let scroll = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
+        let inset = n.inset;
+        let [lx, ly] = self.to_local(ji, x, y);
+        let s = self.env.scale;
+        Some(hit(access(states!(self)), &layout, lx - inset[0] + scroll, ly - inset[1], s, single).caret)
+    }
+
     pub(super) fn focus_input(&mut self, path: String, x: f32, y: f32, one: &mut Tx) -> bool {
         let step = if self.input_click.steps.front().is_some_and(|(p, _)| *p == path) {
             self.input_click.steps.pop_front().unwrap().1

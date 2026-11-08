@@ -12,7 +12,7 @@ impl<S: 'static> Runtime<S> {
     /// Window point (x, y) as node `i`'s handlers see it.
     pub(super) fn pointer_event(&self, i: usize, x: f32, y: f32) -> PointerEvent {
         let [lx, ly] = self.to_local(i, x, y);
-        PointerEvent { x: lx, y: ly, window_x: x, window_y: y }
+        PointerEvent { x: lx, y: ly, window_x: x, window_y: y, text: None }
     }
 
     /// Window point (x, y) in node `i`'s own layout points: from its top-left as drawn, divided

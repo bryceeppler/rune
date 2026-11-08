@@ -220,7 +220,7 @@ impl<S: 'static> Runtime<S> {
         let (x, y) = at?;
         let i = self.live_index(path)?;
         let [lx, ly] = self.to_local(i, x, y);
-        Some(PointerEvent { x: lx, y: ly, window_x: x, window_y: y })
+        Some(PointerEvent { x: lx, y: ly, window_x: x, window_y: y, text: None })
     }
 
     /// A hover at `at`: moves the drop hover to the target there, then tells a target that
