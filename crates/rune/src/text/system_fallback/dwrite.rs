@@ -94,6 +94,11 @@ unsafe fn file_path(font: &IDWriteFont) -> Result<Option<PathBuf>> {
     }
 }
 
+/// DirectWrite reads a null pointer, never an empty slice's, as "no text here".
+fn chunk(text: &[u16]) -> *mut u16 {
+    if text.is_empty() { std::ptr::null_mut() } else { text.as_ptr().cast_mut() }
+}
+
 /// The one character `MapCharacters` analyses, and the locale it reads it in.
 #[implement(IDWriteTextAnalysisSource)]
 struct Source<'a> {
@@ -107,7 +112,7 @@ impl IDWriteTextAnalysisSource_Impl for Source_Impl<'_> {
         let rest = self.text.get(position as usize..).unwrap_or_default();
         // SAFETY: DirectWrite passes valid out-pointers and only reads the text.
         unsafe {
-            *text = rest.as_ptr().cast_mut();
+            *text = chunk(rest);
             *length = rest.len() as u32;
         }
         Ok(())
@@ -117,7 +122,7 @@ impl IDWriteTextAnalysisSource_Impl for Source_Impl<'_> {
         let before = self.text.get(..position as usize).unwrap_or_default();
         // SAFETY: as in `GetTextAtPosition`.
         unsafe {
-            *text = before.as_ptr().cast_mut();
+            *text = chunk(before);
             *length = before.len() as u32;
         }
         Ok(())
