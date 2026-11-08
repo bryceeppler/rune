@@ -233,6 +233,16 @@ pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option
     Some(cursor_from_point(layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5).index())
 }
 
+/// Whether each line that ends at a hard break ends on that break's cluster, as parley's
+/// `Selection::geometry` asserts. A combining mark straight after a break in right-to-left text
+/// ends its line on the mark instead.
+fn hard_breaks_end_their_lines(layout: &Layout<Ink>) -> bool {
+    layout.lines().all(|line| {
+        line.break_reason() != parley::BreakReason::Explicit
+            || line.text_range().end.checked_sub(1).and_then(|i| parley::Cluster::from_byte_index(layout, i)).is_none_or(|c| c.is_hard_line_break())
+    })
+}
+
 /// Line boxes (`(BoundingBox, line_idx)`) covering bytes `a..b` of `layout`. When `pill_boxes`
 /// is true, a selected pill's leading and trailing chip boxes are included in the highlight;
 /// when false (underlines, strikethroughs, link hit boxes), inline boxes are excluded so they
@@ -247,7 +257,7 @@ pub(crate) fn range_boxes(
     if a >= b {
         return Vec::new();
     }
-    if layout.inline_boxes().next().is_none() {
+    if layout.inline_boxes().next().is_none() && hard_breaks_end_their_lines(layout) {
         return Selection::new(
             Cursor::from_byte_index(layout, a, Affinity::Downstream),
             Cursor::from_byte_index(layout, b, Affinity::Upstream),
