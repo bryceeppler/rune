@@ -105,6 +105,10 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
+    /// A paragraph that starts with a marker of its own, this many bytes long, such as a
+    /// Markdown list item's `- [ ] `: its wrapped lines start under the text after the marker.
+    /// It edits as a [`Block::Paragraph`].
+    Hanging(u16),
 }
 
 impl Block {
@@ -137,13 +141,14 @@ impl Block {
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
+                | (Block::Hanging(_), Block::Hanging(_))
         )
     }
 
     /// This block's kind as one bit, for [`TextEdit::allow_blocks`].
     pub(super) fn kind_bit(self) -> u8 {
         1 << match self {
-            Block::Paragraph => 0,
+            Block::Paragraph | Block::Hanging(_) => 0,
             Block::Bullet(_) => 1,
             Block::Numbered(_) => 2,
             Block::Quote => 3,
@@ -155,7 +160,7 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph => 0.0,
+            Block::Paragraph | Block::Hanging(_) => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),

@@ -43,3 +43,33 @@ fn wrap_anywhere_keeps_word_breaks_and_defaults_match_layout_rich() {
     let with = ts.layout_rich_with(WORDS, &[], style, 2.0, Some(240.0), RichLayoutOptions::new().align(Alignment::Center));
     assert!(Rc::ptr_eq(&aligned, &with), "align matches layout_aligned");
 }
+
+#[test]
+fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    let item = format!("- [ ] {WORDS}");
+    let text = format!("Title\n{item}");
+    let marker = text.find("a plain").unwrap();
+    let blocks = [Block::Paragraph, Block::Hanging(6)];
+    let plain = ts.layout_blocks(&text, &[], &[Block::Paragraph; 2], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let marker_x = parley::Cluster::from_byte_index(&plain, marker).and_then(|c| c.visual_offset()).unwrap();
+    let hung = ts.layout_blocks(&text, &[], &blocks, &[], style, 2.0, Some(240.0), Alignment::Start);
+    let item_lines: Vec<_> = hung.lines().filter(|l| l.text_range().start > 5).collect();
+    assert!(item_lines.len() > 2, "the item wraps");
+    assert_eq!(item_lines[0].metrics().inline_min_coord, 0.0, "the marker starts the first line");
+    for line in &item_lines[1..] {
+        let m = line.metrics();
+        assert_eq!(m.inline_min_coord, marker_x, "line {:?} starts under the text", line.text_range());
+        assert!(m.inline_min_coord + m.advance - m.hanging_advance <= 240.5, "line {:?} fits", line.text_range());
+    }
+
+    let rtl = "- [ ] שלום עולם ".repeat(8);
+    let wide = format!("{}x", "-".repeat(80));
+    for (text, marker) in [(rtl.as_str(), 6), (wide.as_str(), 81)] {
+        let layout = ts.layout_blocks(text, &[], &[Block::Hanging(marker)], &[], style, 2.0, Some(240.0), Alignment::Start);
+        assert!(layout.len() > 1, "{text:?} wraps");
+        assert!(layout.lines().all(|l| l.metrics().inline_min_coord == 0.0), "{text:?} wraps at the margin");
+    }
+}

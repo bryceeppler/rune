@@ -139,7 +139,7 @@ impl TextEdit {
                                     self.insert_newline(Block::Quote, false);
                                 }
                             }
-                            Block::Paragraph => {
+                            Block::Paragraph | Block::Hanging(_) => {
                                 out.submit = true;
                             }
                         }
@@ -168,7 +168,7 @@ impl TextEdit {
                     let line_range = self.line_range(line_idx);
                     let blk = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
                     let is_soft = self.soft_breaks.binary_search(&(line_idx as u32)).is_ok();
-                    if !m.cmd && !word && a == line_range.start && !is_soft && blk != Block::Paragraph {
+                    if !m.cmd && !word && a == line_range.start && !is_soft && !matches!(blk, Block::Paragraph | Block::Hanging(_)) {
                         match blk {
                             Block::Bullet(lvl) | Block::Numbered(lvl) => {
                                 if lvl > 0 {
@@ -185,7 +185,7 @@ impl TextEdit {
                                     self.replace((from, a), "", false);
                                 }
                             }
-                            Block::Paragraph => unreachable!(),
+                            Block::Paragraph | Block::Hanging(_) => unreachable!(),
                         }
                     } else if a > 0 {
                         let from = if m.cmd {

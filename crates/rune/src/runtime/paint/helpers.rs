@@ -114,7 +114,7 @@ pub(super) fn emit_block_decorations(
                         markers.push((indent, baseline, blk, list_counts[l]));
                     }
                 }
-                Block::Paragraph | Block::Quote | Block::Code => {
+                Block::Paragraph | Block::Hanging(_) | Block::Quote | Block::Code => {
                     if !is_soft {
                         list_counts = [0; (MAX_LIST_LEVEL as usize) + 1];
                     }
@@ -147,7 +147,7 @@ pub(super) fn emit_block_decorations(
                 let indent = (blk.indent_pt(spec.style.size) * s).round();
                 markers.push((indent, baseline, blk, 1));
             }
-            Block::Paragraph => {}
+            Block::Paragraph | Block::Hanging(_) => {}
         }
     }
 

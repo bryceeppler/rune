@@ -17,16 +17,61 @@ pub(super) fn break_lines_with_blocks(
     // can adjust the first misplaced pill in every paragraph at once.
     let mut caps: Vec<((usize, usize), f32)> = Vec::new();
     let mut lines_meta = Vec::new();
-    for _ in 0..=2 * pills {
-        break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, &mut lines_meta);
-        if max_width.is_none() || pills == 0 || !collect_misplaced_pills(layout, &lines_meta, &mut caps) {
+    let mut hangs: Option<Vec<f32>> = None;
+    let hanging = max_width.is_some() && blocks.iter().any(|b| matches!(b, crate::edit::Block::Hanging(_)));
+    for _ in 0..=2 * pills + usize::from(hanging) {
+        let hung = hangs.as_deref().unwrap_or_default();
+        break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, hung, &mut lines_meta);
+        let found = hanging && hangs.is_none() && {
+            let found = hang_widths(layout, blocks);
+            let any = found.iter().any(|&w| w > 0.0);
+            hangs = Some(found);
+            any
+        };
+        let moved = max_width.is_some() && pills > 0 && collect_misplaced_pills(layout, &lines_meta, &mut caps);
+        if !found && !moved {
             return;
         }
     }
 }
 
+/// For each paragraph, how far its wrapped lines start from its first line's start in device
+/// px: where a [`Block::Hanging`](crate::edit::Block::Hanging) paragraph's text starts after
+/// its marker, when that lies on the first line of a left-to-right paragraph, else 0.
+fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> {
+    let mut widths = vec![0.0; blocks.len()];
+    let mut first_line = true;
+    let mut para_idx = 0usize;
+    for line in layout.lines() {
+        if first_line
+            && let Some(&crate::edit::Block::Hanging(marker)) = blocks.get(para_idx)
+            && let Some(width) = hang_on(layout, &line, line.text_range().start + usize::from(marker))
+        {
+            widths[para_idx] = width;
+        }
+        first_line = line.break_reason() == parley::BreakReason::Explicit;
+        para_idx += usize::from(first_line);
+    }
+    widths
+}
+
+/// The offset of the cluster at byte `at` from the start of `line`, when `line` holds it and
+/// runs left to right.
+fn hang_on(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>, at: usize) -> Option<f32> {
+    let range = line.text_range();
+    if at <= range.start || at >= range.end {
+        return None;
+    }
+    let cluster = parley::Cluster::from_byte_index(layout, at)?;
+    if cluster.is_rtl() {
+        return None;
+    }
+    Some(cluster.visual_offset()? - line.metrics().offset)
+}
+
 /// [`break_lines_with_blocks`] once, with `caps` setting the room on given `(para_idx, line_in_para)`
-/// lines (the last for a line wins). Fills `out` with `((para_idx, line_in_para), uncapped_room)`.
+/// lines (the last for a line wins) and `hangs` indenting each paragraph's wrapped lines. Fills
+/// `out` with `((para_idx, line_in_para), uncapped_room)`.
 fn break_lines_capped(
     layout: &mut Layout<Ink>,
     blocks: &[crate::edit::Block],
@@ -34,6 +79,7 @@ fn break_lines_capped(
     scale: f32,
     max_width: Option<f32>,
     caps: &[((usize, usize), f32)],
+    hangs: &[f32],
     out: &mut Vec<((usize, usize), f32)>,
 ) {
     out.clear();
@@ -43,7 +89,8 @@ fn break_lines_capped(
     let (mut para_idx, mut line_in_para) = (0usize, 0usize);
     while !breaker.is_done() {
         let blk = blocks.get(para_idx).copied().unwrap_or(crate::edit::Block::Paragraph);
-        let indent = (blk.indent_pt(font_size) * scale).round();
+        let hang = if line_in_para > 0 { hangs.get(para_idx).copied().unwrap_or(0.0) } else { 0.0 };
+        let indent = (blk.indent_pt(font_size) * scale).round() + hang;
         let right_pad = if blk == crate::edit::Block::Code { indent } else { 0.0 };
         let line_max = max_width
             .map_or(f32::MAX, |w| (w - indent - right_pad).max(1.0))
