@@ -36,8 +36,9 @@ pub(super) fn break_lines_with_blocks(
 }
 
 /// For each paragraph, how far its wrapped lines start from its first line's start in device
-/// px: where a [`Block::Hanging`](crate::edit::Block::Hanging) paragraph's text starts after
-/// its marker, when that lies on the first line of a left-to-right paragraph, else 0.
+/// px: where the text after a [`Block::Hanging`](crate::edit::Block::Hanging) paragraph's
+/// marker starts, or would start when a word too wide for the rest of the line moved it on,
+/// when the marker ends on the first line of a left-to-right paragraph, else 0.
 fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> {
     let mut widths = vec![0.0; blocks.len()];
     let mut first_line = true;
@@ -45,7 +46,7 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
     for line in layout.lines() {
         if first_line
             && let Some(&crate::edit::Block::Hanging(marker)) = blocks.get(para_idx)
-            && let Some(width) = hang_on(layout, &line, line.text_range().start + usize::from(marker))
+            && let Some(width) = text_start(layout, &line, line.text_range().start + usize::from(marker))
         {
             widths[para_idx] = width;
         }
@@ -55,18 +56,19 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
     widths
 }
 
-/// The offset of the cluster at byte `at` from the start of `line`, when `line` holds it and
-/// runs left to right.
-fn hang_on(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>, at: usize) -> Option<f32> {
+/// How far from the start of `line` the text from byte `at` on starts, when `at` follows the
+/// line's first byte and the line runs left to right: the line's whole advance when the line
+/// ends at `at` because what follows went on to the next line.
+fn text_start(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>, at: usize) -> Option<f32> {
     let range = line.text_range();
-    if at <= range.start || at >= range.end {
+    let rtl = line.runs().any(|run| run.is_rtl());
+    if rtl || at <= range.start || at > range.end {
         return None;
     }
-    let cluster = parley::Cluster::from_byte_index(layout, at)?;
-    if cluster.is_rtl() {
-        return None;
+    if at == range.end {
+        return (line.break_reason() != parley::BreakReason::Explicit).then(|| line.metrics().advance);
     }
-    Some(cluster.visual_offset()? - line.metrics().offset)
+    Some(parley::Cluster::from_byte_index(layout, at)?.visual_offset()? - line.metrics().offset)
 }
 
 /// [`break_lines_with_blocks`] once, with `caps` setting the room on given `(para_idx, line_in_para)`

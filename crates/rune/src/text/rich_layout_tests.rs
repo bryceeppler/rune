@@ -65,6 +65,14 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
         assert!(m.inline_min_coord + m.advance - m.hanging_advance <= 240.5, "line {:?} fits", line.text_range());
     }
 
+    let word = format!("- [ ] {}", TOKEN.repeat(2));
+    let alone = ts.layout_blocks(&word, &[], &[Block::Hanging(6)], &[], style, 2.0, Some(240.0), Alignment::Start);
+    assert_eq!(alone.get(0).unwrap().text_range(), 0..6, "a word wider than the line leaves the marker alone on the first line");
+    let short = ts.layout_blocks("- [ ] x", &[], &[Block::Paragraph], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let x = parley::Cluster::from_byte_index(&short, 6).and_then(|c| c.visual_offset()).unwrap();
+    let starts: Vec<f32> = alone.lines().skip(1).map(|l| l.metrics().inline_min_coord).collect();
+    assert!(starts.iter().all(|&s| s == x), "the word starts under where text follows the marker, at {x}: {starts:?}");
+
     let rtl = "- [ ] שלום עולם ".repeat(8);
     let wide = format!("{}x", "-".repeat(80));
     for (text, marker) in [(rtl.as_str(), 6), (wide.as_str(), 81)] {
