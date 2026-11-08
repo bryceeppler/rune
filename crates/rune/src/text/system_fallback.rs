@@ -3,7 +3,6 @@
 //! once, after a shaping draws it as `.notdef`; every later shaping routes it to that font.
 
 use std::ops::Range;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use parley::{FontContext, PositionedLayoutItem};
@@ -128,14 +127,14 @@ fn drawable(ch: char) -> bool {
 }
 
 #[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
-fn system_font(ch: char) -> Option<PathBuf> {
+fn system_font(ch: char) -> Option<std::path::PathBuf> {
     let out = std::process::Command::new("fc-match").arg("--format=%{file}").arg(format!(":charset={:x}", ch as u32)).output().ok()?;
     let path = String::from_utf8(out.stdout).ok()?;
     (!path.is_empty()).then(|| path.into())
 }
 
 #[cfg(target_vendor = "apple")]
-fn system_font(ch: char) -> Option<PathBuf> {
+fn system_font(ch: char) -> Option<std::path::PathBuf> {
     use std::ptr::NonNull;
 
     use objc2_core_foundation::{CFRange, CFRetained, CFString, CFType, CFURL};
@@ -159,49 +158,12 @@ fn system_font(ch: char) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn system_font(ch: char) -> Option<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-
-    use windows::Win32::Graphics::DirectWrite::{
-        DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
-        DWriteCreateFactory, IDWriteFactory, IDWriteFont, IDWriteLocalFontFileLoader,
-    };
-    use windows::core::Interface;
-
-    let path = |font: &IDWriteFont| -> windows::core::Result<Option<PathBuf>> {
-        // SAFETY: DirectWrite fills the counts and buffers it is given, sized as it reports.
-        unsafe {
-            let face = font.CreateFontFace()?;
-            let mut count = 0;
-            face.GetFiles(&mut count, None)?;
-            let mut files = vec![None; count as usize];
-            face.GetFiles(&mut count, Some(files.as_mut_ptr()))?;
-            let Some(Some(file)) = files.into_iter().next() else { return Ok(None) };
-            let (mut key, mut size) = (std::ptr::null_mut(), 0);
-            file.GetReferenceKey(&mut key, &mut size)?;
-            let loader: IDWriteLocalFontFileLoader = file.GetLoader()?.cast()?;
-            let len = loader.GetFilePathLengthFromKey(key, size)?;
-            let mut wide = vec![0u16; len as usize + 1];
-            loader.GetFilePathFromKey(key, size, &mut wide)?;
-            Ok(Some(std::ffi::OsString::from_wide(&wide[..len as usize]).into()))
-        }
-    };
-    // SAFETY: plain DirectWrite queries on the shared factory's system collection.
-    unsafe {
-        let factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
-        let mut collection = None;
-        factory.GetSystemFontCollection(&mut collection, false).ok()?;
-        let collection = collection?;
-        (0..collection.GetFontFamilyCount()).find_map(|i| {
-            let family = collection.GetFontFamily(i).ok()?;
-            let font = family.GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL).ok()?;
-            font.HasCharacter(ch as u32).ok()?.as_bool().then(|| path(&font).ok().flatten()).flatten()
-        })
-    }
-}
+mod dwrite;
+#[cfg(windows)]
+use dwrite::system_font;
 
 #[cfg(not(any(unix, windows)))]
-fn system_font(_: char) -> Option<PathBuf> { None }
+fn system_font(_: char) -> Option<std::path::PathBuf> { None }
 
 #[cfg(target_os = "android")]
-fn system_font(_: char) -> Option<PathBuf> { None }
+fn system_font(_: char) -> Option<std::path::PathBuf> { None }
