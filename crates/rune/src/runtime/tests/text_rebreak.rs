@@ -122,3 +122,26 @@ fn an_edit_shares_most_of_its_text_and_a_replacement_does_not() {
     assert!(!edited("Show", "Hide"));
     assert!(!edited("The first note", "Another one"));
 }
+
+fn padded(s: &String, _: &mut Cx<String>) -> El {
+    let para = crate::el::text(s.clone()).w_full().wrap().px(48.0).pt(12.0).pb(80.0).key("para");
+    col().w_full().h_full().child(col().key("scroll").w_full().grow(1.0).min_h(0.0).child(para).scroll(crate::ScrollSpec { stick_bottom: false }))
+}
+
+/// A wrapped text with padding inside a scroll view is as tall as its lines at the width its
+/// padding leaves, and an edit lays it out at that one width.
+#[test]
+fn a_padded_text_wraps_at_the_width_inside_its_padding() {
+    let para = "Paragraph text long enough to wrap over several lines as the window narrows. ".repeat(12);
+    let mut rt = Runtime::new(para.clone(), padded, (500.0, 300.0), Env::new(true, 2.0));
+    rt.frame(0.0);
+    let [_, _, w, h] = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("para")).unwrap().rect;
+    let style = rt.nodes.iter().find(|n| n.key.as_deref() == Some("para")).and_then(|n| n.text.as_ref()).unwrap().style;
+    let lines = rt.text.layout_rich(&para, &[], style, 2.0, Some((w - 96.0) * 2.0));
+    let tall = layout_height(&lines, style, 2.0) / 2.0;
+    assert!((h - 92.0 - tall).abs() <= 1.0, "the text is {h} tall with {tall} of lines and 92 of padding");
+    let before = (rt.text.rebroken, rt.text.shaped);
+    rt.update(|s, _| s.push('x'));
+    rt.frame(1.0 / 120.0);
+    assert_eq!((rt.text.rebroken - before.0, rt.text.shaped - before.1), (0, 1), "an edit shapes the text once and breaks it at one width");
+}

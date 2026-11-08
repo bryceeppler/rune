@@ -325,12 +325,14 @@ pub(super) fn compute_layout(taffy: &mut LayoutEngine, root: SlotId, room: Size<
         taffy::compute_leaf_layout(inputs, style, |_, _| 0.0, |known, avail| {
             let Some(i) = ctx else { return Size::ZERO };
             let spec = nodes[i].text.as_ref().unwrap();
+            // Taffy hands a sizing pass the border box as `known`, padding included, and
+            // `avail` as the content box, so text wraps at `avail`'s width.
             let w = if spec.wrap {
-                known.width.or(match avail.width {
+                match avail.width {
                     AvailableSpace::Definite(w) => Some(w),
                     AvailableSpace::MinContent => Some(0.0),
                     AvailableSpace::MaxContent => None,
-                })
+                }
             } else {
                 None
             };

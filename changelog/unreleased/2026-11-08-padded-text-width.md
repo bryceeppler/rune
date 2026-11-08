@@ -1,0 +1,1 @@
+- A wrapping text with padding now wraps at the width inside its padding while Taffy sizes it, as it already did when laid out. Before, sizing laid it out at its full width, so it came out too short for its lines, which ran past its bottom, and each commit broke it at two widths.
