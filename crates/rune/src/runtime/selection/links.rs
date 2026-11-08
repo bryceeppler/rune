@@ -227,7 +227,9 @@ impl<S: 'static> Runtime<S> {
         let scroll = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
         let s = self.env.scale;
         let (px, py) = ((lx - n.inset[0] + scroll) * s, (ly - n.inset[1]) * s);
-        let chips = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s);
+        if spec.pills.is_empty() { return None; }
+        let reach = 2.0 * spec.style.line_px() * s;
+        let chips = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s, py - reach..py + reach);
         let k = chips.into_iter().find(|(_, r)| contains([r[0], r[1], r[0] + r[2], r[1] + r[3]], px, py))?.0;
         let pill = spec.pills.get(k)?;
         let (_, _, id) = input.edit.display_pills().into_iter().find(|&(a, b, _)| (a, b) == (pill.start, pill.end))?;

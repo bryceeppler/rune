@@ -25,11 +25,12 @@ pub(crate) fn pill_chips(
     }
 }
 
-/// Where each pill's chips draw in `layout` (device px, layout top-left at the origin), by the
-/// pill's index in `pills`: what a press on a chip lands on.
-pub(crate) fn pill_chip_rects(layout: &TextLayout, pills: &[PillChip], size: f32, scale: f32) -> Vec<(usize, [f32; 4])> {
+/// Where each pill's chips draw in the paragraphs of `layout` that meet `band` (device px,
+/// layout top-left at the origin), by the pill's index in `pills`: what a press on a chip
+/// lands on.
+pub(crate) fn pill_chip_rects(layout: &TextLayout, pills: &[PillChip], size: f32, scale: f32, band: std::ops::Range<f32>) -> Vec<(usize, [f32; 4])> {
     let mut rects = Vec::new();
-    for piece in layout.pieces_in_band(f32::NEG_INFINITY..f32::INFINITY) {
+    for piece in layout.pieces_in_band(band) {
         let (first, local) = (piece.first_pill(), piece.pills(pills));
         if !local.is_empty() {
             chips(piece.layout, piece.start, local, size, scale, [0.0, piece.y], Color::TRANSPARENT, &mut |i, chip| rects.push((first + i, chip.deco.rect)), &mut Vec::new());
