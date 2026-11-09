@@ -27,6 +27,7 @@ impl TextEdit {
     }
 
     pub(super) fn set(&mut self, i: usize, extend: bool) {
+        self.upstream = None;
         // A caret moving into a pill steps over it, the way it was going.
         let i = self.out_of_pill(i, i > self.focus);
         self.focus = i;
@@ -37,36 +38,31 @@ impl TextEdit {
         self.pending = None;
     }
 
-    /// Moves the caret to byte `i` on its `side`, or with `extend` the selection's focus. A
-    /// selection collapses instead, to its start when `backward`, else its end.
-    fn move_h(&mut self, (i, side): (usize, Affinity), extend: bool, backward: bool) {
-        let (a, b) = self.range();
-        if !extend && a != b {
-            let to = if backward { a } else { b };
-            self.anchor = to;
-            self.focus = to;
-        } else {
-            self.set(i, extend);
-            self.upstream = (side == Affinity::Upstream && self.focus == i).then_some((self.anchor, self.focus));
-        }
-        self.pending = None;
+    /// Puts the focus at byte `i`, drawn on `side`, and the anchor with it unless `extend`.
+    fn move_to(&mut self, (i, side): (usize, Affinity), extend: bool) {
+        self.set(i, extend);
+        self.set_caret_side(if self.focus == i { side } else { Affinity::Downstream });
     }
 
-    /// Where Left (`left`) or Right moves the caret, by a character or a `word`, and whether that
-    /// goes back in the text. With a layout it moves as the text draws: Left always toward the
-    /// screen's left, through either direction of text.
-    fn step_h(&self, layout: Option<&TextLayout>, left: bool, word: bool) -> ((usize, Affinity), bool) {
-        let Some(l) = layout.filter(|_| self.preedit.is_none() && (!self.secure || self.revealed)) else {
+    /// `layout` when it draws the text itself: no composition in it and no mask over it.
+    fn drawn<'l>(&self, layout: Option<&'l TextLayout>) -> Option<&'l TextLayout> {
+        layout.filter(|_| self.preedit.is_none() && (!self.secure || self.revealed))
+    }
+
+    /// Where Left (`left`) or Right moves the caret, by a character or a `word`. With a layout it
+    /// moves as the text draws: Left always toward the screen's left, through either direction
+    /// of text.
+    fn step_h(&self, layout: Option<&TextLayout>, left: bool, word: bool) -> (usize, Affinity) {
+        let Some(l) = self.drawn(layout) else {
             let i = match (left, word) {
                 (true, true) => self.prev_word(self.focus),
                 (true, false) => prev_char(&self.text, self.focus),
                 (false, true) => self.next_word(self.focus),
                 (false, false) => next_char(&self.text, self.focus),
             };
-            return ((i, Affinity::Downstream), left);
+            return (i, Affinity::Downstream);
         };
         let blank = |side: Option<Range<usize>>| side.is_none_or(|r| self.text[r].starts_with(|c: char| c.is_ascii_whitespace()));
-        let backward = left != l.is_rtl(self.focus);
         let mut at = (self.focus, self.caret_affinity());
         while let Some(next) = l.step(at.0, at.1, left) {
             at = next;
@@ -76,7 +72,33 @@ impl TextEdit {
                 break;
             }
         }
-        (at, backward)
+        at
+    }
+
+    /// The end of the selection a plain Left (`left`) or Right collapses it to: the end drawn
+    /// furthest that way when both are on one line, else its start or end as its paragraph reads.
+    fn collapse_end(&self, layout: Option<&TextLayout>, left: bool) -> (usize, Affinity) {
+        let (a, b) = self.range();
+        let ends = [(self.anchor, Affinity::Downstream), (self.focus, self.caret_affinity())];
+        let Some(l) = self.drawn(layout) else {
+            return (if left { a } else { b }, Affinity::Downstream);
+        };
+        let [p, q] = ends.map(|(i, side)| l.caret_box(i, side, 0.0));
+        if p.y0 == q.y0 {
+            let anchor_further = if left { p.x0 < q.x0 } else { p.x0 > q.x0 };
+            return ends[usize::from(!anchor_further)];
+        }
+        let to = if left != l.is_rtl(self.focus) { a } else { b };
+        if to == self.focus { ends[1] } else { (to, Affinity::Downstream) }
+    }
+
+    /// The left (`left`) or right end of the caret's line as it draws, or its start or end in
+    /// the text where the layout doesn't draw the text itself.
+    fn line_side(&self, layout: Option<&TextLayout>, left: bool) -> (usize, Affinity) {
+        match self.drawn(layout) {
+            Some(l) => l.line_side(self.focus, self.caret_affinity(), left),
+            None => (self.line_edge(layout, !left), Affinity::Downstream),
+        }
     }
 
     /// Applies one key. `layout` is the field's layout for the current text (device px).
@@ -93,10 +115,19 @@ impl TextEdit {
         }
         if let Some(c) = ev.control_binding() {
             let (key, line) = match c {
-                // Ctrl-B and Ctrl-F move back and forward in the text, as `moveBackward:` does.
-                'b' | 'f' if !self.is_hidden_multiline() => {
-                    let i = if c == 'b' { prev_char(&self.text, self.focus) } else { next_char(&self.text, self.focus) };
-                    self.move_h((i, Affinity::Downstream), m.shift, c == 'b');
+                // Ctrl-A, B, E and F move through the text in its order, as `moveBackward:` does.
+                'a' | 'b' | 'e' | 'f' if !self.is_hidden_multiline() => {
+                    let (a, b) = self.range();
+                    let collapse = a != b && !m.shift;
+                    let i = match c {
+                        'a' => self.line_edge(layout, false),
+                        'e' => self.line_edge(layout, true),
+                        'b' if collapse => a,
+                        'f' if collapse => b,
+                        'b' => prev_char(&self.text, self.focus),
+                        _ => next_char(&self.text, self.focus),
+                    };
+                    self.move_to((i, Affinity::Downstream), m.shift);
                     return out;
                 }
                 'a' => (Key::Left, true), 'e' => (Key::Right, true), 'b' => (Key::Left, false),
@@ -245,13 +276,18 @@ impl TextEdit {
                     self.replace((a, to), "", false);
                 }
             }
-            Key::Left if m.cmd && mac => self.move_h((self.line_edge(layout, false), Affinity::Downstream), m.shift, true),
             Key::Right if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Down if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
-            Key::Right if m.cmd && mac => self.move_h((self.line_edge(layout, true), Affinity::Downstream), m.shift, false),
             Key::Left | Key::Right => {
-                let (to, backward) = self.step_h(layout, ev.key == Key::Left, word);
-                self.move_h(to, m.shift, backward);
+                let left = ev.key == Key::Left;
+                let to = if m.cmd && mac {
+                    self.line_side(layout, left)
+                } else if !m.shift && self.anchor != self.focus {
+                    self.collapse_end(layout, left)
+                } else {
+                    self.step_h(layout, left, word)
+                };
+                self.move_to(to, m.shift);
             }
             // Windows and Linux move Home and End along the line, and to the text's ends with Ctrl.
             Key::Home => {
@@ -265,22 +301,21 @@ impl TextEdit {
             Key::Up | Key::Down => {
                 let down = ev.key == Key::Down;
                 let n = self.text.len();
-                let i = if m.cmd || (self.secure && !self.revealed) {
-                    if down { n } else { 0 }
+                let end = (if down { n } else { 0 }, Affinity::Downstream);
+                let (i, side) = if m.cmd || (self.secure && !self.revealed) {
+                    end
                 } else if let Some(l) = layout {
-                    match l.move_line(self.display_index(self.focus), down) {
-                        Some(j) => {
+                    match l.move_line(self.display_index(self.focus), self.caret_affinity(), down) {
+                        Some((j, side)) => {
                             let j = self.model_index(j);
-                            if j == self.focus { if down { n } else { 0 } } else { j }
+                            if j == self.focus { end } else { (j, side) }
                         }
-                        None => n,
+                        None => (n, Affinity::Downstream),
                     }
-                } else if down {
-                    n
                 } else {
-                    0
-                }
-                .min(n);
+                    end
+                };
+                let i = i.min(n);
                 if m.shift {
                     self.focus = i;
                     self.snap_to_pills();
@@ -288,6 +323,7 @@ impl TextEdit {
                 } else {
                     self.set_caret(i);
                 }
+                self.set_caret_side(if self.focus == i { side } else { Affinity::Downstream });
             }
             Key::Command(c) => match c {
                 'z' if m.shift => self.redo(),

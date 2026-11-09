@@ -210,27 +210,28 @@ pub(crate) fn line_edge(layout: &Layout<Ink>, byte: usize, end: bool) -> usize {
     }
 }
 
-/// Byte index on the previous (`!down`) or next (`down`) visual line at `byte`'s x coordinate,
-/// or `None` when already on the last line moving down.
-pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option<usize> {
+/// The caret on the previous (`!down`) or next (`down`) visual line at the x the caret at `byte`
+/// on its `affinity` side draws at, or `None` when already on the last line moving down.
+pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, affinity: parley::layout::Affinity, down: bool) -> Option<(usize, parley::layout::Affinity)> {
     use parley::{editing::Cursor, layout::Affinity};
     if layout.len() == 0 {
         return None;
     }
-    let cur = Cursor::from_byte_index(layout, byte, Affinity::Downstream);
+    let cur = Cursor::from_byte_index(layout, byte, affinity);
     let bb = cursor_geometry(&cur, layout, 0.0);
     let y = ((bb.y0 + bb.y1) * 0.5) as f32;
     let limit = layout.len() - 1;
     let idx = line_for_offset(layout, y).map_or(limit, |(ix, _)| ix);
     if !down && idx == 0 {
-        return Some(0);
+        return Some((0, Affinity::Downstream));
     }
     if down && idx >= limit {
         return None;
     }
     let line = layout.get(if down { idx + 1 } else { idx - 1 })?;
     let m = line.metrics();
-    Some(cursor_from_point(layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5).index())
+    let to = cursor_from_point(layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5);
+    Some((to.index(), to.affinity()))
 }
 
 /// Whether each line that ends at a hard break ends on that break's cluster, as parley's

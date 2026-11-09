@@ -117,10 +117,10 @@ fn a_selection_extends_across_paragraphs() {
     rt.update(|s, _| s.set_caret(start));
     rt.frame(0.0);
     let (_, whole) = layouts(&mut rt);
-    let mut want = start;
+    let (mut want, mut side) = (start, Affinity::Downstream);
     for _ in 0..5 {
         press(&mut rt, Key::Down, SHIFT);
-        want = crate::text::move_line(&whole, want, true).unwrap();
+        (want, side) = crate::text::move_line(&whole, want, side, true).unwrap();
         assert_eq!((rt.state.anchor, rt.state.focus), (start, want));
     }
     assert!(rt.state.selected().matches('\n').count() >= 2, "the selection spans paragraphs");
@@ -128,7 +128,7 @@ fn a_selection_extends_across_paragraphs() {
     assert_eq!(layout.range_boxes(start, want, true), crate::text::range_boxes(&whole, start, want, true));
     for _ in 0..5 {
         press(&mut rt, Key::Up, SHIFT);
-        want = crate::text::move_line(&whole, want, false).unwrap();
+        (want, side) = crate::text::move_line(&whole, want, side, false).unwrap();
         assert_eq!((rt.state.anchor, rt.state.focus), (start, want));
     }
 }

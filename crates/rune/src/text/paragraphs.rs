@@ -445,6 +445,22 @@ impl TextLayout {
         })
     }
 
+    /// The caret at the left (`left`) or right end of the line the caret at `byte` on its
+    /// `affinity` side draws on. At a soft wrap that is the line's own end, upstream of the next
+    /// line's start.
+    pub(crate) fn line_side(&self, byte: usize, affinity: Affinity, left: bool) -> (usize, Affinity) {
+        let at = self.at_byte(byte);
+        let mut cur = Cursor::from_byte_index(at.layout, byte - at.start, affinity);
+        let line = drawn(at.layout, cur).0;
+        loop {
+            let next = if left { cur.previous_visual(at.layout) } else { cur.next_visual(at.layout) };
+            if next == cur || drawn(at.layout, next).0 != line {
+                return (cur.index() + at.start, cur.affinity());
+            }
+            cur = next;
+        }
+    }
+
     /// Whether the paragraph holding `byte` reads right to left.
     pub(crate) fn is_rtl(&self, byte: usize) -> bool {
         self.at_byte(byte).layout.is_rtl()
@@ -484,20 +500,21 @@ impl TextLayout {
         line_edge(at.layout, byte - at.start, end) + at.start
     }
 
-    /// The byte on the line above (`!down`) or below (`down`) `byte`'s at its x, `Some(0)` from
-    /// the first line up and `None` from the last line down, as [`move_line`] moves in one layout.
-    pub(crate) fn move_line(&self, byte: usize, down: bool) -> Option<usize> {
+    /// The caret on the line above (`!down`) or below (`down`) the caret at `byte` on its
+    /// `affinity` side, at the x it draws at: `(0, Downstream)` from the first line up and `None`
+    /// from the last line down, as [`move_line`] moves in one layout.
+    pub(crate) fn move_line(&self, byte: usize, affinity: Affinity, down: bool) -> Option<(usize, Affinity)> {
         let s = match &self.0 {
-            Laid::Whole(l) => return move_line(l, byte, down),
+            Laid::Whole(l) => return move_line(l, byte, affinity, down),
             Laid::Stacked(s) => s,
         };
         let p = s.para_at_byte(byte);
-        let bb = cursor_geometry(&Cursor::from_byte_index(&p.layout, byte - p.start, Affinity::Downstream), &p.layout, 0.0);
+        let bb = cursor_geometry(&Cursor::from_byte_index(&p.layout, byte - p.start, affinity), &p.layout, 0.0);
         let y = ((bb.y0 + bb.y1) * 0.5) as f32;
         let local = line_for_offset(&p.layout, y).map(|(i, _)| i).filter(|&i| i < p.lines);
         let at = p.line + local.unwrap_or(p.lines.saturating_sub(1));
         if !down && at == 0 {
-            return Some(0);
+            return Some((0, Affinity::Downstream));
         }
         if down && at + 1 >= s.lines {
             return None;
@@ -505,7 +522,8 @@ impl TextLayout {
         let to = if down { at + 1 } else { at - 1 };
         let q = s.para_of_line(to);
         let m = *q.layout.get(to - q.line)?.metrics();
-        Some(cursor_from_point_in(&q.layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5, s.plain).index() + q.start)
+        let hit = cursor_from_point_in(&q.layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5, s.plain);
+        Some((hit.index() + q.start, hit.affinity()))
     }
 
     /// Line boxes (`(BoundingBox, line index)`) covering bytes `a..b`, as [`range_boxes`] makes

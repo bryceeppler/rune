@@ -19,6 +19,8 @@ enum Step {
 #[derive(Clone, Copy)]
 struct Hit {
     caret: usize,
+    /// The side of `caret`'s byte the press was on.
+    side: Affinity,
     cluster: usize,
 }
 
@@ -100,7 +102,15 @@ fn hit(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single
     } else {
         caret
     };
-    Hit { caret, cluster }
+    Hit { caret, side: affinity, cluster }
+}
+
+/// Draws the caret on the side of its byte the press `h` was on, when a press by character
+/// left it there.
+fn keep_side(e: &mut crate::edit::TextEdit, h: Hit, unit: Unit) {
+    if unit == Unit::Char && e.focus == h.caret {
+        e.set_caret_side(h.side);
+    }
 }
 
 fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
@@ -261,6 +271,7 @@ impl<S: 'static> Runtime<S> {
                         self.input_click.unit = Unit::Char;
                         self.input_click.origin = (anchor, anchor);
                         e.set_selection(anchor, h.caret);
+                        keep_side(e, h, Unit::Char);
                     } else {
                         let unit = match clicks {
                             1 => Unit::Char,
@@ -271,6 +282,7 @@ impl<S: 'static> Runtime<S> {
                         self.input_click.unit = unit;
                         self.input_click.origin = origin;
                         e.set_selection(origin.0, origin.1);
+                        keep_side(e, h, unit);
                     }
                 }
                 one.instant = true;
@@ -291,9 +303,10 @@ impl<S: 'static> Runtime<S> {
                 let h = hit(e, &l, x + scroll, y, s, single);
                 let at = unit_at(e, h, self.input_click.unit);
                 let (anchor, focus) = extend(self.input_click.origin, at);
-                let before = (e.anchor, e.focus);
+                let before = (e.anchor, e.focus, e.caret_affinity());
                 e.set_selection(anchor, focus);
-                if (e.anchor, e.focus) == before {
+                keep_side(e, h, self.input_click.unit);
+                if (e.anchor, e.focus, e.caret_affinity()) == before {
                     return false;
                 }
                 e.break_history_group();

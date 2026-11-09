@@ -245,7 +245,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
             for &b in &bounds {
                 let cur = parley::editing::Cursor::from_byte_index(&whole, b, parley::layout::Affinity::Downstream);
                 assert_eq!(stacked.caret_box(b, Affinity::Downstream, 1.0), cursor_geometry(&cur, &whole, 1.0), "caret at {b}, {what}");
-                assert_eq!(stacked.move_line(b, true), move_line(&whole, b, true), "down from {b}, {what}");
+                assert_eq!(stacked.move_line(b, Affinity::Downstream, true), move_line(&whole, b, Affinity::Downstream, true), "down from {b}, {what}");
                 assert_eq!(stacked.line_edge(b, true), line_edge(&whole, b, true), "line end from {b}, {what}");
             }
         }
@@ -350,8 +350,8 @@ fn random_mixed_script_edits_lay_out_each_paragraph_in_its_own_direction() {
                     (bb.y0, bb.y1) = (bb.y0 + top as f64, bb.y1 + top as f64);
                     assert_eq!(stacked.caret_box(start + i, Affinity::Downstream, 1.0), bb, "caret at {}, {what}", start + i);
                     assert_eq!(stacked.line_edge(start + i, true), line_edge(&alone, i, true) + start, "line end from {}, {what}", start + i);
-                    if let Some(to) = move_line(&alone, i, true).filter(|&to| to < para.len()) {
-                        assert_eq!(stacked.move_line(start + i, true), Some(to + start), "down from {}, {what}", start + i);
+                    if let Some((to, side)) = move_line(&alone, i, Affinity::Downstream, true).filter(|&(to, _)| to < para.len()) {
+                        assert_eq!(stacked.move_line(start + i, Affinity::Downstream, true), Some((to + start, side)), "down from {}, {what}", start + i);
                     }
                     let end = bytes[(n + 1 + n % 4).min(bytes.len() - 1)];
                     let shift = |boxes: Vec<(parley::BoundingBox, usize)>| boxes.into_iter().filter(|&(_, l)| l < shown)
@@ -446,7 +446,7 @@ fn queries_match(n: &Note) {
             assert_eq!(stacked.line_edge(b, end), line_edge(&whole, b, end), "line edge at {b}");
         }
         for down in [false, true] {
-            assert_eq!(stacked.move_line(b, down), move_line(&whole, b, down), "move {down} from {b}");
+            assert_eq!(stacked.move_line(b, Affinity::Downstream, down), move_line(&whole, b, Affinity::Downstream, down), "move {down} from {b}");
         }
         let cluster = parley::Cluster::from_byte_index(&whole, b).map(|c| (c.text_range(), c.is_hard_line_break()));
         assert_eq!(stacked.cluster_at(b), cluster, "cluster at {b}");

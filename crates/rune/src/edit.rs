@@ -60,7 +60,7 @@ pub struct TextEdit {
     pending: Option<((usize, usize), Vec<Mark>)>,
     /// Set at `(anchor, focus)` when the caret draws after the character before it rather than
     /// before the one after it, as at a change of text direction, where one byte draws in two
-    /// places. Only a left or right step sets it.
+    /// places.
     upstream: Option<(usize, usize)>,
     history: Arc<History>,
     /// Set inside [`TextEdit::undo_group`]: edits record nothing until the outermost group ends.
@@ -568,25 +568,32 @@ impl TextEdit {
     }
 
     /// Move the caret to `byte` (clamped to a character boundary of `self.text`) and collapse the
-    /// selection, clearing any pending typing style.
+    /// selection, clearing any pending typing style. A caret left where it was keeps the side of
+    /// its byte it draws on.
     pub fn set_caret(&mut self, byte: usize) {
-        self.upstream = None;
-        let b = Self::clamp_char_boundary(&self.text, byte);
-        self.anchor = b;
-        self.focus = b;
-        self.snap_to_pills();
-        self.pending = None;
+        self.set_selection(byte, byte);
     }
 
     /// Set the selection `anchor` and `focus` byte indices (clamped to character boundaries of
     /// `self.text`), clearing any pending typing style. A selection that ends inside a
-    /// [`Mark::Pill`] grows to cover it.
+    /// [`Mark::Pill`] grows to cover it. A selection left where it was keeps the side of its
+    /// focus's byte the caret draws on.
     pub fn set_selection(&mut self, anchor: usize, focus: usize) {
-        self.upstream = None;
-        self.anchor = Self::clamp_char_boundary(&self.text, anchor);
-        self.focus = Self::clamp_char_boundary(&self.text, focus);
+        let (anchor, focus) = (Self::clamp_char_boundary(&self.text, anchor), Self::clamp_char_boundary(&self.text, focus));
+        if self.upstream != Some((anchor, focus)) {
+            self.upstream = None;
+        }
+        self.anchor = anchor;
+        self.focus = focus;
         self.snap_to_pills();
         self.pending = None;
+    }
+
+    /// Draws the caret on `side` of its byte, where the text changes direction and the byte
+    /// draws in two places. A side the field doesn't draw (a masked secret) is ignored.
+    pub(crate) fn set_caret_side(&mut self, side: parley::layout::Affinity) {
+        let drawn = !self.secure || self.revealed;
+        self.upstream = (drawn && side == parley::layout::Affinity::Upstream).then_some((self.anchor, self.focus));
     }
 
     /// The [`Mark::Pill`]s in `self.text`, in order, with their byte ranges and ids.

@@ -259,3 +259,29 @@ fn a_press_at_a_direction_change_draws_the_caret_where_it_was_pressed() {
     assert_eq!(pressed.0, start + "abc ".len());
     assert!((pressed.1 - at.1).abs() < 1.0, "the caret draws at the press, not at the Hebrew's far end: {pressed:?} for {at:?}");
 }
+
+#[test]
+fn a_lines_ends_on_screen_are_its_drawn_left_and_right() {
+    let para = "שלום עולם גדול מאוד וארוך עוד מילים כאן";
+    let (rt, start) = note::<300>(para);
+    let i = rt.nodes.iter().position(|n| n.key.as_deref() == Some("note")).unwrap();
+    let l = rt.nodes[i].text_layout.clone().unwrap();
+    let first = l.line_side(start, Affinity::Downstream, false);
+    assert_eq!(first, (start, Affinity::Downstream), "the right end of a Hebrew line is where it starts");
+    let (end, side) = l.line_side(start, Affinity::Downstream, true);
+    let (left, right) = (l.caret_box(end, side, 1.0), l.caret_box(start, Affinity::Downstream, 1.0));
+    assert_eq!(left.y0, right.y0, "the left end is on the same line");
+    assert!(end > start && left.x0 < 20.0, "and is where the line's text ends, at its left: {end} at {}", left.x0);
+}
+
+#[test]
+#[cfg_attr(not(target_os = "macos"), ignore = "Cmd+Left and Cmd+Right move to a line's ends only on macOS")]
+fn cmd_arrows_go_to_the_ends_of_a_line_as_it_draws() {
+    let para = "שלום עולם";
+    let (mut rt, start) = note::<600>(para);
+    put_caret(&mut rt, start + "של".len());
+    press(&mut rt, Key::Left, Mods { cmd: true, ..NONE });
+    assert_eq!(rt.state.focus, start + para.len(), "Cmd+Left goes to the Hebrew line's left end");
+    press(&mut rt, Key::Right, Mods { cmd: true, ..NONE });
+    assert_eq!(rt.state.focus, start, "Cmd+Right goes to its right end");
+}
