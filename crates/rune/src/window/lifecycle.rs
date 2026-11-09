@@ -378,6 +378,12 @@ impl<S: 'static> Host<S> {
             w.window.request_redraw();
             return;
         }
+        #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+        if let Some(time) = token.as_deref().and_then(crate::platform::x11::activate::time_of)
+            && crate::platform::x11::activate::bring_here(&w.window, time) {
+            w.window.request_redraw();
+            return;
+        }
         let _ = token;
         w.focus();
         w.window.request_redraw();

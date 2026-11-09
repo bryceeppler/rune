@@ -56,7 +56,18 @@ impl std::fmt::Display for ShortcutError {
 }
 impl std::error::Error for ShortcutError {}
 
+/// What a desktop that picks the final trigger itself says about a shortcut it holds. Only the
+/// GlobalShortcuts portal reports one; macOS, Windows and X11 bind the exact chord asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShortcutStatus {
+    /// Delivered, under the trigger the desktop describes when it describes one.
+    Bound { trigger: Option<String> },
+    /// No longer delivered: the person removed or reassigned it away, or the session closed.
+    Revoked,
+}
+
 type Sink = Arc<dyn Fn(ShortcutId, Option<String>) + Send + Sync>;
+type Report = Arc<dyn Fn(ShortcutId, ShortcutStatus) + Send + Sync>;
 trait Backend {
     fn register(&mut self, id: ShortcutId, shortcut: &Shortcut) -> Result<(), ShortcutError>;
     fn unregister(&mut self, id: ShortcutId) -> Result<(), ShortcutError>;
@@ -67,8 +78,8 @@ type NativeBackend = Box<dyn Backend + Send>;
 #[cfg(not(target_os = "linux"))]
 type NativeBackend = Box<dyn Backend>;
 
-fn backend(wayland: bool, sink: Sink) -> Result<NativeBackend, ShortcutError> {
-    let _ = wayland;
+fn backend(wayland: bool, sink: Sink, report: Report) -> Result<NativeBackend, ShortcutError> {
+    let _ = (wayland, &report);
     #[cfg(target_os = "macos")]
     return Ok(Box::new(macos::Native::new(sink)?));
     #[cfg(target_os = "windows")]
@@ -76,7 +87,7 @@ fn backend(wayland: bool, sink: Sink) -> Result<NativeBackend, ShortcutError> {
     #[cfg(target_os = "linux")]
     return if wayland {
         #[cfg(feature = "dbus")]
-        { Ok(Box::new(wayland::Native::new(sink)?)) }
+        { Ok(Box::new(wayland::Native::new(sink, report)?)) }
         #[cfg(not(feature = "dbus"))]
         { Err(ShortcutError::Unsupported) }
     } else { Ok(Box::new(x11::Native::new(sink)?)) };
@@ -144,6 +155,19 @@ impl<S: 'static> crate::AppHandle<S> {
         self.shared.shortcuts.owner(shortcut)
     }
 
+    /// What the desktop last reported for `id`: the trigger it chose, or that it stopped
+    /// delivering it. None where the desktop binds the exact chord asked for, as macOS, Windows,
+    /// X11 and headless runs do, and for an id this app doesn't hold.
+    pub fn shortcut_status(&self, id: ShortcutId) -> Option<ShortcutStatus> {
+        self.shared.shortcuts.status(id)
+    }
+
+    /// Calls `watch` with each id whose status the desktop changes, on the desktop's thread,
+    /// from the report that ends a registration on.
+    pub fn watch_shortcuts(&self, watch: impl Fn(ShortcutId) + Send + Sync + 'static) {
+        self.shared.shortcuts.watch(Arc::new(watch));
+    }
+
     /// Drain startup registration failures. Runtime methods return their errors directly.
     pub fn take_shortcut_errors(&self) -> Vec<ShortcutError> {
         self.shared.shortcuts.errors()
@@ -151,7 +175,8 @@ impl<S: 'static> crate::AppHandle<S> {
 }
 
 impl crate::Tx {
-    /// Wayland's compositor-issued token for this shortcut activation. Forward it to
-    /// `AppHandle::activate(token)` to show and focus the quick panel. None on other backends.
+    /// The token for this shortcut activation: Wayland's compositor-issued one, or on X11 a
+    /// startup id carrying the key press's time (`_TIME<ms>`). Forward it to
+    /// `AppHandle::activate(token)` so the window may take focus. None on other backends.
     pub fn activation_token(&self) -> Option<&str> { self.shortcut_activation_token.as_deref() }
 }

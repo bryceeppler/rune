@@ -292,6 +292,7 @@ pub use shortcuts::PhysicalKeyCode;
 pub use shortcuts::Shortcut;
 pub use shortcuts::ShortcutError;
 pub use shortcuts::ShortcutId;
+pub use shortcuts::ShortcutStatus;
 pub use shortcuts::modifier_keycaps;
 pub use system_material::MAX_NATIVE_MATERIALS;
 pub use system_material::SystemMaterial;

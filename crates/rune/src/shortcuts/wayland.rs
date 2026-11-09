@@ -1,10 +1,10 @@
 //! xdg-desktop-portal GlobalShortcuts. Each binding owns a session so unregister works on
 //! portal v1 (which cannot remove a binding from an existing session).
-use super::{Backend, Shortcut, ShortcutError, ShortcutId, Sink};
+use super::{Backend, Report, Shortcut, ShortcutError, ShortcutId, ShortcutStatus, Sink};
 use futures_util::StreamExt;
 use std::{collections::HashMap, sync::mpsc, thread::JoinHandle, time::Duration};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant, fdo};
+use zbus::{Connection, MatchRule, MessageStream, OwnedObjectPath, OwnedVariant, Proxy, Variant, fdo, message};
 
 const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -12,6 +12,7 @@ const INTERFACE: &str = "org.freedesktop.portal.GlobalShortcuts";
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 const CONSENT_TIMEOUT: Duration = Duration::from_secs(120);
 type Reply = mpsc::SyncSender<Result<(), ShortcutError>>;
+type Bindings = Vec<(String, HashMap<String, OwnedVariant>)>;
 enum Command { Register(ShortcutId, Shortcut, Reply), Unregister(ShortcutId, Reply) }
 pub(super) struct Native { commands: Option<UnboundedSender<Command>>, worker: Option<JoinHandle<()>> }
 
@@ -36,6 +37,18 @@ fn response_status(status: u32) -> Result<(), ShortcutError> {
     match status { 0 => Ok(()), 1 => Err(ShortcutError::PermissionDenied), n => Err(ShortcutError::Backend(format!("portal response {n}"))) }
 }
 fn timed_out() -> ShortcutError { ShortcutError::Backend("portal request timed out".into()) }
+
+/// What a portal list of bindings says of `id`: bound under the trigger it describes, or revoked
+/// when the list leaves it out, as BindShortcuts and ShortcutsChanged both report.
+fn status_in(bindings: &Bindings, id: ShortcutId) -> ShortcutStatus {
+    match bindings.iter().find(|(key, _)| *key == id.0.to_string()) {
+        Some((_, properties)) => ShortcutStatus::Bound {
+            trigger: properties.get("trigger_description").and_then(|v| <&str>::try_from(v).ok())
+                .map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned),
+        },
+        None => ShortcutStatus::Revoked,
+    }
+}
 
 async fn request<B: serde::Serialize + zbus::Type>(conn: &Connection, portal: &Proxy<'_>, token: &str,
     method: &str, body: &B) -> Result<HashMap<String, OwnedVariant>, ShortcutError> {
@@ -65,7 +78,7 @@ async fn close(conn: &Connection, session: &OwnedObjectPath) -> Result<(), Short
     }).await.unwrap_or_else(|_| Err(timed_out()))
 }
 
-async fn bind(conn: &Connection, portal: &Proxy<'_>, id: ShortcutId, shortcut: &Shortcut) -> Result<OwnedObjectPath, ShortcutError> {
+async fn bind(conn: &Connection, portal: &Proxy<'_>, id: ShortcutId, shortcut: &Shortcut) -> Result<(OwnedObjectPath, ShortcutStatus), ShortcutError> {
     let create = format!("rune_{}_create", id.0);
     let session_token = format!("rune_{}_session", id.0);
     let options = HashMap::from([("handle_token", Variant::from(create.as_str())), ("session_handle_token", Variant::from(session_token.as_str()))]);
@@ -86,16 +99,18 @@ async fn bind(conn: &Connection, portal: &Proxy<'_>, id: ShortcutId, shortcut: &
             // Success with no matching binding is not a registration. The compositor chooses
             // the actual trigger; a preferred-trigger conflict is not standardized by the portal.
             let bindings = response.get("shortcuts").and_then(|v| v.try_clone().ok())
-                .and_then(|v| Vec::<(String, HashMap<String, OwnedVariant>)>::try_from(v).ok());
-            if bindings.as_ref().is_some_and(|v| v.iter().any(|(key, _)| key == &id.0.to_string())) { Ok(session) }
-            else { let _ = close(conn, &session).await; Err(ShortcutError::PermissionDenied) }
+                .and_then(|v| Bindings::try_from(v).ok()).unwrap_or_default();
+            match status_in(&bindings, id) {
+                ShortcutStatus::Revoked => { let _ = close(conn, &session).await; Err(ShortcutError::PermissionDenied) }
+                bound => Ok((session, bound)),
+            }
         }
         Err(e) => { let _ = close(conn, &session).await; Err(e) }
     }
 }
 
 impl Native {
-    pub(super) fn new(sink: Sink) -> Result<Self, ShortcutError> {
+    pub(super) fn new(sink: Sink, report: Report) -> Result<Self, ShortcutError> {
         let (commands, mut receiver) = unbounded_channel();
         let (ready, result) = mpsc::sync_channel(1);
         let worker = std::thread::Builder::new().name("rune-shortcuts-portal".into()).spawn(move || {
@@ -111,9 +126,13 @@ impl Native {
                     // when a backend for this interface is absent. The property is fixed here.
                     let _: u32 = portal.get_property("version").await.map_err(|_| ShortcutError::Unsupported)?;
                     let events = portal.receive_signal("Activated").await.map_err(dbus_error)?;
-                    Ok::<_, ShortcutError>((conn, portal, events))
+                    let changes = portal.receive_signal("ShortcutsChanged").await.map_err(dbus_error)?;
+                    let rule = MatchRule::builder().msg_type(message::Type::Signal)
+                        .interface("org.freedesktop.portal.Session").member("Closed").build().map_err(dbus_error)?;
+                    let closings = MessageStream::for_match_rule(rule, &conn, None).await.map_err(dbus_error)?;
+                    Ok::<_, ShortcutError>((conn, portal, events, changes, closings))
                 }).await.unwrap_or(Err(ShortcutError::Unsupported));
-                let (conn, portal, mut events) = match setup {
+                let (conn, portal, mut events, mut changes, mut closings) = match setup {
                     Ok(v) => { let _ = ready.send(Ok(())); v },
                     Err(e) => { let _ = ready.send(Err(e)); return; }
                 };
@@ -122,7 +141,10 @@ impl Native {
                     tokio::select! {
                         command = receiver.recv() => match command {
                             Some(Command::Register(id, shortcut, reply)) => {
-                                let result = bind(&conn, &portal, id, &shortcut).await.map(|session| { sessions.insert(id, session); });
+                                let result = bind(&conn, &portal, id, &shortcut).await.map(|(session, status)| {
+                                    sessions.insert(id, session);
+                                    report(id, status);
+                                });
                                 let _ = reply.send(result);
                             }
                             Some(Command::Unregister(id, reply)) => {
@@ -142,6 +164,21 @@ impl Native {
                                 && sessions.get(&id) == Some(&session) {
                                 let token = options.get("activation_token").and_then(|v| <&str>::try_from(v).ok()).map(str::to_owned);
                                 sink(id, token);
+                            }
+                        }
+                        change = changes.next() => {
+                            let Some(change) = change else { break };
+                            if let Ok((session, bindings)) = change.body().deserialize::<(OwnedObjectPath, Bindings)>() {
+                                for (id, held) in &sessions {
+                                    if *held == session { report(*id, status_in(&bindings, *id)); }
+                                }
+                            }
+                        }
+                        closing = closings.next() => {
+                            let Some(closing) = closing else { break };
+                            let path = closing.ok().and_then(|m| m.header().path().map(|p| p.as_str().to_owned()));
+                            for (id, held) in &sessions {
+                                if path.as_deref() == Some(held.as_str()) { report(*id, ShortcutStatus::Revoked); }
                             }
                         }
                     }
@@ -181,6 +218,20 @@ mod tests {
     fn portal_cancellation_is_not_a_conflict() {
         assert_eq!(response_status(1), Err(ShortcutError::PermissionDenied));
         assert!(matches!(response_status(2), Err(ShortcutError::Backend(_))));
+    }
+    fn listed(key: &str, trigger: Option<&str>) -> (String, HashMap<String, OwnedVariant>) {
+        let properties = trigger.map(|t| ("trigger_description".to_owned(), OwnedVariant::try_from(Variant::from(t)).unwrap()));
+        (key.to_owned(), properties.into_iter().collect())
+    }
+    #[test]
+    fn a_binding_reports_the_trigger_the_portal_chose_and_a_list_without_it_revokes_it() {
+        let id = ShortcutId(7);
+        let chosen = vec![listed("3", Some("Ctrl+Q")), listed("7", Some(" Press Super+N "))];
+        assert_eq!(status_in(&chosen, id), ShortcutStatus::Bound { trigger: Some("Press Super+N".into()) });
+        assert_eq!(status_in(&vec![listed("7", None)], id), ShortcutStatus::Bound { trigger: None });
+        assert_eq!(status_in(&vec![listed("7", Some("  "))], id), ShortcutStatus::Bound { trigger: None });
+        assert_eq!(status_in(&vec![listed("3", Some("Ctrl+Q"))], id), ShortcutStatus::Revoked);
+        assert_eq!(status_in(&Vec::new(), id), ShortcutStatus::Revoked);
     }
     #[test]
     fn missing_portal_is_unsupported() {

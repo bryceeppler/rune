@@ -1,4 +1,4 @@
-use super::{Shortcut, ShortcutError, ShortcutId, Sink, NativeBackend};
+use super::{Shortcut, ShortcutError, ShortcutId, ShortcutStatus, Sink, Report, NativeBackend};
 #[cfg(test)]
 use super::Backend;
 use crate::{Tx, app::Shared, runtime::Waker};
@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;
 
 type Handler<S> = Arc<dyn Fn(&mut S, &mut Tx) + Send + Sync>;
+type Watch = Arc<dyn Fn(ShortcutId) + Send + Sync>;
 type Pending<S> = (Result<Shortcut, ShortcutError>, Handler<S>);
 #[cfg(not(target_os = "linux"))]
 type Job = Box<dyn FnOnce(&mut Engine) + Send>;
@@ -39,6 +40,7 @@ pub(crate) struct Hub<S> {
     control: Arc<Control>,
     pending: Mutex<Vec<Pending<S>>>,
     handlers: Arc<Mutex<HashMap<ShortcutId, Handler<S>>>>,
+    statuses: Arc<Statuses>,
     errors: Mutex<Vec<ShortcutError>>,
     title: OnceLock<&'static str>,
     unmodified: AtomicBool,
@@ -54,7 +56,7 @@ impl<S> Default for Hub<S> {
                 #[cfg(target_os = "linux")]
                 engine: Mutex::default(),
             }),
-            pending: Mutex::default(), handlers: Arc::default(), errors: Mutex::default(), title: OnceLock::new(), unmodified: AtomicBool::new(false),
+            pending: Mutex::default(), handlers: Arc::default(), statuses: Arc::default(), errors: Mutex::default(), title: OnceLock::new(), unmodified: AtomicBool::new(false),
         }
     }
 }
@@ -65,11 +67,27 @@ thread_local! {
     static ENGINES: RefCell<HashMap<usize, Rc<RefCell<Engine>>>> = RefCell::default();
 }
 
+/// The desktop's latest word on each registration, and who wants to hear when it changes.
+#[derive(Default)]
+struct Statuses {
+    reported: Mutex<HashMap<ShortcutId, ShortcutStatus>>,
+    watch: Mutex<Option<Watch>>,
+}
+
+impl Statuses {
+    fn report(&self, id: ShortcutId, status: ShortcutStatus) {
+        self.reported.lock().unwrap().insert(id, status);
+        let watch = self.watch.lock().unwrap().clone();
+        if let Some(watch) = watch { watch(id); }
+    }
+}
+
 struct Engine {
     title: &'static str,
     headless: bool,
     wayland: bool,
     sink: Sink,
+    report: Report,
     native: Option<NativeBackend>,
     registrations: HashMap<ShortcutId, Shortcut>,
 }
@@ -80,7 +98,7 @@ impl Engine {
         if !self.headless {
             // Another App in this process holds it; some backends (the portal) wouldn't refuse.
             if NATIVE.lock().unwrap().iter().any(|(_, s, _)| s == &shortcut) { return Err(ShortcutError::Conflict); }
-            if self.native.is_none() { self.native = Some(super::backend(self.wayland, self.sink.clone())?); }
+            if self.native.is_none() { self.native = Some(super::backend(self.wayland, self.sink.clone(), self.report.clone())?); }
             if let Err(error) = self.native.as_mut().unwrap().register(id, &shortcut) {
                 if self.registrations.is_empty() { self.native = None; }
                 return Err(error);
@@ -178,11 +196,21 @@ impl<S: 'static> Hub<S> {
 
     pub(super) fn unregister(&self, id: ShortcutId) -> Result<(), ShortcutError> {
         let handlers = self.handlers.clone();
+        let statuses = self.statuses.clone();
         self.control.invoke(move |engine| {
             engine.unregister(id)?;
             handlers.lock().unwrap().remove(&id);
+            statuses.reported.lock().unwrap().remove(&id);
             Ok(())
         })
+    }
+
+    pub(super) fn status(&self, id: ShortcutId) -> Option<ShortcutStatus> {
+        self.statuses.reported.lock().unwrap().get(&id).cloned()
+    }
+
+    pub(super) fn watch(&self, watch: Watch) {
+        *self.statuses.watch.lock().unwrap() = Some(watch);
     }
 
     pub(super) fn errors(&self) -> Vec<ShortcutError> { std::mem::take(&mut self.errors.lock().unwrap()) }
@@ -231,9 +259,13 @@ impl Guard {
                 });
             }
         });
+        let statuses = Arc::downgrade(&shared.shortcuts.statuses);
+        let report: Report = Arc::new(move |id, status| {
+            if let Some(statuses) = statuses.upgrade() { statuses.report(id, status); }
+        });
         let control = shared.shortcuts.control.clone();
         let title = shared.shortcuts.title.get().copied().unwrap_or_default();
-        let engine = Engine { title, headless, wayland, sink, native: None, registrations: HashMap::new() };
+        let engine = Engine { title, headless, wayland, sink, report, native: None, registrations: HashMap::new() };
         #[cfg(not(target_os = "linux"))]
         ENGINES.with(|engines| engines.borrow_mut().insert(control.key, Rc::new(RefCell::new(engine))));
         #[cfg(target_os = "linux")]
@@ -290,7 +322,7 @@ mod tests {
             fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Ok(()) }
         }
         for error in [ShortcutError::Conflict, ShortcutError::Unsupported, ShortcutError::PermissionDenied, ShortcutError::Backend("disconnected".into())] {
-            let mut engine = Engine { title: "mock", headless: false, wayland: false, sink: Arc::new(|_, _| {}), native: Some(Box::new(Mock(error.clone()))), registrations: HashMap::new() };
+            let mut engine = Engine { title: "mock", headless: false, wayland: false, sink: Arc::new(|_, _| {}), report: Arc::new(|_, _| {}), native: Some(Box::new(Mock(error.clone()))), registrations: HashMap::new() };
             assert_eq!(engine.register(ShortcutId(1), "ctrl+a".parse().unwrap()), Err(error));
             assert!(engine.registrations.is_empty());
         }
@@ -307,7 +339,7 @@ mod tests {
             fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Ok(()) }
         }
         let chord: Shortcut = "ctrl+alt+shift+f17".parse().unwrap();
-        let native = |title| Engine { title, headless: false, wayland: false, sink: Arc::new(|_, _| {}), native: Some(Box::new(Accept)), registrations: HashMap::new() };
+        let native = |title| Engine { title, headless: false, wayland: false, sink: Arc::new(|_, _| {}), report: Arc::new(|_, _| {}), native: Some(Box::new(Accept)), registrations: HashMap::new() };
         let (mut first, mut second) = (native("First"), native("Second"));
         first.register(ShortcutId(u32::MAX - 1), chord.clone()).unwrap();
         assert_eq!(second.register(ShortcutId(u32::MAX - 2), chord.clone()), Err(ShortcutError::Conflict),

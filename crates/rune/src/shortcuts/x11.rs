@@ -42,7 +42,7 @@ impl Native {
                         Ok(Some(Event::KeyPress(event))) => {
                             let id = keys.lock().unwrap().iter().find(|(_, grabs)| grabs.iter().any(|g|
                                 g.root == event.root && g.code == event.detail && g.mods == u16::from(event.state) & 0xff)).map(|(id, _)| *id);
-                            if let Some(id) = id { sink(id, None); }
+                            if let Some(id) = id { sink(id, Some(format!("_TIME{}", event.time))); }
                         }
                         Ok(Some(_)) => {}, Ok(None) => break, Err(_) => return,
                     }
