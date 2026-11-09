@@ -1,16 +1,21 @@
 //! A text node's laid-out lines. A text of several paragraphs (each up to and including a
 //! `\n`) lays out one Parley layout per paragraph, each cached under that paragraph's text,
-//! spans, blocks and style, and stacks them, so an edit reshapes only the paragraph it touches.
+//! spans, blocks, style and direction, and stacks them, so an edit reshapes only the paragraph
+//! it touches.
 //!
-//! A text splits only at `\n`: Parley always ends a paragraph there, and monospace tab stops
-//! count their columns from there. Characters with no script of their own (spaces, digits,
-//! punctuation, marks, emoji) take the script of the text before them, which picks their
-//! fallback fonts and shaping, so a `\n` splits only where the paragraph after it gives them
-//! the script they take in the whole text ([`paragraph_ends`]). Parley's other hard breaks
-//! (`\r`, U+2028, U+2029, and a `\r\n` that a style change splits in two) stay inside a stacked
+//! A `\n` ends a paragraph as the Unicode bidirectional algorithm ends one: nothing before it
+//! reaches the text after it. Each paragraph resolves its own bidi levels, and its characters with
+//! no script of their own (spaces, digits, punctuation, marks, emoji) take the script of the text
+//! before them in the paragraph, or at its start its first script, as at the start of any text.
+//! Every paragraph takes the whole text's base direction, from its first strong character, so a
+//! text reads in one direction. One Parley layout of the whole text differs where these carry
+//! across a `\n`: a neutral at a paragraph's edge between two paragraphs of the other direction,
+//! and a paragraph starting without a script after one in another script. The text splits only at
+//! `\n`, where monospace tab stops also restart their columns; Parley's other hard breaks (`\r`,
+//! U+2028, U+2029, and a `\r\n` that a style change splits in two) stay inside a stacked
 //! paragraph's layout. Each of Parley's paragraphs takes the next block, so a stacked paragraph
-//! lays out with as many blocks as its layout has hard breaks, a count read back from the
-//! layout itself.
+//! lays out with as many blocks as its layout has hard breaks, a count read back from the layout
+//! itself.
 //!
 //! A paragraph's layout holds the `\n` that ends it, so each line keeps the text range, break
 //! reason and newline cluster it has in one layout of the whole text. Parley adds an empty
@@ -24,9 +29,9 @@
 use std::ops::Range;
 use std::rc::Weak;
 
-use swash::text::{Codepoint as _, Script};
+use swash::text::{BidiClass, Codepoint as _};
 
-use parley::BoundingBox;
+use parley::{BaseDirection, BoundingBox};
 use parley::editing::Cursor;
 use parley::layout::Affinity;
 
@@ -70,6 +75,7 @@ struct Source {
     max_width: Option<f32>,
     align: Alignment,
     wrapping: Wrapping,
+    base: BaseDirection,
 }
 
 /// One paragraph of a text being stacked: its bytes, spans and pills, the text's blocks and
@@ -139,72 +145,37 @@ impl Source {
     }
 }
 
-/// Where `text`'s stacked paragraphs end: after each `\n` where the paragraph after it lays
-/// out alone as it does in the whole text. Parley gives a character with no script of its own
-/// the script of the last character before it that has one, or at the text's start the text's
-/// first script, or Latin; a paragraph laid out alone has only its own characters to go by. A
-/// text whose only script is Latin splits at every `\n`.
-fn paragraph_ends(text: &str) -> Vec<usize> {
-    struct Scripts {
-        first: Option<Script>,
-        last: Option<Script>,
-        starts_with_one: bool,
-    }
-    let mut ends: Vec<usize> = text.match_indices('\n').map(|(i, _)| i + 1).filter(|&e| e < text.len()).collect();
-    ends.push(text.len());
-    if !non_ascii(text).any(|(_, c)| scripted(c).is_some_and(|s| s != Script::Latin)) {
-        return ends;
-    }
-    let mut start = 0;
-    let paras: Vec<Scripts> = ends.iter().map(|&end| {
-        let mut scripts = text[start..end].chars().filter_map(scripted);
-        let first = scripts.next();
-        let starts_with_one = text[start..end].chars().next().and_then(scripted).is_some();
-        start = end;
-        Scripts { first, last: scripts.next_back().or(first), starts_with_one }
-    }).collect();
-    let mut before = Vec::with_capacity(paras.len());
-    paras.iter().fold(None, |last, p| { before.push(last); p.last.or(last) });
-    let (mut kept, mut first, mut after) = (vec![text.len()], None, None);
-    for j in (1..paras.len()).rev() {
-        first = paras[j].first.or(first);
-        let alone = first.unwrap_or(Script::Latin);
-        let splits = paras[j].starts_with_one || match before[j] {
-            Some(last) => last == alone,
-            None => first.is_some() || after.unwrap_or(Script::Latin) == Script::Latin,
-        };
-        if splits {
-            kept.push(ends[j - 1]);
-            after = first.or(after);
-            first = None;
+/// Where `text`'s stacked paragraphs end: after each `\n`, and at its end.
+fn paragraph_ends(text: &str) -> impl Iterator<Item = usize> + '_ {
+    text.match_indices('\n').map(|(i, _)| i + 1).filter(move |&e| e < text.len()).chain([text.len()])
+}
+
+/// The direction of `text`'s first strong character outside an isolate, as Parley finds a
+/// paragraph's base direction.
+fn first_strong(text: &str) -> Option<BaseDirection> {
+    let mut isolates = 0usize;
+    for c in text.chars() {
+        if c.is_ascii() {
+            if isolates == 0 && c.is_ascii_alphabetic() {
+                return Some(BaseDirection::Ltr);
+            }
+            continue;
+        }
+        match c.bidi_class() {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => isolates += 1,
+            BidiClass::PDI => isolates = isolates.saturating_sub(1),
+            BidiClass::L if isolates == 0 => return Some(BaseDirection::Ltr),
+            BidiClass::R | BidiClass::AL if isolates == 0 => return Some(BaseDirection::Rtl),
+            _ => {}
         }
     }
-    kept.reverse();
-    let whole_first = paras.iter().find_map(|p| p.first).unwrap_or(Script::Latin);
-    while kept.len() > 1 && whole_first != Script::Latin && text[..kept[0]].chars().all(|c| scripted(c).is_none()) {
-        kept.remove(0);
-    }
-    kept
+    None
 }
 
-/// The script of a character that has one of its own, as Parley tells them apart.
-fn scripted(c: char) -> Option<Script> {
-    if c.is_ascii() {
-        return c.is_ascii_alphabetic().then_some(Script::Latin);
-    }
-    Some(c.script()).filter(|s| !matches!(s, Script::Common | Script::Inherited | Script::Unknown))
-}
-
-/// `text`'s characters past ASCII, and their bytes.
-fn non_ascii(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
-    let mut at = 0;
-    std::iter::from_fn(move || {
-        at += text.as_bytes()[at..].iter().position(|b| !b.is_ascii())?;
-        let c = text[at..].chars().next()?;
-        let found = (at, c);
-        at += c.len_utf8();
-        Some(found)
-    })
+/// The direction a paragraph lays out in under a text of base direction `base`: `Auto` where
+/// it would take `base` alone, so its layout is the one it has as a text of its own.
+fn direction_in(paragraph: &str, base: BaseDirection) -> BaseDirection {
+    if first_strong(paragraph).unwrap_or(BaseDirection::Ltr) == base { BaseDirection::Auto } else { base }
 }
 
 fn clip<T>(all: &[T], r: Range<usize>) -> &[T] {
@@ -566,24 +537,15 @@ impl Stack {
     }
 }
 
-/// Whether `text` lays out as stacked paragraphs: it has two or more, its spans are sorted
-/// and apart (as flattened spans are), so each paragraph's spans are a run of them, and it
-/// has no right-to-left text, so each paragraph takes the whole text's base direction. Lines
-/// align within the wrap width, or start-aligned without one: Parley aligns unwrapped lines to
-/// the widest, which a paragraph doesn't know.
+/// Whether `text` lays out as stacked paragraphs: it has two or more, and its spans are
+/// sorted and apart (as flattened spans are), so each paragraph's spans are a run of them.
+/// Lines align within the wrap width, or start-aligned left to right without one: Parley aligns
+/// unwrapped lines to the widest, which a paragraph doesn't know.
 fn stacks(text: &str, spans: &[Span], max_width: Option<f32>, align: Alignment) -> bool {
-    (max_width.is_some() || align == Alignment::Start)
-        && text.len() > 1
+    text.len() > 1
         && text.as_bytes()[..text.len() - 1].contains(&b'\n')
         && spans.windows(2).all(|w| w[0].end <= w[1].start)
-        && !non_ascii(text).any(|(_, c)| right_to_left(c))
-}
-
-/// A character of a right-to-left script's block, or a right-to-left mark or embedding.
-fn right_to_left(c: char) -> bool {
-    matches!(c as u32,
-        0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF
-        | 0x200F | 0x202B | 0x202E | 0x2067)
+        && (max_width.is_some() || align == Alignment::Start && first_strong(text) != Some(BaseDirection::Rtl))
 }
 
 impl TextSystem {
@@ -606,7 +568,7 @@ impl TextSystem {
     ) -> TextLayout {
         self.follow_language();
         if !cache || !stacks(text, spans, max_width, align) {
-            return self.layout_keyed(shape, text, spans, blocks, pills, style, scale, max_width, align, wrapping, cache).into();
+            return self.layout_keyed(shape, text, spans, blocks, pills, style, scale, max_width, align, wrapping, BaseDirection::Auto, cache).into();
         }
         let shape = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrapping, pills));
         let has_indented_blocks = blocks.iter().any(|&b| b != crate::edit::Block::Paragraph);
@@ -616,7 +578,8 @@ impl TextSystem {
             e.used = g;
             return TextLayout(Laid::Stacked(e.value.clone()));
         }
-        let stack = Rc::new(self.stack(text, spans, blocks, pills, style, scale, max_width, align, wrapping));
+        let base = first_strong(text).unwrap_or(BaseDirection::Ltr);
+        let stack = Rc::new(self.stack(text, spans, blocks, pills, style, scale, max_width, align, wrapping, base));
         let cost = stack.paras.len() * size_of::<Para>();
         self.stacks.cache.insert(key, Entry::with_cost(stack.clone(), g, cost, shape));
         self.stacks.last = Some(Source {
@@ -626,6 +589,7 @@ impl TextSystem {
             pills: pills.into(),
             blocks: blocks.into(),
             style, scale, max_width, align, wrapping,
+            base,
         });
         TextLayout(Laid::Stacked(stack))
     }
@@ -642,10 +606,11 @@ impl TextSystem {
         max_width: Option<f32>,
         align: Alignment,
         wrapping: Wrapping,
+        base: BaseDirection,
     ) -> Stack {
         let (mut local_spans, mut local_pills) = (std::mem::take(&mut self.stacks.spans), std::mem::take(&mut self.stacks.pills));
         let last = self.stacks.last.take().filter(|l| {
-            (l.style, l.scale, l.max_width, l.align, l.wrapping) == (style, scale, max_width, align, wrapping)
+            (l.style, l.scale, l.max_width, l.align, l.wrapping, l.base) == (style, scale, max_width, align, wrapping, base)
         }).and_then(|l| Some((l.stack.upgrade()?, l)));
         let (prefix, suffix) = last.as_ref().map_or((0, 0), |(_, l)| shared(l.text.as_bytes(), text.as_bytes()));
         let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |(old, _)| old.paras.len() + 1));
@@ -671,7 +636,8 @@ impl TextSystem {
                     }));
                     local_pills.clear();
                     local_pills.extend(draft.pills.iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
-                    let lay = |ts: &mut Self, breaks| ts.layout_keyed(None, piece, &local_spans, draft.blocks(breaks), &local_pills, style, scale, max_width, align, wrapping, true);
+                    let direction = direction_in(piece, base);
+                    let lay = |ts: &mut Self, breaks| ts.layout_keyed(None, piece, &local_spans, draft.blocks(breaks), &local_pills, style, scale, max_width, align, wrapping, direction, true);
                     let likely = likely_breaks(piece);
                     let layout = lay(self, likely);
                     let breaks = hard_breaks(&layout);

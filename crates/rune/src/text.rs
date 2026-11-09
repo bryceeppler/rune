@@ -413,6 +413,7 @@ impl TextSystem {
         max_width: Option<f32>,
         align: Alignment,
         wrapping: Wrapping,
+        direction: parley::BaseDirection,
         cache: bool,
     ) -> Rc<Layout<Ink>> {
         self.follow_language();
@@ -421,7 +422,7 @@ impl TextSystem {
         // Shaping depends on the text, spans, style, scale, overflow-wrap and pills; line
         // breaking adds the width, alignment and block indents. A layout cached at one width
         // is re-broken at another rather than shaped again.
-        let shape_key = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrapping, pills));
+        let shape_key = hash::directed(shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrapping, pills)), direction);
         let key = hash::break_key(shape_key, max_width, align, has_indented_blocks.then_some(blocks));
         let g = self.generation;
         if cache && let Some(Entry { value: l, used, .. }) = self.layouts.get_mut(&key) {
@@ -614,6 +615,7 @@ impl TextSystem {
         type Spacings = [(std::ops::Range<usize>, f32)];
         let build = |lcx: &mut LayoutContext<Ink>, fcx: &mut FontContext, exact: &Spacings, widen: &Spacings, system: &[(std::ops::Range<usize>, Vec<FontFamilyName<'_>>)]| {
             let mut b = lcx.ranged_builder(fcx, text, scale, true);
+            b.set_base_direction(direction);
             b.push_default(FontFamily::from(sans.as_slice()));
             b.push_default(StyleProperty::Locale(language));
             b.push_default(StyleProperty::FontSize(style.size));

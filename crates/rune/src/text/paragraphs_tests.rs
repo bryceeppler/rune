@@ -73,6 +73,30 @@ fn runs(line: &parley::Line<'_, Ink>, dy: f32, ink: impl Fn(u16) -> u16) -> Vec<
     }).collect()
 }
 
+/// Each glyph of a line where it draws: id, x, baseline, ink and size, and each inline box.
+/// How Parley groups glyphs into runs is its own: a stacked paragraph's script-less characters
+/// take its own script where one layout gives them the paragraph's before, which splits or
+/// joins a run but draws the same glyphs at the same places, up to the last bits of an x that
+/// Parley sums along each run.
+type Placed = (u32, f32, u32, u16, u32);
+
+fn placed(line: &parley::Line<'_, Ink>, dy: f32, ink: impl Fn(u16) -> u16) -> Vec<Placed> {
+    line.items().flat_map(|item| match item {
+        PositionedLayoutItem::GlyphRun(gr) => {
+            let (ink, size) = (ink(gr.style().brush.0), gr.run().font_size().to_bits());
+            gr.positioned_glyphs().map(|g| (g.id, g.x, (g.y + dy).to_bits(), ink, size)).collect::<Vec<_>>()
+        }
+        PositionedLayoutItem::InlineBox(b) => vec![(u32::MAX, b.x, (b.y + dy).to_bits(), u16::MAX, b.width.to_bits())],
+    }).collect()
+}
+
+fn assert_same_glyphs(a: &[Placed], b: &[Placed], what: &str) {
+    assert_eq!(a.len(), b.len(), "{what}: {a:?} != {b:?}");
+    for (g, h) in a.iter().zip(b) {
+        assert!((g.0, g.2, g.3, g.4) == (h.0, h.2, h.3, h.4) && (g.1 - h.1).abs() <= 1e-3, "{what}: {g:?} != {h:?}");
+    }
+}
+
 /// Boxes as their users read them, in f32: Parley sums a selection's x in f64 along a path that
 /// differs by where the selection starts, a few millionths of a pixel apart.
 fn f32_boxes(boxes: Vec<(parley::BoundingBox, usize)>) -> Vec<([f32; 4], usize)> {
@@ -93,7 +117,7 @@ fn a_stacked_text_lays_out_line_for_line_as_one_layout() {
     }
 }
 
-/// `stacked` is `whole` line for line, bit for bit, at its height and width.
+/// `stacked` is `whole` line for line, glyph for glyph and bit for bit, at its height and width.
 fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
     assert_eq!(stacked.len(), whole.len(), "{what}");
     assert_eq!(stacked.height().to_bits(), whole.height().to_bits(), "{what}: height");
@@ -106,7 +130,7 @@ fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
             assert_eq!(line.text_range(), w.text_range(), "{what}: line {i}");
             assert_eq!(line.break_reason(), w.break_reason(), "{what}: line {i}");
             assert_eq!(line.metrics(), *w.metrics(), "{what}: line {i}");
-            assert_eq!(runs(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), runs(&w, 0.0, |k| k), "{what}: line {i}");
+            assert_same_glyphs(&placed(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), &placed(&w, 0.0, |k| k), &format!("{what}: line {i}"));
         }
     }
     assert!(lines.next().is_none(), "{what}");
@@ -126,31 +150,31 @@ fn every_hard_break_parley_takes_moves_to_the_next_block() {
     }
 }
 
-/// Spaces, digits, punctuation and emoji take the script of the text before them, which picks
-/// their fallback fonts: a paragraph starting with them stacks apart only where the text before
-/// it gives them the script it would give them alone, so it lays out as in one layout. Latin
-/// text splits at every `\n`.
+/// Spaces, digits, punctuation and emoji at a paragraph's start take the script of its own
+/// text, whatever the paragraph before it is written in: every `\n` splits, and the stack draws
+/// the glyphs one layout draws.
 #[test]
-fn a_paragraph_starting_without_a_script_takes_the_one_before_it() {
+fn every_newline_splits_whatever_script_the_text_before_it_has() {
     let mut ts = TextSystem::default();
-    for (text, pieces) in [
-        ("first\n\n- item\n123 end\n", 4),
-        ("かな\n👍🏽 ond\nかな\n", 2),
-        ("かな\n- かな\n\nabc\n", 3),
-        ("123\nかな\nabc", 2),
-        ("abc\n\nかな\n(かな)\n", 4),
+    for text in [
+        "first\n\n- item\n123 end\n",
+        "かな\n👍🏽 ond\nかな\n",
+        "かな\n- かな\n\nabc\n",
+        "123\nかな\nabc",
+        "abc\n\nかな\n(かな)\n",
+        "- 牛乳を買う\n- 卵\n- パンを焼く\n## 見出し\n「今日は雨です。」\n",
     ] {
         let whole = ts.layout_blocks(text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start);
         let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, Wrapping::Words, true);
-        assert_eq!(stacked.pieces().count(), pieces, "{text:?}");
+        assert_eq!(stacked.pieces().count(), text.trim_end_matches('\n').matches('\n').count() + 1, "{text:?}");
         assert_line_for_line(&whole, &stacked, text);
     }
 }
 
-/// Random texts, edited a step at a time with each stack built from the one before, lay out
-/// stacked as one layout of the same text, line for line and caret for caret: every hard break
-/// Parley takes, `\r\n`s a span boundary or pill splits, monospace tabs, hidden marks, pills,
-/// blocks, wrap widths and scales.
+/// Random texts in one script and direction, edited a step at a time with each stack built
+/// from the one before, lay out stacked as one layout of the same text, line for line and caret
+/// for caret: every hard break Parley takes, `\r\n`s a span boundary or pill splits, monospace
+/// tabs, hidden marks, pills, emoji, digits and brackets, blocks, wrap widths and scales.
 #[test]
 fn random_edits_lay_out_stacked_as_one_layout() {
     const STEPS: usize = 400;
@@ -161,7 +185,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
         seed ^= seed << 17;
         (seed % n.max(1) as u64) as usize
     };
-    let tokens = ["word", "ab", " ", "\t", "\t", "e\u{301}", "漢字", "かな", "1", "(", "👍🏽", "\n", "\n", "\r\n", "\r\n", "\r", "\u{2028}", "\u{2029}"];
+    let tokens = ["word", "ab", " ", "\t", "\t", "e\u{301}", "1", "(", "👍🏽", "\n", "\n", "\r\n", "\r\n", "\r", "\u{2028}", "\u{2029}"];
     let kinds = [Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code];
     let mut ts = TextSystem::default();
     let (mut text, mut spans, mut blocks) = (String::from("first\tline\nsecond\n"), Vec::<Span>::new(), vec![Block::Paragraph]);
@@ -229,6 +253,114 @@ fn random_edits_lay_out_stacked_as_one_layout() {
         ts.end_commit();
     }
     assert!(stacked_steps > STEPS * 3 / 4, "{stacked_steps} of {STEPS} steps stacked");
+}
+
+/// Random edits of text in several scripts and both directions, with numbers, neutrals, marks,
+/// isolates and embeddings at paragraph edges: each stacked paragraph lays out as Parley lays
+/// out the paragraph alone in the direction Parley gives the whole text, its top at the whole
+/// text's line tops, caret for caret.
+#[test]
+fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction() {
+    const STEPS: usize = 300;
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move |n: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % n.max(1) as u64) as usize
+    };
+    let tokens = ["word", "o", " ", "שלום", "مرحبا", "\u{64e}", "١٢", "12", "!", "(", ")", "- ", "\u{200f}", "\u{2067}", "\u{2069}", "\u{202b}", "\u{202c}", "漢字", "かな", "👍🏽", "e\u{301}", "\t", "\r", "\u{2029}", "\n", "\n", "\n"];
+    let (mut ts, mut oracle) = (TextSystem::default(), TextSystem::default());
+    let mut text = String::from("שלום world\nword\n");
+    let (mut rtl, mut ltr) = (0, 0);
+    for step in 0..STEPS {
+        let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
+        if text.len() > 160 || (bounds.len() > 2 && next(4) == 0) {
+            let a = next(bounds.len() - 1);
+            let b = (a + 1 + next(if text.len() > 160 { 30 } else { 4 })).min(bounds.len() - 1);
+            text.replace_range(bounds[a]..bounds[b], "");
+        } else {
+            let inserted: String = (0..1 + next(3)).map(|_| tokens[next(tokens.len())]).collect();
+            text.insert_str(bounds[next(bounds.len())], &inserted);
+        }
+        if step % 10 == 0 {
+            text.insert_str(0, ["a", "ש", "\u{2067}ש\u{2069}"][step / 10 % 3]);
+        }
+        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [60.0, 160.0, 400.0][step / 7 % 3], [Wrapping::Words, Wrapping::Anywhere][step % 2]);
+        let stacked = ts.layout_text(None, &text, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, true);
+        ts.end_commit();
+        let what = format!("step {step}: {text:?} at {width} x{scale}");
+        let auto = oracle.layout_keyed(None, &text, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, BaseDirection::Auto, false);
+        let base = if auto.is_rtl() { BaseDirection::Rtl } else { BaseDirection::Ltr };
+        (rtl, ltr) = (rtl + auto.is_rtl() as usize, ltr + !auto.is_rtl() as usize);
+        let (mut line, mut y, mut start) = (0, 0f64, 0);
+        let paragraphs: Vec<&str> = if text.is_empty() { vec![""] } else { text.split_inclusive('\n').collect() };
+        for (k, para) in paragraphs.iter().enumerate() {
+            let alone = oracle.layout_keyed(None, para, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, base, false);
+            let last = k + 1 == paragraphs.len();
+            let shown = if last { alone.len() } else { alone.len() - 1 };
+            let top = y.round() as f32;
+            for j in 0..shown {
+                let (a, b) = (stacked.line(line).unwrap(), alone.get(j).unwrap());
+                let mut m = *b.metrics();
+                for v in [&mut m.baseline, &mut m.block_min_coord, &mut m.block_max_coord, &mut m.content_block_min_coord, &mut m.content_block_max_coord] {
+                    *v += top;
+                }
+                let r = b.text_range();
+                assert_eq!(a.text_range(), r.start + start..r.end + start, "{what}: line {line}");
+                assert_eq!(a.metrics(), m, "{what}: line {line}");
+                assert_eq!(runs(a.parley(), top, |k| k), runs(&b, top, |k| k), "{what}: line {line}");
+                y += b.metrics().line_height as f64;
+                line += 1;
+            }
+            if step % 3 == 0 {
+                for (i, _) in para.char_indices() {
+                    let cur = parley::editing::Cursor::from_byte_index(&alone, i, parley::layout::Affinity::Downstream);
+                    let mut bb = cursor_geometry(&cur, &alone, 1.0);
+                    (bb.y0, bb.y1) = (bb.y0 + top as f64, bb.y1 + top as f64);
+                    assert_eq!(stacked.caret_box(start + i, 1.0), bb, "caret at {}, {what}", start + i);
+                    assert_eq!(stacked.line_edge(start + i, true), line_edge(&alone, i, true) + start, "line end from {}, {what}", start + i);
+                }
+            }
+            start += para.len();
+        }
+        assert_eq!(stacked.len(), line, "{what}");
+        assert_eq!(stacked.pieces().count(), paragraphs.len(), "{what}");
+    }
+    assert!(rtl > STEPS / 5 && ltr > STEPS / 5, "{rtl} right-to-left and {ltr} left-to-right texts");
+}
+
+/// Paragraphs in both directions whose edges are strong characters lay out stacked as one
+/// layout of the whole text does, each in the whole text's direction.
+#[test]
+fn paragraphs_in_both_directions_take_the_texts_direction() {
+    let mut ts = TextSystem::default();
+    for text in ["Hello world\nשלום עולם\nmore words\nمرحبا بالعالم", "שלום עולם\nHello world\nمرحبا بالعالم\nmore words"] {
+        let whole = ts.layout_blocks(text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start);
+        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, true);
+        assert_eq!(stacked.pieces().count(), 4, "{text:?}");
+        assert_line_for_line(&whole, &stacked, text);
+    }
+}
+
+/// A `\n` ends a paragraph for the bidirectional algorithm: a dash starting a Hebrew item in
+/// a left-to-right note sits at the item's left, and the item's closing `!` at its right, as
+/// each would alone, whatever the paragraphs around them are written in. One layout of the
+/// whole text carries the Hebrew around them across the breaks and draws the item `!תירבע -`.
+#[test]
+fn a_newline_ends_a_paragraph_for_bidi() {
+    let text = "Notes\nשלום\n- עברית!\nשלום\nend";
+    let mut ts = TextSystem::default();
+    let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, true);
+    let (dash, bang) = (text.find("- ").unwrap(), text.find('!').unwrap());
+    let span = |a: usize, b: usize| {
+        let boxes = stacked.range_boxes(a, b, false);
+        assert_eq!(boxes.len(), 1);
+        (boxes[0].0.x0, boxes[0].0.x1)
+    };
+    let (dash, hebrew, bang) = (span(dash, dash + 1), span(dash + 2, bang), span(bang, bang + 1));
+    assert_eq!(dash.0, 0.0, "the item starts at the left");
+    assert!(dash.1 < hebrew.0 && hebrew.1 <= bang.0, "the dash, then the Hebrew, then the `!`: {dash:?} {hebrew:?} {bang:?}");
 }
 
 /// A text ending in a hard break ends in an empty paragraph indented by its own block, also
@@ -432,7 +564,7 @@ fn new_fonts_lay_stacks_out_again() {
     assert!(ts.shaped > shaped, "its paragraphs shaped again");
 }
 
-/// Text with right-to-left characters, unsorted spans or one paragraph lays out whole.
+/// Text with unsorted spans or one paragraph, or unwrapped and right to left, lays out whole.
 #[test]
 fn texts_that_cannot_stack_lay_out_whole() {
     let mut ts = TextSystem::default();
@@ -441,8 +573,12 @@ fn texts_that_cannot_stack_lay_out_whole() {
     };
     assert_eq!(pieces("one\ntwo", &[]), 2);
     assert_eq!(pieces("one\n", &[]), 1);
-    assert_eq!(pieces("one\nשלום", &[]), 1);
+    assert_eq!(pieces("one\nשלום", &[]), 2);
+    assert_eq!(pieces("שלום\none", &[]), 1, "unwrapped right-to-left lines align on the widest");
     assert_eq!(pieces("one\ntwo", &[Span::new(4, 7), Span::new(0, 3)]), 1);
     let centred = ts.layout_text(None, "one\ntwo", &[], &[], &[], STYLE, 2.0, None, Alignment::Center, Wrapping::Words, true);
     assert_eq!(centred.pieces().count(), 1, "unwrapped centred lines centre on the widest");
 }
+
+
+

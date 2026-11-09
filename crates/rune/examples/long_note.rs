@@ -24,11 +24,14 @@
 //! `--blocks` splits the note at blank lines into one field per block, as an app that keys its
 //! Markdown blocks, and runs the cases that don't move the caret between fields.
 //!
-//! `--mixed` writes the note in mixed scripts (accented Latin, Han, kana, Hebrew, Arabic and
-//! Ethiopic, which few app fonts cover) and types kana, Han and accented letters.
+//! `--scripts cjk` writes the note in Japanese, starting with it: words run together, each line
+//! ends in kana, paragraphs start with an ideographic space and list items, quotes and headings
+//! with a marker, then Han, and it has no code. It types kana and Han.
+//! `--scripts mixed` mixes accented Latin, Han, kana, Hebrew, Arabic, Ethiopic (which few app
+//! fonts cover) and emoji, and types kana, Han and accented letters. The default is `latin`.
 //!
 //! cargo build --profile perf -p rune --example long_note --features frame-profile
-//! target/perf/examples/long_note [--sizes 5,50,200] [--samples 60] [--only type_mid,scroll] [--gpu] [--blocks] [--mixed]
+//! target/perf/examples/long_note [--sizes 5,50,200] [--samples 60] [--only type_mid,scroll] [--gpu] [--blocks] [--scripts latin|cjk|mixed]
 //!
 //! Prints `METRIC size=.. case=.. metric=.. median=.. p95=.. max=..` per measurement, and
 //! `MEMORY size=..` lines. `cpu_ms` is thread CPU of the input and the frame it commits;
@@ -89,23 +92,27 @@ fn note(bytes: usize) -> String {
         seed ^= seed << 17;
         (seed % n as u64) as usize
     };
+    const CJK: &[&str] = &["漢字", "東京", "日本語", "中文", "文字", "書く", "読む", "時間", "春の", "雨", "山", "川と",
+        "静かな", "図書館", "電車", "朝ごはん", "手紙", "片仮名", "平仮名"];
     const MIXED: &[&str] = &["café", "naïve", "漢字", "東京", "かな", "ひらがな", "שלום", "مرحبا", "ሰላም", "amber", "the", "of",
-        "and", "señor", "für", "日本語", "カタカナ", "עולם", "كتاب", "ቤት", "lantern", "with", "über", "中文"];
-    let list = if MIXED_SCRIPTS.get() { MIXED } else { WORDS };
+        "and", "señor", "für", "日本語", "カタカナ", "עולם", "كتاب", "ቤት", "lantern", "with", "über", "中文", "👍🏽", "🎉"];
+    let list = match SCRIPTS.get() { Scripts::Latin => WORDS, Scripts::Cjk => CJK, Scripts::Mixed => MIXED };
+    let (gap, end) = if SCRIPTS.get() == Scripts::Cjk { ("", "です") } else { (" ", "") };
     let words = |next: &mut dyn FnMut(usize) -> usize, n: usize| {
-        (0..n).map(|_| list[next(list.len())]).collect::<Vec<_>>().join(" ")
+        (0..n).map(|_| list[next(list.len())]).collect::<Vec<_>>().join(gap) + end
     };
     let mut out = String::new();
     let mut section = 0;
     while out.len() < bytes {
         section += 1;
-        out += &format!("# Section {section}: {}\n\n", words(&mut next, 3));
+        out += &if SCRIPTS.get() == Scripts::Cjk { format!("# {}\n\n", words(&mut next, 3)) } else { format!("# Section {section}: {}\n\n", words(&mut next, 3)) };
         for sub in 0..3 {
             out += &format!("## {} {sub}\n\n", words(&mut next, 2));
             for _ in 0..2 {
                 let n = 25 + next(60);
+                if SCRIPTS.get() == Scripts::Cjk { out += "\u{3000}"; }
                 out += &words(&mut next, n);
-                out += ".\n\n";
+                out += if SCRIPTS.get() == Scripts::Cjk { "。\n\n" } else { ".\n\n" };
             }
             for i in 0..4 + next(5) {
                 let n = 4 + next(10);
@@ -114,7 +121,7 @@ fn note(bytes: usize) -> String {
             }
             out += "\n";
             match next(3) {
-                0 => {
+                0 if SCRIPTS.get() != Scripts::Cjk => {
                     out += "```rust\n";
                     for i in 0..5 + next(6) {
                         let (indent, name, call) = ("    ".repeat(next(3)), list[next(list.len())], list[next(list.len())]);
@@ -219,8 +226,11 @@ fn runtime(text: &str, caret: usize) -> Runtime<State> {
 
 thread_local! {
     static BLOCKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static MIXED_SCRIPTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SCRIPTS: std::cell::Cell<Scripts> = const { std::cell::Cell::new(Scripts::Latin) };
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum Scripts { Latin, Cjk, Mixed }
 
 fn find(rt: &Runtime<State>, key: &str) -> rune::runtime::ElementInfo {
     rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap()
@@ -277,8 +287,13 @@ fn main() {
         Draw { gpu, renderer, out }
     });
     BLOCKS.set(args.iter().any(|a| a == "--blocks"));
-    MIXED_SCRIPTS.set(args.iter().any(|a| a == "--mixed"));
-    let typed: [&str; 4] = if MIXED_SCRIPTS.get() { ["あ", "漢", "é", " "] } else { ["a", "b", "c", " "] };
+    SCRIPTS.set(match value("--scripts").as_deref() {
+        None | Some("latin") => Scripts::Latin,
+        Some("cjk") => Scripts::Cjk,
+        Some("mixed") => Scripts::Mixed,
+        Some(other) => panic!("--scripts latin|cjk|mixed, not {other}"),
+    });
+    let typed: [&str; 4] = match SCRIPTS.get() { Scripts::Latin => ["a", "b", "c", " "], Scripts::Cjk => ["あ", "漢", "の", "字"], Scripts::Mixed => ["あ", "漢", "é", " "] };
     let paste = paste_text();
     for &kb in &sizes {
         let text = note(kb * 1024);
