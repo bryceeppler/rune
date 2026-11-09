@@ -49,6 +49,8 @@ pub struct TextEdit {
     /// Use `replace_text` to replace a secret without leaving its old allocation behind.
     pub text: String,
     selection: Selection,
+    /// The selection as it stood before the first text change since an app last took it.
+    edit_start: Option<Selection>,
     /// IME composition shown at the caret, with its selected range.
     pub preedit: Option<(String, Option<(usize, usize)>)>,
     pub focused: bool,
@@ -152,6 +154,7 @@ impl TextEdit {
         TextEdit {
             text,
             selection: Selection::caret(Caret::at(n)),
+            edit_start: None,
             preedit: None,
             focused: false,
             marks: Vec::new(),
@@ -424,6 +427,7 @@ impl TextEdit {
         let line_count = if self.secure { 0 } else { 1 + count_newlines(text.as_bytes()) };
         self.text = text;
         self.selection = Selection::caret(Caret::at(self.text.len()));
+        self.edit_start = None;
         self.marks.clear();
         self.blocks = vec![Block::Paragraph; line_count];
         self.soft_breaks.clear();
@@ -560,6 +564,14 @@ impl TextEdit {
     /// The selection: where it started and the caret that moves, each on its side of its byte.
     pub fn selection(&self) -> Selection {
         self.selection
+    }
+
+    /// The selection as it stood just before the field's first change to its text since the last
+    /// call, each end on its side, and forgets it: what an app keeping its own history records
+    /// with the change, so its Undo puts the caret back where it drew. `None` when the text hasn't
+    /// changed since, or [`TextEdit::replace_text`] replaced it.
+    pub fn take_edit_start(&mut self) -> Option<Selection> {
+        self.edit_start.take()
     }
 
     /// Both selection ends as bytes, `(anchor, focus)`, which a pending typing style is armed at.
@@ -809,6 +821,7 @@ impl TextEdit {
         mark_new_lines_soft: bool,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
+        self.edit_start.get_or_insert(self.selection);
         let del_len = b - a;
         let ins_len = s.len();
         if self.marks.is_empty()
@@ -960,7 +973,9 @@ impl TextEdit {
             next.push_str(&self.text[..a]);
             next.push_str(s);
             next.push_str(&self.text[b..]);
+            let start = self.edit_start.unwrap_or(self.selection);
             self.replace_text(next);
+            self.edit_start = Some(start);
             self.selection = Selection::caret(Caret::at(a + s.len()));
             self.mark_edited();
             return;

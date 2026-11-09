@@ -109,6 +109,7 @@ impl TextEdit {
     }
 
     fn restore(&mut self, s: &Snapshot) {
+        self.edit_start.get_or_insert(self.selection);
         self.text.zeroize();
         self.text.push_str(&s.text);
         self.selection = s.selection;

@@ -324,3 +324,19 @@ fn undo_puts_a_split_caret_back_where_it_drew() {
     press(&mut rt, Key::Text("Y".into()), NONE);
     assert_eq!(rt.state.text, "Notes\nabc אבYג\nend", "so Right steps over one Hebrew letter");
 }
+
+#[test]
+fn an_edit_starts_from_the_selection_as_it_stood_just_before_it() {
+    let (mut rt, start) = note::<600>("abc אבג");
+    put_caret(&mut rt, start + "abc".len());
+    rt.update(|s, _| assert_eq!(s.take_edit_start(), None, "moving the caret changes no text"));
+    rt.key(KeyEvent { key: Key::Right, mods: NONE });
+    rt.key(KeyEvent { key: Key::Text("X".into()), mods: NONE });
+    rt.key(KeyEvent { key: Key::Text("Y".into()), mods: NONE });
+    rt.frame(0.0);
+    let split = crate::Caret { byte: start + "abc ".len(), side: crate::CaretSide::Previous };
+    rt.update(|s, _| {
+        assert_eq!(s.take_edit_start(), Some(crate::Selection::caret(split)), "the split caret the Right in the same frame left, before X and Y");
+        assert_eq!(s.take_edit_start(), None, "and only once");
+    });
+}
