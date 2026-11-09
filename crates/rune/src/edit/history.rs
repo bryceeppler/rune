@@ -111,6 +111,7 @@ impl TextEdit {
     }
 
     fn restore(&mut self, s: &Snapshot) {
+        self.upstream = None;
         self.text.zeroize();
         self.text.push_str(&s.text);
         self.anchor = s.anchor;

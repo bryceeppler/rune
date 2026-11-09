@@ -109,7 +109,7 @@ fn point_in_cluster(rt: &Runtime<Form>, key: &str, byte: usize, frac: f32) -> (f
     let cl = parley::Cluster::from_byte_index(piece.layout, byte - piece.start).unwrap();
     let x0 = cl.visual_offset().unwrap();
     let adv = cl.advance();
-    let bb = l.caret_box(byte, 1.0);
+    let bb = l.caret_box(byte, Affinity::Downstream, 1.0);
     let r = rect_of(rt, key);
     (
         r[0] + n.inset[0] + (x0 + adv * frac) / s,

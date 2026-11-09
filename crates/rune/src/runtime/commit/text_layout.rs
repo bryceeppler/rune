@@ -26,7 +26,7 @@ pub(super) fn single_line_scroll(scrolls: &mut HashMap<String, f32>, path: &str,
 /// [`single_line_scroll`] for a focused field, from its previous shift `prev` in points.
 pub(super) fn single_line_offset(prev: f32, inp: &crate::el::InputSpec, content: &str, layout: &TextLayout, s: f32, visible: f32) -> f32 {
     let caret_w = (1.5 * s).round();
-    let cx = layout.caret_box(caret_index(&inp.edit, content), 1.5 * s).x0 as f32;
+    let cx = layout.caret_box(caret_index(&inp.edit, content), inp.edit.caret_affinity(), 1.5 * s).x0 as f32;
     let mut scroll = prev * s;
     if cx - scroll > visible - caret_w {
         scroll = cx - visible + caret_w;

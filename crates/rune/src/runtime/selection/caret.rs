@@ -46,7 +46,7 @@ impl<S: 'static> Runtime<S> {
             let prev = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
             x -= single_line_offset(prev, inp, &spec.content, layout, s, (x1 - x0) * s) / s;
         }
-        let bb = layout.caret_box(caret_index(&inp.edit, &spec.content), 1.5 * s);
+        let bb = layout.caret_box(caret_index(&inp.edit, &spec.content), inp.edit.caret_affinity(), 1.5 * s);
         let h = if bb.y1 > bb.y0 { (bb.y1 - bb.y0) as f32 / s } else { spec.style.line_px() };
         Some([x + bb.x0 as f32 / s, y + n.inset[1] + bb.y0 as f32 / s, 1.5, h])
     }

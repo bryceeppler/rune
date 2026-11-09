@@ -49,7 +49,7 @@ fn assert_laid_out_whole(rt: &mut Runtime<TextEdit>) {
     }
     let caret = rt.state.focus;
     let cur = parley::editing::Cursor::from_byte_index(&whole, caret, Affinity::Downstream);
-    assert_eq!(layout.caret_box(caret, 3.0), crate::text::cursor_geometry(&cur, &whole, 3.0), "caret at {caret}");
+    assert_eq!(layout.caret_box(caret, Affinity::Downstream, 3.0), crate::text::cursor_geometry(&cur, &whole, 3.0), "caret at {caret}");
 }
 
 fn press(rt: &mut Runtime<TextEdit>, key: Key, mods: Mods) {
@@ -170,7 +170,7 @@ fn an_ime_composition_inside_a_paragraph() {
     assert!(shown.contains("Paraかなgraph 6"));
     let caret = at + 6;
     let cur = parley::editing::Cursor::from_byte_index(&whole, caret, Affinity::Downstream);
-    assert_eq!(layout.caret_box(caret, 3.0), crate::text::cursor_geometry(&cur, &whole, 3.0));
+    assert_eq!(layout.caret_box(caret, Affinity::Downstream, 3.0), crate::text::cursor_geometry(&cur, &whole, 3.0));
     assert_eq!(layout.range_boxes(at, at + 6, false), crate::text::range_boxes(&whole, at, at + 6, false), "the composition's underline");
     rt.ime(Ime::Commit("かな".into()));
     rt.frame(0.0);

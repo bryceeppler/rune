@@ -1,6 +1,8 @@
 //! Keys, IME and paste on a [`TextEdit`].
 
 
+use parley::layout::Affinity;
+
 use super::*;
 use crate::text::TextLayout;
 
@@ -35,17 +37,46 @@ impl TextEdit {
         self.pending = None;
     }
 
-    fn move_h(&mut self, i: usize, extend: bool) {
+    /// Moves the caret to byte `i` on its `side`, or with `extend` the selection's focus. A
+    /// selection collapses instead, to its start when `backward`, else its end.
+    fn move_h(&mut self, (i, side): (usize, Affinity), extend: bool, backward: bool) {
         let (a, b) = self.range();
         if !extend && a != b {
-            // Collapse to the side of travel.
-            let to = if i < self.focus { a } else { b };
+            let to = if backward { a } else { b };
             self.anchor = to;
             self.focus = to;
         } else {
             self.set(i, extend);
+            self.upstream = (side == Affinity::Upstream && self.focus == i).then_some((self.anchor, self.focus));
         }
         self.pending = None;
+    }
+
+    /// Where Left (`left`) or Right moves the caret, by a character or a `word`, and whether that
+    /// goes back in the text. With a layout it moves as the text draws: Left always toward the
+    /// screen's left, through either direction of text.
+    fn step_h(&self, layout: Option<&TextLayout>, left: bool, word: bool) -> ((usize, Affinity), bool) {
+        let Some(l) = layout.filter(|_| self.preedit.is_none() && (!self.secure || self.revealed)) else {
+            let i = match (left, word) {
+                (true, true) => self.prev_word(self.focus),
+                (true, false) => prev_char(&self.text, self.focus),
+                (false, true) => self.next_word(self.focus),
+                (false, false) => next_char(&self.text, self.focus),
+            };
+            return ((i, Affinity::Downstream), left);
+        };
+        let blank = |side: Option<Range<usize>>| side.is_none_or(|r| self.text[r].starts_with(|c: char| c.is_ascii_whitespace()));
+        let backward = left != l.is_rtl(self.focus);
+        let mut at = (self.focus, self.caret_affinity());
+        while let Some(next) = l.step(at.0, at.1, left) {
+            at = next;
+            let [l_side, r_side] = l.sides(at.0, at.1);
+            let (behind, ahead) = if left { (r_side, l_side) } else { (l_side, r_side) };
+            if !word || (!blank(behind) && blank(ahead)) {
+                break;
+            }
+        }
+        (at, backward)
     }
 
     /// Applies one key. `layout` is the field's layout for the current text (device px).
@@ -62,6 +93,12 @@ impl TextEdit {
         }
         if let Some(c) = ev.control_binding() {
             let (key, line) = match c {
+                // Ctrl-B and Ctrl-F move back and forward in the text, as `moveBackward:` does.
+                'b' | 'f' if !self.is_hidden_multiline() => {
+                    let i = if c == 'b' { prev_char(&self.text, self.focus) } else { next_char(&self.text, self.focus) };
+                    self.move_h((i, Affinity::Downstream), m.shift, c == 'b');
+                    return out;
+                }
                 'a' => (Key::Left, true), 'e' => (Key::Right, true), 'b' => (Key::Left, false),
                 'f' => (Key::Right, false), 'p' => (Key::Up, false), 'n' => (Key::Down, false),
                 'd' => (Key::Delete, false), 'h' => (Key::Backspace, false),
@@ -208,15 +245,13 @@ impl TextEdit {
                     self.replace((a, to), "", false);
                 }
             }
-            Key::Left => {
-                let i = if m.cmd && mac { self.line_edge(layout, false) } else if word { self.prev_word(self.focus) } else { prev_char(&self.text, self.focus) };
-                self.move_h(i, m.shift);
-            }
+            Key::Left if m.cmd && mac => self.move_h((self.line_edge(layout, false), Affinity::Downstream), m.shift, true),
             Key::Right if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
             Key::Down if !m.shift && !m.cmd && !m.alt && !m.ctrl && self.at_end_of_trailing_block() => self.leave_trailing_block(),
-            Key::Right => {
-                let i = if m.cmd && mac { self.line_edge(layout, true) } else if word { self.next_word(self.focus) } else { next_char(&self.text, self.focus) };
-                self.move_h(i, m.shift);
+            Key::Right if m.cmd && mac => self.move_h((self.line_edge(layout, true), Affinity::Downstream), m.shift, false),
+            Key::Left | Key::Right => {
+                let (to, backward) = self.step_h(layout, ev.key == Key::Left, word);
+                self.move_h(to, m.shift, backward);
             }
             // Windows and Linux move Home and End along the line, and to the text's ends with Ctrl.
             Key::Home => {

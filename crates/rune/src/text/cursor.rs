@@ -336,3 +336,41 @@ pub(crate) fn range_boxes(
     }
     rects
 }
+
+/// The line `cur` draws on, and its x there.
+pub(super) fn drawn(layout: &Layout<Ink>, cur: parley::editing::Cursor) -> (Option<usize>, f64) {
+    let bb = cursor_geometry(&cur, layout, 0.0);
+    (line_for_offset(layout, ((bb.y0 + bb.y1) * 0.5) as f32).map(|(i, _)| i), bb.x0)
+}
+
+/// `cur` downstream, unless upstream draws it elsewhere on the same line, where the text changes
+/// direction. A soft wrap's upstream end of a line and the next line's start are one stop.
+fn settle(layout: &Layout<Ink>, cur: parley::editing::Cursor) -> parley::editing::Cursor {
+    use parley::{editing::Cursor, layout::Affinity};
+    let down = Cursor::from_byte_index(layout, cur.index(), Affinity::Downstream);
+    let (d, u) = (drawn(layout, down), drawn(layout, cur));
+    if d.0 == u.0 && d.1 != u.1 { cur } else { down }
+}
+
+/// The caret one stop to the left (`left`) or right of `cur` on screen, on `cur`'s line, or
+/// `None` at the line's edge. Parley steps through the line's visual order; its steps off a
+/// line are not taken, as it leaves a right-to-left line from the wrong end.
+pub(crate) fn step_on_line(layout: &Layout<Ink>, cur: parley::editing::Cursor, left: bool) -> Option<parley::editing::Cursor> {
+    let from = drawn(layout, cur);
+    let mut raw = cur;
+    loop {
+        let next = if left { raw.previous_visual(layout) } else { raw.next_visual(layout) };
+        if next == raw {
+            return None;
+        }
+        raw = next;
+        let to = settle(layout, raw);
+        let at = drawn(layout, to);
+        if at.0 != from.0 {
+            return None;
+        }
+        if at.1 != from.1 {
+            return Some(to);
+        }
+    }
+}

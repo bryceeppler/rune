@@ -58,6 +58,10 @@ pub struct TextEdit {
     pub(crate) soft_breaks: Vec<u32>,
     /// Pending typing style armed at `(anchor, focus)` when toggling marks on an empty selection.
     pending: Option<((usize, usize), Vec<Mark>)>,
+    /// Set at `(anchor, focus)` when the caret draws after the character before it rather than
+    /// before the one after it, as at a change of text direction, where one byte draws in two
+    /// places. Only a left or right step sets it.
+    upstream: Option<(usize, usize)>,
     history: Arc<History>,
     /// Set inside [`TextEdit::undo_group`]: edits record nothing until the outermost group ends.
     group: ActiveGroup,
@@ -112,6 +116,7 @@ impl std::hash::Hash for TextEdit {
         }
         self.soft_breaks.hash(h);
         self.pending.hash(h);
+        self.upstream.hash(h);
         self.secure.hash(h);
         self.revealed.hash(h);
         self.is_single_line().hash(h);
@@ -160,6 +165,7 @@ impl TextEdit {
             blocks: vec![Block::Paragraph; line_count],
             soft_breaks: Vec::new(),
             pending: None,
+            upstream: None,
             history: Arc::default(),
             group: ActiveGroup::default(),
             secure: false,
@@ -431,6 +437,7 @@ impl TextEdit {
         self.blocks = vec![Block::Paragraph; line_count];
         self.soft_breaks.clear();
         self.pending = None;
+        self.upstream = None;
         self.clear_preedit();
         self.edited_tag = EditedTag(false);
         self.history = Arc::default();
@@ -521,6 +528,15 @@ impl TextEdit {
             byte.min(self.text.len())
         }
     }
+    /// The side of the caret's byte it draws on.
+    pub(crate) fn caret_affinity(&self) -> parley::layout::Affinity {
+        if self.preedit.is_none() && self.upstream == Some((self.anchor, self.focus)) {
+            parley::layout::Affinity::Upstream
+        } else {
+            parley::layout::Affinity::Downstream
+        }
+    }
+
     pub(crate) fn display_selection_range(&self, a: usize, b: usize) -> (usize, usize) {
         if self.is_hidden_multiline() {
             if a == b || self.text.is_empty() { (0, 0) } else { (0, MULTILINE_SECURE_MASK.len()) }
@@ -554,6 +570,7 @@ impl TextEdit {
     /// Move the caret to `byte` (clamped to a character boundary of `self.text`) and collapse the
     /// selection, clearing any pending typing style.
     pub fn set_caret(&mut self, byte: usize) {
+        self.upstream = None;
         let b = Self::clamp_char_boundary(&self.text, byte);
         self.anchor = b;
         self.focus = b;
@@ -565,6 +582,7 @@ impl TextEdit {
     /// `self.text`), clearing any pending typing style. A selection that ends inside a
     /// [`Mark::Pill`] grows to cover it.
     pub fn set_selection(&mut self, anchor: usize, focus: usize) {
+        self.upstream = None;
         self.anchor = Self::clamp_char_boundary(&self.text, anchor);
         self.focus = Self::clamp_char_boundary(&self.text, focus);
         self.snap_to_pills();
@@ -794,6 +812,7 @@ impl TextEdit {
         mark_new_lines_soft: bool,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
+        self.upstream = None;
         let del_len = b - a;
         let ins_len = s.len();
         if self.marks.is_empty()

@@ -244,7 +244,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
         if step % 4 == 0 {
             for &b in &bounds {
                 let cur = parley::editing::Cursor::from_byte_index(&whole, b, parley::layout::Affinity::Downstream);
-                assert_eq!(stacked.caret_box(b, 1.0), cursor_geometry(&cur, &whole, 1.0), "caret at {b}, {what}");
+                assert_eq!(stacked.caret_box(b, Affinity::Downstream, 1.0), cursor_geometry(&cur, &whole, 1.0), "caret at {b}, {what}");
                 assert_eq!(stacked.move_line(b, true), move_line(&whole, b, true), "down from {b}, {what}");
                 assert_eq!(stacked.line_edge(b, true), line_edge(&whole, b, true), "line end from {b}, {what}");
             }
@@ -348,7 +348,7 @@ fn random_mixed_script_edits_lay_out_each_paragraph_in_its_own_direction() {
                     let cur = parley::editing::Cursor::from_byte_index(&alone, i, parley::layout::Affinity::Downstream);
                     let mut bb = cursor_geometry(&cur, &alone, 1.0);
                     (bb.y0, bb.y1) = (bb.y0 + top as f64, bb.y1 + top as f64);
-                    assert_eq!(stacked.caret_box(start + i, 1.0), bb, "caret at {}, {what}", start + i);
+                    assert_eq!(stacked.caret_box(start + i, Affinity::Downstream, 1.0), bb, "caret at {}, {what}", start + i);
                     assert_eq!(stacked.line_edge(start + i, true), line_edge(&alone, i, true) + start, "line end from {}, {what}", start + i);
                     if let Some(to) = move_line(&alone, i, true).filter(|&to| to < para.len()) {
                         assert_eq!(stacked.move_line(start + i, true), Some(to + start), "down from {}, {what}", start + i);
@@ -395,7 +395,7 @@ fn each_paragraph_reads_in_its_own_direction() {
         };
         let order: Vec<(f32, f32)> = left_to_right.iter().map(span).collect();
         assert!(order.windows(2).all(|w| w[0].1 <= w[1].0 + 0.01), "{line:?} draws {left_to_right:?} left to right: {order:?}");
-        let caret = stacked.caret_box(start, 1.0).x0 as f32;
+        let caret = stacked.caret_box(start, Affinity::Downstream, 1.0).x0 as f32;
         if line.starts_with('1') {
             assert_eq!((order[0].0, caret), (0.0, 0.0), "{line:?} reads left to right");
         } else {
@@ -403,7 +403,7 @@ fn each_paragraph_reads_in_its_own_direction() {
             assert!((caret - width).abs() < 1.5, "the caret starts {line:?} on the right: {caret}");
         }
         for edge in ["Notes", "end"] {
-            assert_eq!(stacked.caret_box(text.find(edge).unwrap(), 1.0).x0, 0.0, "{edge:?} starts on the left in {text:?}");
+            assert_eq!(stacked.caret_box(text.find(edge).unwrap(), Affinity::Downstream, 1.0).x0, 0.0, "{edge:?} starts on the left in {text:?}");
         }
     }
 }
@@ -441,7 +441,7 @@ fn queries_match(n: &Note) {
     let bytes: Vec<usize> = (0..=len).filter(|&b| n.text.is_char_boundary(b)).collect();
     for &b in &bytes {
         let cur = parley::editing::Cursor::from_byte_index(&whole, b, parley::layout::Affinity::Downstream);
-        assert_eq!(stacked.caret_box(b, 3.0), cursor_geometry(&cur, &whole, 3.0), "caret at {b}");
+        assert_eq!(stacked.caret_box(b, Affinity::Downstream, 3.0), cursor_geometry(&cur, &whole, 3.0), "caret at {b}");
         for end in [false, true] {
             assert_eq!(stacked.line_edge(b, end), line_edge(&whole, b, end), "line edge at {b}");
         }

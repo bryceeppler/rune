@@ -35,7 +35,7 @@ use parley::editing::Cursor;
 use parley::layout::Affinity;
 
 use super::*;
-use super::cursor::{cursor_from_point_in, line_for_offset, plain};
+use super::cursor::{cursor_from_point_in, drawn, line_for_offset, plain, step_on_line};
 use super::layout_cache::fresh;
 
 /// A text's lines: one Parley layout, or one per hard paragraph stacked top to bottom.
@@ -222,7 +222,8 @@ pub(crate) struct Piece<'a> {
     pub(crate) layout: &'a Rc<Layout<Ink>>,
     pub(crate) start: usize,
     pub(crate) y: f32,
-    /// The lines it shows, from its first.
+    /// Its first line's index in the text, and the lines it shows from there.
+    line: usize,
     pub(crate) lines: usize,
     /// Its runs of the text's spans and pills, or all of them for a text laid out whole.
     spans: Option<&'a Range<usize>>,
@@ -231,11 +232,11 @@ pub(crate) struct Piece<'a> {
 
 impl<'a> Piece<'a> {
     fn of(p: &'a Para) -> Self {
-        Piece { layout: &p.layout, start: p.start, y: p.y, lines: p.lines, spans: Some(&p.spans), pills: Some(&p.pills) }
+        Piece { layout: &p.layout, start: p.start, y: p.y, line: p.line, lines: p.lines, spans: Some(&p.spans), pills: Some(&p.pills) }
     }
 
     fn whole(layout: &'a Rc<Layout<Ink>>) -> Self {
-        Piece { layout, start: 0, y: 0.0, lines: layout.len(), spans: None, pills: None }
+        Piece { layout, start: 0, y: 0.0, line: 0, lines: layout.len(), spans: None, pills: None }
     }
 
     /// The spans of `all` (the text's) its inks index.
@@ -407,10 +408,46 @@ impl TextLayout {
         }
     }
 
-    /// The caret box at byte `byte` (downstream), `size` device px wide.
-    pub(crate) fn caret_box(&self, byte: usize, size: f32) -> BoundingBox {
+    /// The caret box at byte `byte` on its `affinity` side, `size` device px wide.
+    pub(crate) fn caret_box(&self, byte: usize, affinity: Affinity, size: f32) -> BoundingBox {
         let at = self.at_byte(byte);
-        at.shift(cursor_geometry(&Cursor::from_byte_index(at.layout, byte - at.start, Affinity::Downstream), at.layout, size))
+        at.shift(cursor_geometry(&Cursor::from_byte_index(at.layout, byte - at.start, affinity), at.layout, size))
+    }
+
+    /// The caret one stop to the left (`left`) or right of `byte` on its `affinity` side, as the
+    /// text draws, or `None` at the text's end in that direction. Off a line's edge it goes on in
+    /// reading order: to the next line's start where the paragraph reads toward that edge, else to
+    /// the previous line's last character.
+    pub(crate) fn step(&self, byte: usize, affinity: Affinity, left: bool) -> Option<(usize, Affinity)> {
+        let at = self.at_byte(byte);
+        let cur = Cursor::from_byte_index(at.layout, byte - at.start, affinity);
+        if let Some(to) = step_on_line(at.layout, cur, left) {
+            return Some((to.index() + at.start, to.affinity()));
+        }
+        let line = at.line + drawn(at.layout, cur).0.unwrap_or(at.lines).min(at.lines.saturating_sub(1));
+        if left == at.layout.is_rtl() {
+            return Some((self.line(line + 1)?.text_range().start, Affinity::Downstream));
+        }
+        let start = self.line(line)?.text_range().start;
+        Some((self.cluster_at(start.checked_sub(1)?)?.0.start, Affinity::Downstream))
+    }
+
+    /// The bytes of the clusters drawn left and right of the caret at `byte` on its `affinity`
+    /// side, `None` past its line's edge.
+    pub(crate) fn sides(&self, byte: usize, affinity: Affinity) -> [Option<Range<usize>>; 2] {
+        let at = self.at_byte(byte);
+        let cur = Cursor::from_byte_index(at.layout, byte - at.start, affinity);
+        let line = drawn(at.layout, cur).0;
+        cur.visual_clusters(at.layout).map(|c| {
+            let c = c.filter(|c| Some(c.path().line_index()) == line)?;
+            let r = c.text_range();
+            Some(r.start + at.start..r.end + at.start)
+        })
+    }
+
+    /// Whether the paragraph holding `byte` reads right to left.
+    pub(crate) fn is_rtl(&self, byte: usize) -> bool {
+        self.at_byte(byte).layout.is_rtl()
     }
 
     /// The byte and affinity a press at `(x, y)` (device px) puts the caret at.
