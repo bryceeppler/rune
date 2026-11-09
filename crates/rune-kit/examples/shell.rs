@@ -138,7 +138,7 @@ fn session_row(s: &App, i: usize, k: &Kit) -> El {
             move |s: &mut App, _| {
                 let title = s.sessions.iter().find(|x| x.id == id).map(|x| x.title.clone()).unwrap_or_default();
                 s.rename = TextEdit::new(title);
-                s.rename.anchor = 0;
+                s.rename.set_selection(rune::Selection { anchor: rune::Caret::at(0), ..s.rename.selection() });
                 s.rename.focused = true;
                 s.renaming = Some(id.clone());
             }

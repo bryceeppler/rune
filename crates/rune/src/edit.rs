@@ -3,7 +3,7 @@
 //! (up/down, line start/end) uses the field's current Parley layout, rebuilt by the runtime
 //! before each event.
 //!
-//! Invariants: `anchor` and `focus` are byte offsets on char boundaries of `text`; preedit text
+//! Invariants: the selection's carets are at char boundaries of `text`; preedit text
 //! is never part of `text` until committed; inline `marks` are non-empty char-boundary byte
 //! ranges sorted by start; `blocks` has one entry per `\n`-separated line of `text`.
 
@@ -24,6 +24,8 @@ mod keys;
 pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
 mod marks;
 mod model;
+mod selection;
+pub use selection::{Caret, CaretSide, Selection};
 pub use model::{Block, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphInfo, RichStyle};
 pub(crate) use history::History;
 use history::{ActiveGroup, EditedTag};
@@ -46,8 +48,7 @@ enum LineMode {
 pub struct TextEdit {
     /// Use `replace_text` to replace a secret without leaving its old allocation behind.
     pub text: String,
-    pub anchor: usize,
-    pub focus: usize,
+    selection: Selection,
     /// IME composition shown at the caret, with its selected range.
     pub preedit: Option<(String, Option<(usize, usize)>)>,
     pub focused: bool,
@@ -58,10 +59,6 @@ pub struct TextEdit {
     pub(crate) soft_breaks: Vec<u32>,
     /// Pending typing style armed at `(anchor, focus)` when toggling marks on an empty selection.
     pending: Option<((usize, usize), Vec<Mark>)>,
-    /// Set at `(anchor, focus)` when the caret draws after the character before it rather than
-    /// before the one after it, as at a change of text direction, where one byte draws in two
-    /// places.
-    upstream: Option<(usize, usize)>,
     history: Arc<History>,
     /// Set inside [`TextEdit::undo_group`]: edits record nothing until the outermost group ends.
     group: ActiveGroup,
@@ -84,7 +81,7 @@ pub struct TextEdit {
 impl std::fmt::Debug for TextEdit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TextEdit").field("text", &if self.secure { "[redacted]" } else { &self.text })
-            .field("anchor", &self.anchor).field("focus", &self.focus).field("focused", &self.focused)
+            .field("selection", &self.selection).field("focused", &self.focused)
             .field("marks", &self.marks).field("blocks", &self.blocks)
             .field("secure", &self.secure).field("revealed", &self.revealed).finish_non_exhaustive()
     }
@@ -98,15 +95,13 @@ impl std::hash::Hash for TextEdit {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         if self.is_hidden_multiline() {
             (!self.text.is_empty()).hash(h);
-            (self.anchor != self.focus).hash(h);
+            (!self.selection.is_collapsed()).hash(h);
         } else if self.secure && !self.revealed {
             self.text.chars().count().hash(h);
-            self.anchor.hash(h);
-            self.focus.hash(h);
+            self.selection.hash(h);
         } else {
             self.text.hash(h);
-            self.anchor.hash(h);
-            self.focus.hash(h);
+            self.selection.hash(h);
         }
         self.preedit.hash(h);
         self.focused.hash(h);
@@ -116,7 +111,6 @@ impl std::hash::Hash for TextEdit {
         }
         self.soft_breaks.hash(h);
         self.pending.hash(h);
-        self.upstream.hash(h);
         self.secure.hash(h);
         self.revealed.hash(h);
         self.is_single_line().hash(h);
@@ -157,15 +151,13 @@ impl TextEdit {
         let line_count = 1 + count_newlines(text.as_bytes());
         TextEdit {
             text,
-            anchor: n,
-            focus: n,
+            selection: Selection::caret(Caret::at(n)),
             preedit: None,
             focused: false,
             marks: Vec::new(),
             blocks: vec![Block::Paragraph; line_count],
             soft_breaks: Vec::new(),
             pending: None,
-            upstream: None,
             history: Arc::default(),
             group: ActiveGroup::default(),
             secure: false,
@@ -431,13 +423,11 @@ impl TextEdit {
         self.text.zeroize();
         let line_count = if self.secure { 0 } else { 1 + count_newlines(text.as_bytes()) };
         self.text = text;
-        self.anchor = self.text.len();
-        self.focus = self.anchor;
+        self.selection = Selection::caret(Caret::at(self.text.len()));
         self.marks.clear();
         self.blocks = vec![Block::Paragraph; line_count];
         self.soft_breaks.clear();
         self.pending = None;
-        self.upstream = None;
         self.clear_preedit();
         self.edited_tag = EditedTag(false);
         self.history = Arc::default();
@@ -530,8 +520,8 @@ impl TextEdit {
     }
     /// The side of the caret's byte it draws on.
     pub(crate) fn caret_affinity(&self) -> parley::layout::Affinity {
-        if self.preedit.is_none() && self.upstream == Some((self.anchor, self.focus)) {
-            parley::layout::Affinity::Upstream
+        if self.preedit.is_none() && (!self.secure || self.revealed) {
+            self.selection.focus.affinity()
         } else {
             parley::layout::Affinity::Downstream
         }
@@ -549,9 +539,9 @@ impl TextEdit {
     // an edit occurs, then treat it as either the whole secret or an insertion at its end.
     fn normalize_hidden_selection(&mut self) {
         if self.is_hidden_multiline() {
-            let selected = self.anchor != self.focus;
-            self.focus = self.text.len();
-            self.anchor = if selected { 0 } else { self.focus };
+            let end = Caret::at(self.text.len());
+            let anchor = if self.selection.is_collapsed() { end } else { Caret::at(0) };
+            self.selection = Selection { anchor, focus: end };
         }
     }
 
@@ -563,37 +553,33 @@ impl TextEdit {
     /// The selection as ordered byte offsets, clamped to character boundaries of `text` (an app
     /// may have replaced `text` without moving the caret).
     pub fn range(&self) -> (usize, usize) {
-        let t = &self.text;
-        (Self::clamp_char_boundary(t, self.anchor.min(self.focus)), Self::clamp_char_boundary(t, self.anchor.max(self.focus)))
+        let (t, r) = (&self.text, self.selection.range());
+        (Self::clamp_char_boundary(t, r.start), Self::clamp_char_boundary(t, r.end))
     }
 
-    /// Move the caret to `byte` (clamped to a character boundary of `self.text`) and collapse the
-    /// selection, clearing any pending typing style. A caret left where it was keeps the side of
-    /// its byte it draws on.
-    pub fn set_caret(&mut self, byte: usize) {
-        self.set_selection(byte, byte);
+    /// The selection: where it started and the caret that moves, each on its side of its byte.
+    pub fn selection(&self) -> Selection {
+        self.selection
     }
 
-    /// Set the selection `anchor` and `focus` byte indices (clamped to character boundaries of
-    /// `self.text`), clearing any pending typing style. A selection that ends inside a
-    /// [`Mark::Pill`] grows to cover it. A selection left where it was keeps the side of its
-    /// focus's byte the caret draws on.
-    pub fn set_selection(&mut self, anchor: usize, focus: usize) {
-        let (anchor, focus) = (Self::clamp_char_boundary(&self.text, anchor), Self::clamp_char_boundary(&self.text, focus));
-        if self.upstream != Some((anchor, focus)) {
-            self.upstream = None;
-        }
-        self.anchor = anchor;
-        self.focus = focus;
+    /// Both selection ends as bytes, `(anchor, focus)`, which a pending typing style is armed at.
+    fn ends(&self) -> (usize, usize) {
+        (self.selection.anchor.byte, self.selection.focus.byte)
+    }
+
+    /// Put the caret at `at` (its byte clamped to a character boundary of `self.text`) with
+    /// nothing selected, clearing any pending typing style.
+    pub fn set_caret(&mut self, at: Caret) {
+        self.set_selection(Selection::caret(at));
+    }
+
+    /// Set the selection (its bytes clamped to character boundaries of `self.text`), clearing any
+    /// pending typing style. A selection that ends inside a [`Mark::Pill`] grows to cover it.
+    pub fn set_selection(&mut self, selection: Selection) {
+        let clamp = |c: Caret| Caret { byte: Self::clamp_char_boundary(&self.text, c.byte), ..c };
+        self.selection = Selection { anchor: clamp(selection.anchor), focus: clamp(selection.focus) };
         self.snap_to_pills();
         self.pending = None;
-    }
-
-    /// Draws the caret on `side` of its byte, where the text changes direction and the byte
-    /// draws in two places. A side the field doesn't draw (a masked secret) is ignored.
-    pub(crate) fn set_caret_side(&mut self, side: parley::layout::Affinity) {
-        let drawn = !self.secure || self.revealed;
-        self.upstream = (drawn && side == parley::layout::Affinity::Upstream).then_some((self.anchor, self.focus));
     }
 
     /// The [`Mark::Pill`]s in `self.text`, in order, with their byte ranges and ids.
@@ -722,15 +708,19 @@ impl TextEdit {
         if !self.marks.iter().any(|m| m.mark.is_pill()) {
             return;
         }
-        if self.anchor == self.focus {
-            if let Some((s, e)) = self.pill_around(self.focus) {
-                let to = if self.focus - s < e - self.focus { s } else { e };
-                (self.anchor, self.focus) = (to, to);
+        let Selection { anchor, focus } = self.selection;
+        if self.selection.is_collapsed() {
+            if let Some((s, e)) = self.pill_around(focus.byte) {
+                let to = if focus.byte - s < e - focus.byte { s } else { e };
+                self.selection = Selection::caret(Caret::at(to));
             }
         } else {
-            let forward = self.focus > self.anchor;
-            self.anchor = self.out_of_pill(self.anchor, !forward);
-            self.focus = self.out_of_pill(self.focus, forward);
+            let forward = focus.byte > anchor.byte;
+            let out = |c: Caret, forward: bool| match self.out_of_pill(c.byte, forward) {
+                to if to == c.byte => c,
+                to => Caret::at(to),
+            };
+            self.selection = Selection { anchor: out(anchor, !forward), focus: out(focus, forward) };
         }
     }
 
@@ -819,7 +809,6 @@ impl TextEdit {
         mark_new_lines_soft: bool,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
-        self.upstream = None;
         let del_len = b - a;
         let ins_len = s.len();
         if self.marks.is_empty()
@@ -835,8 +824,7 @@ impl TextEdit {
             let added = count_newlines(s.as_bytes());
             self.text.replace_range(a..b, s);
             self.blocks.resize(self.blocks.len() + added - removed, Block::Paragraph);
-            self.anchor = a + ins_len;
-            self.focus = self.anchor;
+            self.selection = Selection::caret(Caret::at(a + ins_len));
             self.preedit = None;
             return;
         }
@@ -957,8 +945,7 @@ impl TextEdit {
         }
         self.marks = updated_marks;
         self.text.replace_range(a..b, s);
-        self.anchor = a + ins_len;
-        self.focus = self.anchor;
+        self.selection = Selection::caret(Caret::at(a + ins_len));
         self.preedit = None;
         self.sync_invariants();
         self.mark_edited();
@@ -974,8 +961,7 @@ impl TextEdit {
             next.push_str(s);
             next.push_str(&self.text[b..]);
             self.replace_text(next);
-            self.anchor = a + s.len();
-            self.focus = self.anchor;
+            self.selection = Selection::caret(Caret::at(a + s.len()));
             self.mark_edited();
             return;
         }
@@ -987,8 +973,7 @@ impl TextEdit {
             && self.pending.is_none()
             && !self.marks.iter().any(|m| m.mark.is_pill() && m.start < b && a < m.end)
         {
-            self.anchor = a + s.len();
-            self.focus = self.anchor;
+            self.selection = Selection::caret(Caret::at(a + s.len()));
             self.preedit = None;
             self.mark_edited();
             return;
@@ -998,7 +983,7 @@ impl TextEdit {
             self.pending = None;
             Vec::new()
         } else if let Some((armed, p)) = self.pending.take()
-            && armed == (self.anchor, self.focus)
+            && armed == self.ends()
         {
             p
         } else if a < b {

@@ -2,11 +2,11 @@
 fn plain_edit_leaves_rich_keys_alone_and_pastes_plain_text() {
     let shift_enter = KeyEvent { key: Key::Enter, mods: Mods { shift: true, ..Mods::default() } };
     let mut e = TextEdit::new("hello");
-    e.set_selection(0, 5);
+    e.set_selection(crate::Selection::bytes(0, 5));
     e.key(&cmd('b'), None);
     e.key(&cmd('i'), None);
     assert!(e.marks().is_empty() && e.is_plain());
-    e.set(5, false);
+    e.set(crate::Caret::at(5), false);
     e.key(&shift_enter, None);
     assert_eq!((e.text.as_str(), e.soft_breaks()), ("hello\n", &[][..]));
     e.paste_html("<b>x</b><ul><li>y</li></ul>", "x\ny");
@@ -14,10 +14,10 @@ fn plain_edit_leaves_rich_keys_alone_and_pastes_plain_text() {
     assert!(e.is_plain(), "a plain field pastes the plain text");
 
     let mut r = TextEdit::new("hello").rich();
-    r.set_selection(0, 5);
+    r.set_selection(crate::Selection::bytes(0, 5));
     r.key(&cmd('b'), None);
     assert_eq!(marked(&r, &Mark::Bold), ["hello"]);
-    r.set(5, false);
+    r.set(crate::Caret::at(5), false);
     r.key(&shift_enter, None);
     assert_eq!(r.soft_breaks(), &[1]);
     assert!(TextEdit::from_html("<b>a</b>").is_rich() && TextEdit::from_parts("a", vec![], vec![]).is_rich());
@@ -32,7 +32,7 @@ fn plain_field_leaves_format_chords_to_the_app() {
     }
     let mut f = TextEdit::new("hello");
     f.focused = true;
-    f.set_selection(0, 5);
+    f.set_selection(crate::Selection::bytes(0, 5));
     let mut rt = Runtime::new(Form { f, keys: vec![] }, view, (200.0, 40.0), Env::new(true, 1.0));
     rt.on_key = Some(|s, ev, _| { s.keys.push(ev.key.clone()); true });
     rt.frame(0.0);
@@ -50,15 +50,14 @@ fn direct_text_assignment_never_panics() {
     use crate::{text_input, Cx, El, Env, Runtime, TextStyle};
     let fresh = || {
         let mut e = TextEdit::from_html("<ul><li><b>bold</b> <a href=\"https://a.b\">item</a></li></ul><pre><code>a\nb</code></pre><p>x<br>y</p>");
-        e.set(e.text.len(), false);
+        e.set(crate::Caret::at(e.text.len()), false);
         e
     };
     // The app shrinks `text` under marks, blocks, soft breaks and a caret that sit past its
     // end or inside a character.
     let stale = |e: &mut TextEdit| {
         e.text = "é🦀".into();
-        e.anchor = 1;
-        e.focus = 3;
+        e.set_selection(crate::Selection::bytes(1, 3));
     };
     let mut e = fresh();
     stale(&mut e);
@@ -174,12 +173,12 @@ fn clear_history_drops_undo_and_redo_while_keeping_formatting_and_selection() {
     e.undo();
     assert!(e.has_history());
     e.redo();
-    e.set_selection(1, 4);
+    e.set_selection(crate::Selection::bytes(1, 4));
     e.clear_history();
     assert!(!e.has_history());
     e.undo();
     e.redo();
-    assert_eq!((e.text.as_str(), e.anchor, e.focus), ("one\ntwo!", 1, 4));
+    assert_eq!((e.text.as_str(), e.selection().anchor.byte, e.selection().focus.byte), ("one\ntwo!", 1, 4));
     assert_eq!(e.marks(), &[MarkRange::new(0..3, Mark::Bold)]);
     assert_eq!(e.blocks(), &[Block::Bullet(0); 2]);
     assert_eq!(e.soft_breaks(), &[1]);
@@ -203,7 +202,7 @@ fn return_on_a_blank_last_line_leaves_a_code_block_in_one_undo_step() {
     let out = e.key(&k(Key::Enter), None);
     assert!(!out.submit);
     assert_eq!((e.text.as_str(), e.blocks()), ("let x = 1;\n", &[Block::Code, Block::Paragraph][..]), "the blank line left the block");
-    assert_eq!((e.anchor, e.focus), (11, 11));
+    assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (11, 11));
     undo(&mut e, false);
     assert_eq!((e.text.as_str(), e.blocks()), ("let x = 1;\n", &[Block::Code; 2][..]), "leaving is one undo step");
     undo(&mut e, true);
@@ -217,14 +216,12 @@ fn return_on_a_blank_last_line_leaves_a_code_block_in_one_undo_step() {
 
     // A blank line with more code below it is the code's own.
     let mut e = TextEdit::from_parts("a\n\nb", vec![], vec![Block::Code; 3]);
-    e.anchor = 2;
-    e.focus = 2;
+    e.set_selection(crate::Selection::bytes(2, 2));
     e.key(&k(Key::Enter), None);
     assert_eq!((e.text.as_str(), e.blocks()), ("a\n\n\nb", &[Block::Code; 4][..]));
     // So is a non-blank last line, and a blank line under a selection.
     let mut e = TextEdit::from_parts("a\n", vec![], vec![Block::Code; 2]);
-    e.anchor = 0;
-    e.focus = 2;
+    e.set_selection(crate::Selection::bytes(0, 2));
     e.key(&k(Key::Enter), None);
     assert_eq!((e.text.as_str(), e.blocks()), ("\n", &[Block::Code; 2][..]));
 }
@@ -234,15 +231,13 @@ fn down_or_right_at_the_end_of_a_trailing_code_block_or_quote_adds_a_paragraph()
     for (block, key) in [(Block::Code, Key::Down), (Block::Code, Key::Right), (Block::Quote, Key::Down), (Block::Quote, Key::Right)] {
         let mut e = TextEdit::from_parts("x\ny", vec![], vec![block; 2]);
         let ctx = format!("{block:?} {key:?}");
-        e.anchor = 1;
-        e.focus = 1;
+        e.set_selection(crate::Selection::bytes(1, 1));
         e.key(&k(key.clone()), None);
         assert_eq!(e.text, "x\ny", "{ctx}: not at the end, the caret just moves");
-        e.anchor = 3;
-        e.focus = 3;
+        e.set_selection(crate::Selection::bytes(3, 3));
         e.key(&k(key.clone()), None);
         assert_eq!((e.text.as_str(), e.blocks()), ("x\ny\n", &[block, block, Block::Paragraph][..]), "{ctx}");
-        assert_eq!((e.anchor, e.focus), (4, 4), "{ctx}");
+        assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (4, 4), "{ctx}");
         assert_invariants(&e, &ctx);
         e.key(&k(key.clone()), None);
         assert_eq!(e.text, "x\ny\n", "{ctx}: a paragraph at the end stays put");
@@ -254,7 +249,7 @@ fn down_or_right_at_the_end_of_a_trailing_code_block_or_quote_adds_a_paragraph()
     // Does not fire with a selection at the end, during IME, with modifiers, or in a plain field.
     for key in [Key::Down, Key::Right] {
         let mut e = TextEdit::from_parts("x", vec![], vec![Block::Code]);
-        e.set_selection(0, 1);
+        e.set_selection(crate::Selection::bytes(0, 1));
         e.key(&k(key.clone()), None);
         assert_eq!((e.text.as_str(), e.blocks()), ("x", &[Block::Code][..]), "selection ending at end");
 
@@ -282,8 +277,7 @@ fn a_field_keeps_only_the_marks_and_blocks_it_allows() {
     assert!(e.marks().is_empty(), "marks it held are dropped");
     assert!(e.allows_mark(&Mark::Link("https://example.com".into())) && !e.allows_mark(&Mark::Italic));
     assert!(e.allows_block(Block::Bullet(3)) && e.allows_block(Block::Paragraph) && !e.allows_block(Block::Code));
-    e.anchor = 0;
-    e.focus = 2;
+    e.set_selection(crate::Selection::bytes(0, 2));
     assert_eq!(e.format_chord(&cmd('u')), None, "⌘U is the app's");
     e.key(&cmd('u'), None);
     e.key(&cmd('i'), None);
@@ -305,10 +299,10 @@ fn a_field_keeps_only_the_marks_and_blocks_it_allows() {
     // Undo/redo of an edit recorded before allow_marks/allow_blocks was set, or a pending
     // mark armed before allow_marks, cannot smuggle a disallowed mark or block back in.
     let mut pre = TextEdit::new("ab").rich();
-    pre.set_selection(0, 2);
+    pre.set_selection(crate::Selection::bytes(0, 2));
     pre.set_mark(Mark::Underline);
     pre.set_block(Block::Code);
-    pre.set_caret(2);
+    pre.set_caret(crate::Caret::at(2));
     pre.insert("!");
     pre.toggle_mark(Mark::Italic);
     let mut pre = pre.allow_marks([Mark::Bold]).allow_blocks([Block::Quote]);
@@ -548,13 +542,12 @@ fn random_edits_keep_ranges_blocks_and_soft_breaks_consistent() {
                     e.ime(&Ime::Preedit(p.into(), None));
                     if next(2) == 0 { e.ime(&Ime::Commit(p.into())); }
                 }
-                18 => { let a = next(e.text.len() as u64 + 2) as usize; let f = next(e.text.len() as u64 + 2) as usize; e.set_selection(a, f); }
+                18 => { let a = next(e.text.len() as u64 + 2) as usize; let f = next(e.text.len() as u64 + 2) as usize; e.set_selection(crate::Selection::bytes(a, f)); }
                 19 => {
                     // An app writes `text` and the caret directly, then the user types.
                     if next(2) == 0 { let cut = next(e.text.len() as u64 + 1) as usize; let cut = TextEdit::clamp_char_boundary(&e.text, cut); e.text.truncate(cut); }
                     else { e.text.push_str(PIECES[next(PIECES.len() as u64) as usize]); }
-                    e.anchor = next(e.text.len() as u64 + 3) as usize;
-                    e.focus = e.anchor;
+                    e.set_selection(crate::Selection::bytes(next(e.text.len() as u64 + 3) as usize, next(e.text.len() as u64 + 3) as usize));
                     e.key(&k(Key::Text("z".into())), None);
                 }
                 20 => { e.key(&cmd('a'), None); }
@@ -581,7 +574,7 @@ fn copy_from_one_rich_field_pastes_marks_and_blocks_into_another() {
         "<p>Hello <b>bold</b> <a href=\"https://example.com\">link</a></p><ul><li>one</li><li><i>two</i></li></ul><blockquote>q</blockquote>",
     );
     a.focused = true;
-    a.set_selection(0, a.text.len());
+    a.set_selection(crate::Selection::bytes(0, a.text.len()));
     let m = crate::clipboard::memory();
     let mut rt = Runtime::new(App { a, b: TextEdit::new("").rich(), plain: TextEdit::new("") }, view, (320.0, 360.0), Env::new(true, 1.0));
     rt.use_clipboard(&m);
@@ -600,7 +593,7 @@ fn copy_from_one_rich_field_pastes_marks_and_blocks_into_another() {
     assert_eq!((&b.text, b.marks(), b.blocks()), (&a.text, a.marks(), a.blocks()));
 
     // Cut carries the formatting it removes.
-    rt.update(|s, _| s.b.set_selection(6, 10));
+    rt.update(|s, _| s.b.set_selection(crate::Selection::bytes(6, 10)));
     rt.key(cmd('x'));
     rt.frame(0.0);
     assert_eq!(rt.state.b.text, format!("Hello  link{}", &rt.state.a.text[15..]));
@@ -613,7 +606,7 @@ fn copy_from_one_rich_field_pastes_marks_and_blocks_into_another() {
     rt.frame(0.0);
     assert_eq!(rt.state.plain.text, "bold");
     assert!(rt.state.plain.is_plain());
-    rt.update(|s, _| s.plain.set_selection(0, 4));
+    rt.update(|s, _| s.plain.set_selection(crate::Selection::bytes(0, 4)));
     rt.key(cmd('c'));
     rt.frame(0.0);
     assert_eq!(m.content().unwrap().html(), None);
@@ -622,7 +615,7 @@ fn copy_from_one_rich_field_pastes_marks_and_blocks_into_another() {
 /// `"a @x-agent b"` with the label a pill carrying `agent:x`, the caret after it.
 fn with_pill() -> TextEdit {
     let mut e = TextEdit::new("a  b").rich();
-    e.set_caret(2);
+    e.set_caret(crate::Caret::at(2));
     e.insert_pill("agent:x", "@x-agent");
     e
 }
@@ -642,7 +635,7 @@ fn a_pill_replaces_a_typed_query_and_lists_with_its_id() {
     assert_eq!(e.range(), (13, 13));
     e.key(&k(Key::Text("x".into())), None);
     assert_eq!(pills_of(&e), [(4..13, "file:src/main.rs".to_owned())], "typing after a pill never extends it");
-    e.set_caret(4);
+    e.set_caret(crate::Caret::at(4));
     e.key(&k(Key::Text("y".into())), None);
     assert_eq!((e.text.as_str(), pills_of(&e)), ("see y@main.rs x", vec![(5..14, "file:src/main.rs".to_owned())]));
     let mut secure = TextEdit::new("").secure();
@@ -661,19 +654,18 @@ fn the_caret_steps_over_a_pill_in_one_move() {
     e.key(&k(Key::Right), None);
     e.key(&k(Key::Right), None);
     assert_eq!(e.range(), (10, 10));
-    e.set_caret(2);
+    e.set_caret(crate::Caret::at(2));
     e.key(&KeyEvent { key: Key::Right, mods: Mods { alt: true, ..Mods::default() } }, None);
     assert_eq!(e.range(), (10, 10), "a word move that stops inside the label steps over it");
-    e.set_caret(2);
+    e.set_caret(crate::Caret::at(2));
     e.key(&KeyEvent { key: Key::Right, mods: Mods { shift: true, ..Mods::default() } }, None);
-    assert_eq!((e.anchor, e.focus), (2, 10), "Shift+Right selects the whole pill");
-    e.set_caret(5);
+    assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (2, 10), "Shift+Right selects the whole pill");
+    e.set_caret(crate::Caret::at(5));
     assert_eq!(e.range(), (2, 2), "a click inside goes to the nearer edge");
-    e.set_caret(8);
+    e.set_caret(crate::Caret::at(8));
     assert_eq!(e.range(), (10, 10));
     // A caret written straight into a pill moves out before the next edit.
-    e.anchor = 6;
-    e.focus = 6;
+    e.set_selection(crate::Selection::bytes(6, 6));
     e.insert("Z");
     assert_eq!((e.text.as_str(), pills_of(&e)), ("a @x-agentZ b", vec![(2..10, "agent:x".to_owned())]));
 }
@@ -681,7 +673,7 @@ fn the_caret_steps_over_a_pill_in_one_move() {
 #[test]
 fn an_undo_group_is_one_step_with_its_selection_and_nests() {
     let mut e = TextEdit::new("hi @ag").rich();
-    e.set_caret(6);
+    e.set_caret(crate::Caret::at(6));
     e.undo_group(|e| {
         e.replace_with_pill(3..6, "agent:1", "@agent");
         e.undo_group(|e| e.insert(" "));
@@ -703,10 +695,10 @@ fn undo_groups_keep_typing_coalescing_and_record_nothing_when_empty() {
     e.key(&k(Key::Text("b".into())), None);
     assert_eq!(e.history.undo.len(), 1, "typing coalesces before a group");
     e.undo_group(|_| {});
-    e.undo_group(|e| e.set_caret(0));
-    e.undo_group(|e| e.set_selection(0, 2));
+    e.undo_group(|e| e.set_caret(crate::Caret::at(0)));
+    e.undo_group(|e| e.set_selection(crate::Selection::bytes(0, 2)));
     e.undo_group(|e| {
-        e.set_caret(2);
+        e.set_caret(crate::Caret::at(2));
         e.insert("x");
         e.key(&k(Key::Backspace), None);
     });
@@ -718,7 +710,7 @@ fn undo_groups_keep_typing_coalescing_and_record_nothing_when_empty() {
     undo(&mut e, false);
     assert_eq!(e.text, "abcXY");
     // An empty or caret-only group preserves the redo stack.
-    e.undo_group(|e| e.set_caret(0));
+    e.undo_group(|e| e.set_caret(crate::Caret::at(0)));
     assert_eq!(e.history.redo.len(), 1);
     undo(&mut e, false);
     assert_eq!(e.text, "abc");
@@ -807,7 +799,7 @@ fn undo_group_is_unwind_safe_and_interacts_with_clear_history_paste_and_soft_bre
 #[test]
 fn an_undo_group_leaves_ime_composition_alone() {
     let mut e = TextEdit::new("x").rich();
-    e.set_caret(1);
+    e.set_caret(crate::Caret::at(1));
     e.ime(&Ime::Preedit("に".into(), None));
     e.undo_group(|e| e.ime(&Ime::Commit("日本".into())));
     assert_eq!((e.text.as_str(), e.preedit.is_none()), ("x日本", true));
@@ -825,14 +817,14 @@ fn backspace_and_delete_take_a_pill_whole_and_undo_restores_its_id() {
     assert_eq!((e.text.as_str(), e.range(), e.pills().count()), ("a  b", (2, 2), 0));
     undo(&mut e, false);
     assert_eq!((e.text.as_str(), pills_of(&e)), ("a @x-agent b", vec![(2..10, "agent:x".to_owned())]));
-    e.set_caret(2);
+    e.set_caret(crate::Caret::at(2));
     e.key(&k(Key::Delete), None);
     assert_eq!((e.text.as_str(), e.pills().count()), ("a  b", 0));
     undo(&mut e, false);
-    e.set_caret(11);
+    e.set_caret(crate::Caret::at(11));
     e.key(&k(Key::Backspace), None);
     assert_eq!((e.text.as_str(), pills_of(&e)), ("a @x-agentb", vec![(2..10, "agent:x".to_owned())]));
-    e.set_caret(10);
+    e.set_caret(crate::Caret::at(10));
     e.key(&KeyEvent { key: Key::Backspace, mods: Mods { alt: true, ..Mods::default() } }, None);
     assert_eq!((e.text.as_str(), e.pills().count()), ("a b", 0), "a word delete into a pill takes it whole");
     undo(&mut e, false);
@@ -844,18 +836,18 @@ fn backspace_and_delete_take_a_pill_whole_and_undo_restores_its_id() {
 #[test]
 fn a_selection_into_a_pill_covers_it() {
     let mut e = with_pill();
-    e.set_selection(0, 5);
-    assert_eq!((e.anchor, e.focus), (0, 10));
-    e.set_selection(7, 12);
-    assert_eq!((e.anchor, e.focus), (2, 12));
-    e.set_selection(11, 4);
-    assert_eq!((e.anchor, e.focus), (11, 2));
-    e.set_selection(0, 5);
+    e.set_selection(crate::Selection::bytes(0, 5));
+    assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (0, 10));
+    e.set_selection(crate::Selection::bytes(7, 12));
+    assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (2, 12));
+    e.set_selection(crate::Selection::bytes(11, 4));
+    assert_eq!((e.selection().anchor.byte, e.selection().focus.byte), (11, 2));
+    e.set_selection(crate::Selection::bytes(0, 5));
     e.insert("z");
     assert_eq!((e.text.as_str(), e.pills().count()), ("z b", 0));
     // Formatting a pill restyles its label and keeps it whole.
     let mut e = with_pill();
-    e.set_selection(0, 6);
+    e.set_selection(crate::Selection::bytes(0, 6));
     e.toggle_mark(Mark::Bold);
     assert_eq!(pills_of(&e), [(2..10, "agent:x".to_owned())]);
     assert!(e.marks().iter().any(|m| m.mark == Mark::Bold && m.range() == (0..10)));
@@ -864,8 +856,7 @@ fn a_selection_into_a_pill_covers_it() {
 #[test]
 fn a_composition_never_splits_a_pill() {
     let mut e = with_pill();
-    e.anchor = 4;
-    e.focus = 4;
+    e.set_selection(crate::Selection::bytes(4, 4));
     e.ime(&Ime::Preedit("に".into(), None));
     let (shown, pre) = e.display();
     let (pa, _) = pre.unwrap();
@@ -880,9 +871,9 @@ fn a_composition_never_splits_a_pill() {
 #[test]
 fn pills_round_trip_through_html_and_outside_html_makes_none() {
     let mut e = with_pill();
-    e.set_selection(0, 5);
+    e.set_selection(crate::Selection::bytes(0, 5));
     e.toggle_mark(Mark::Italic);
-    e.set_selection(0, e.text.len());
+    e.set_selection(crate::Selection::bytes(0, e.text.len()));
     let html = e.selected_html();
     assert!(html.contains("<span data-pill=\"agent:x\">"), "{html}");
     assert_eq!(e.selected(), "a @x-agent b", "the plain copy is the label");
@@ -920,7 +911,7 @@ fn a_pill_copied_from_one_rich_field_pastes_whole_into_another() {
     }
     let mut a = with_pill();
     a.focused = true;
-    a.set_selection(0, a.text.len());
+    a.set_selection(crate::Selection::bytes(0, a.text.len()));
     let m = crate::clipboard::memory();
     let mut rt = Runtime::new(App { a, b: TextEdit::new("").rich(), hooked: TextEdit::new("").rich() }, view, (320.0, 360.0), Env::new(true, 1.0));
     rt.use_clipboard(&m);
@@ -941,11 +932,11 @@ fn a_pill_copied_from_one_rich_field_pastes_whole_into_another() {
 
     // The same HTML from outside (another app's copy) pastes plain labels, even with identical plain text, unless a hook keeps them.
     m.set_content(ClipboardContent::new("a @x-agent b").with_html("a <span data-pill=\"agent:x\">@x-agent</span> b"));
-    rt.update(|s, _| s.b.set_selection(0, s.b.text.len()));
+    rt.update(|s, _| s.b.set_selection(crate::Selection::bytes(0, s.b.text.len())));
     paste_into(&mut rt, |s| &mut s.b);
     assert_eq!((rt.state.b.text.as_str(), rt.state.b.pills().count()), ("a @x-agent b", 0));
     m.set_content(ClipboardContent::new("x @x-agent").with_html("x <span data-pill=\"agent:x\">@x-agent</span>"));
-    rt.update(|s, _| s.b.set_selection(0, s.b.text.len()));
+    rt.update(|s, _| s.b.set_selection(crate::Selection::bytes(0, s.b.text.len())));
     paste_into(&mut rt, |s| &mut s.b);
     assert_eq!((rt.state.b.text.as_str(), rt.state.b.pills().count()), ("x @x-agent", 0));
     paste_into(&mut rt, |s| &mut s.hooked);
@@ -983,7 +974,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
     let mut ts = crate::text::TextSystem::default();
     let style = crate::tok::TextStyle::new(14.0, 400.0);
     let mut w = TextEdit::new("hello world ").rich();
-    w.set_caret(w.text.len());
+    w.set_caret(crate::Caret::at(w.text.len()));
     w.insert_pill("p:1", "@first-pill");
     w.insert(" ");
     w.insert_pill("p:2", "@second-pill");
@@ -996,18 +987,18 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
     let layout: crate::text::TextLayout = ts.layout_blocks(&w.text, &[], w.blocks(), &chips, style, 2.0, Some(220.0), parley::Alignment::Start).into();
     assert!(layout.len() >= 3, "wrapped into {} lines", layout.len());
     // Caret at end of line 0 ("hello world "), press Down onto the pill line: snaps to a pill edge on line 1, never jumps to EOF.
-    w.set_caret(11);
+    w.set_caret(crate::Caret::at(11));
     w.key(&k(Key::Down), Some(&layout));
-    assert!(w.focus < w.text.len(), "Down onto a pill line stays on that line: {}", w.focus);
-    assert!(w.pill_around(w.focus).is_none(), "caret never lands inside a pill: {}", w.focus);
+    assert!(w.selection().focus.byte < w.text.len(), "Down onto a pill line stays on that line: {}", w.selection().focus.byte);
+    assert!(w.pill_around(w.selection().focus.byte).is_none(), "caret never lands inside a pill: {}", w.selection().focus.byte);
     // Shift+Down across a pill line covers the pill whole.
-    w.set_caret(0);
+    w.set_caret(crate::Caret::at(0));
     w.key(&KeyEvent { key: Key::Down, mods: Mods { shift: true, ..Mods::default() } }, Some(&layout));
-    assert!(w.pill_around(w.focus).is_none());
+    assert!(w.pill_around(w.selection().focus.byte).is_none());
 
     // IME preedit right after a pill does not bleed its underline box into the pill's chip.
     let mut ime_e = with_pill();
-    ime_e.set_caret(10);
+    ime_e.set_caret(crate::Caret::at(10));
     ime_e.ime(&Ime::Preedit("に".into(), None));
     let (disp, pre) = ime_e.display();
     let (pa, pb) = pre.unwrap();
@@ -1038,19 +1029,19 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
     direct.text = "é".into();
     assert_eq!(direct.pills().count(), 0);
     assert!(direct.display_pills().is_empty());
-    direct.set_caret(99);
+    direct.set_caret(crate::Caret::at(99));
     assert_eq!(direct.range(), (2, 2));
 
     // Mark::Pill at collapsed caret does not arm pending; set_mark replaces an existing pill; plain insert strips a pill.
     let mut m = with_pill();
-    m.set_caret(0);
+    m.set_caret(crate::Caret::at(0));
     m.toggle_mark(Mark::Pill("x".into()));
     m.set_mark(Mark::Pill("x".into()));
     assert!(m.pending.is_none());
-    m.set_selection(2, 10);
+    m.set_selection(crate::Selection::bytes(2, 10));
     m.set_mark(Mark::Pill("agent:y".into()));
     assert_eq!(pills_of(&m), [(2..10, "agent:y".to_owned())]);
-    m.set_selection(2, 10);
+    m.set_selection(crate::Selection::bytes(2, 10));
     m.insert("@x-agent");
     assert_eq!((m.text.as_str(), m.pills().count()), ("a @x-agent b", 0));
 }

@@ -59,7 +59,7 @@ fn a_secondary_press_on_a_text_input_reports_the_text_it_is_on() {
     }
     let pressed: Vec<_> = carets.iter().map(|&(at, ..)| Some(at)).collect();
     assert_eq!(rt.state.texts, pressed, "each press reports the byte its caret would land on");
-    assert_eq!(rt.state.field.focus, 0, "a secondary press leaves the caret where it was");
+    assert_eq!(rt.state.field.selection().focus.byte, 0, "a secondary press leaves the caret where it was");
     rt.state.texts.clear();
     rt.key(KeyEvent { key: Key::End, mods: Mods::default() });
     rt.frame(0.0);

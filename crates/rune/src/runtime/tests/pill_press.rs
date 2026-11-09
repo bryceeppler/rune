@@ -14,10 +14,10 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
         })
         .on_pill_press(|s: &mut State, id, _| {
             s.pressed.push(id.to_owned());
-            let (anchor, focus) = (s.note.anchor, s.note.focus);
+            let (anchor, focus) = (s.note.selection().anchor.byte, s.note.selection().focus.byte);
             let range = s.note.pills().find(|(_, pill)| *pill == id).map(|(range, _)| range).expect("the pressed pill");
             s.note.replace_with_pill(range, id, "[x]");
-            s.note.set_selection(anchor, focus);
+            s.note.set_selection(crate::Selection::bytes(anchor, focus));
         });
     let note = if s.read_only { note } else { note.on_edit(|s: &mut State| &mut s.note) };
     col().size(400.0, 200.0)
@@ -66,7 +66,7 @@ fn focus(rt: &mut Runtime<State>, note: bool) {
     rt.update(move |s, _| {
         let field = if note { &mut s.note } else { &mut s.other };
         field.focused = true;
-        field.set_caret(field.text.len());
+        field.set_caret(crate::Caret::at(field.text.len()));
     });
     rt.frame(0.0);
 }
@@ -79,12 +79,12 @@ fn a_click_on_a_pill_chip_presses_it_and_leaves_the_caret_and_focus_alone() {
     click(&mut rt, at);
     assert_eq!(rt.state.pressed, ["second"]);
     assert!(rt.state.other.focused && !rt.state.note.focused, "the other field keeps the focus");
-    rt.update(|s, _| { s.other.focused = false; s.note.focused = true; s.note.set_selection(5, 5); });
+    rt.update(|s, _| { s.other.focused = false; s.note.focused = true; s.note.set_selection(crate::Selection::bytes(5, 5)); });
     rt.frame(0.0);
     let at = chip(&rt, "first");
     click(&mut rt, at);
     assert_eq!(rt.state.pressed, ["second", "first"]);
-    assert_eq!((rt.state.note.anchor, rt.state.note.focus), (5, 5), "the caret stays where it was");
+    assert_eq!((rt.state.note.selection().anchor.byte, rt.state.note.selection().focus.byte), (5, 5), "the caret stays where it was");
     assert!(rt.state.note.focused);
 }
 
@@ -102,7 +102,7 @@ fn a_press_that_leaves_its_chip_presses_nothing_and_a_click_off_the_chips_places
     click(&mut rt, (x1 - 4.0, y));
     assert!(rt.state.pressed.is_empty());
     assert!(rt.state.note.focused, "a click on the text focuses the field");
-    assert_eq!(rt.state.note.focus, 7, "and places the caret at the end of the line");
+    assert_eq!(rt.state.note.selection().focus.byte, 7, "and places the caret at the end of the line");
 }
 
 #[test]

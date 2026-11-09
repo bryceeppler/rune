@@ -410,7 +410,7 @@ fn inline_rename_commits_on_return_and_cancels_on_escape() {
     rt.update(|s, _| {
         s.renaming = Some(1);
         s.edit = TextEdit::new("Bravo");
-        s.edit.anchor = 0;
+        s.edit.set_selection(rune::Selection { anchor: rune::Caret::at(0), ..s.edit.selection() });
         s.edit.focused = true;
     });
     rt.frame(1.0 / 60.0);
@@ -422,7 +422,7 @@ fn inline_rename_commits_on_return_and_cancels_on_escape() {
     rt.update(|s, _| {
         s.renaming = Some(1);
         s.edit = TextEdit::new("Bravo");
-        s.edit.anchor = 0;
+        s.edit.set_selection(rune::Selection { anchor: rune::Caret::at(0), ..s.edit.selection() });
         s.edit.focused = true;
     });
     rt.frame(1.0 / 60.0);
@@ -514,7 +514,7 @@ fn a_rename_field_keeps_letters_and_arrows_that_would_type_select_a_row() {
     rt.update(|s, _| {
         s.renaming = Some(1);
         s.edit = TextEdit::new("Bravo");
-        s.edit.anchor = 0;
+        s.edit.set_selection(rune::Selection { anchor: rune::Caret::at(0), ..s.edit.selection() });
         s.edit.focused = true;
     });
     rt.frame(1.0 / 60.0);

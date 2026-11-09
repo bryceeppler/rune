@@ -2,11 +2,11 @@
 //! selection, double-click word selection (and word-by-word drag), triple-click line/paragraph
 //! selection (and line-by-line drag), and Shift-click selection extension.
 //!
-//! Word and paragraph boundaries and drag extension share `selectable`'s `Unit`, `unit_at` and
-//! `extend`.
+//! Word and paragraph boundaries share `selectable`'s `Unit` and `unit_at`.
 use std::collections::VecDeque;
 
-use super::selectable::{Unit, extend};
+use super::selectable::Unit;
+use crate::edit::{Caret, Selection};
 use super::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -18,9 +18,7 @@ enum Step {
 
 #[derive(Clone, Copy)]
 struct Hit {
-    caret: usize,
-    /// The side of `caret`'s byte the press was on.
-    side: Affinity,
+    caret: Caret,
     cluster: usize,
 }
 
@@ -31,7 +29,7 @@ pub(super) struct InputClick {
     /// What the press that started the current selection selects by, and the unit range it
     /// began on, which a drag keeps whole.
     unit: Unit,
-    origin: (usize, usize),
+    origin: (Caret, Caret),
     /// The input path whose held press is currently dragging a selection.
     dragging: Option<String>,
     /// Whether `Runtime::capture` is currently owned by an input-selection press.
@@ -102,23 +100,33 @@ fn hit(e: &crate::edit::TextEdit, l: &TextLayout, x: f32, y: f32, s: f32, single
     } else {
         caret
     };
-    Hit { caret, side: affinity, cluster }
+    let side = if e.is_secure() && !e.is_revealed() { Affinity::Downstream } else { affinity };
+    Hit { caret: Caret::of(caret, side), cluster }
 }
 
-/// Draws the caret on the side of its byte the press `h` was on, when a press by character
-/// left it there.
-fn keep_side(e: &mut crate::edit::TextEdit, h: Hit, unit: Unit) {
-    if unit == Unit::Char && e.focus == h.caret {
-        e.set_caret_side(h.side);
+/// A drag from the unit `origin` to the unit `at` as a selection, anchored at the origin's end
+/// away from the drag.
+fn extend(origin: (Caret, Caret), at: (Caret, Caret)) -> Selection {
+    if at.0.byte < origin.0.byte {
+        Selection { anchor: origin.1, focus: at.0 }
+    } else {
+        Selection { anchor: origin.0, focus: if at.1.byte >= origin.1.byte { at.1 } else { origin.1 } }
     }
 }
 
-fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
+fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (Caret, Caret) {
+    let (a, b) = unit_bytes(e, h, unit);
+    let caret = |byte: usize| if byte == h.caret.byte { h.caret } else { Caret::at(byte) };
+    (caret(a), caret(b))
+}
+
+fn unit_bytes(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
+    let at = h.caret.byte;
     if unit == Unit::Char {
         let to = e
             .pills()
-            .find_map(|(r, _)| (r.start < h.caret && h.caret < r.end).then(|| if h.caret - r.start < r.end - h.caret { r.start } else { r.end }))
-            .unwrap_or(h.caret);
+            .find_map(|(r, _)| (r.start < at && at < r.end).then(|| if at - r.start < r.end - at { r.start } else { r.end }))
+            .unwrap_or(at);
         return (to, to);
     }
     if e.is_secure() || (unit == Unit::Paragraph && e.is_single_line()) {
@@ -222,13 +230,13 @@ impl<S: 'static> Runtime<S> {
         let n = &self.nodes[ji];
         let input = n.input.as_ref()?;
         let (access, single) = (input.access.clone()?, input.single_line);
-        let Some((x, y)) = point else { return Some(access(states!(self)).focus) };
+        let Some((x, y)) = point else { return Some(access(states!(self)).selection().focus.byte) };
         let layout = n.text_layout.clone()?;
         let scroll = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
         let inset = n.inset;
         let [lx, ly] = self.to_local(ji, x, y);
         let s = self.env.scale;
-        Some(hit(access(states!(self)), &layout, lx - inset[0] + scroll, ly - inset[1], s, single).caret)
+        Some(hit(access(states!(self)), &layout, lx - inset[0] + scroll, ly - inset[1], s, single).caret.byte)
     }
 
     pub(super) fn focus_input(&mut self, path: String, x: f32, y: f32, one: &mut Tx) -> bool {
@@ -267,11 +275,10 @@ impl<S: 'static> Runtime<S> {
                 if let Some(l) = layout {
                     let h = hit(e, &l, x + scroll, y, s, single);
                     if shift {
-                        let anchor = e.anchor;
+                        let anchor = e.selection().anchor;
                         self.input_click.unit = Unit::Char;
                         self.input_click.origin = (anchor, anchor);
-                        e.set_selection(anchor, h.caret);
-                        keep_side(e, h, Unit::Char);
+                        e.set_selection(Selection { anchor, focus: h.caret });
                     } else {
                         let unit = match clicks {
                             1 => Unit::Char,
@@ -281,8 +288,7 @@ impl<S: 'static> Runtime<S> {
                         let origin = unit_at(e, h, unit);
                         self.input_click.unit = unit;
                         self.input_click.origin = origin;
-                        e.set_selection(origin.0, origin.1);
-                        keep_side(e, h, unit);
+                        e.set_selection(Selection { anchor: origin.0, focus: origin.1 });
                     }
                 }
                 one.instant = true;
@@ -302,11 +308,9 @@ impl<S: 'static> Runtime<S> {
                 let Some(l) = layout else { return false };
                 let h = hit(e, &l, x + scroll, y, s, single);
                 let at = unit_at(e, h, self.input_click.unit);
-                let (anchor, focus) = extend(self.input_click.origin, at);
-                let before = (e.anchor, e.focus, e.caret_affinity());
-                e.set_selection(anchor, focus);
-                keep_side(e, h, self.input_click.unit);
-                if (e.anchor, e.focus, e.caret_affinity()) == before {
+                let before = e.selection();
+                e.set_selection(extend(self.input_click.origin, at));
+                if e.selection() == before {
                     return false;
                 }
                 e.break_history_group();

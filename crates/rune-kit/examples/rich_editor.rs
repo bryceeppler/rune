@@ -38,7 +38,7 @@ impl Default for State {
         let mut edit = TextEdit::from_html(html);
         edit.focused = true;
         // Place the caret at the end of "attributed" so the Bold button shows active.
-        edit.set_caret(19);
+        edit.set_caret(rune::Caret::at(19));
         Self { edit, agents: vec!["agent:review".into()] }
     }
 }

@@ -1,8 +1,6 @@
 //! Keys, IME and paste on a [`TextEdit`].
 
 
-use parley::layout::Affinity;
-
 use super::*;
 use crate::text::TextLayout;
 
@@ -16,7 +14,7 @@ impl TextEdit {
         let before = self.snapshot();
         let (a, b) = self.range();
         let inserted_marks = if let Some((armed, p)) = self.pending.take()
-            && armed == (self.anchor, self.focus)
+            && armed == self.ends()
         {
             p
         } else {
@@ -26,22 +24,19 @@ impl TextEdit {
         self.record_change(before, false);
     }
 
-    pub(super) fn set(&mut self, i: usize, extend: bool) {
-        self.upstream = None;
+    /// Puts the focus at `to`, and the anchor with it unless `extend`.
+    pub(super) fn set(&mut self, to: Caret, extend: bool) {
         // A caret moving into a pill steps over it, the way it was going.
-        let i = self.out_of_pill(i, i > self.focus);
-        self.focus = i;
+        let to = match self.out_of_pill(to.byte, to.byte > self.selection.focus.byte) {
+            byte if byte == to.byte => to,
+            byte => Caret::at(byte),
+        };
+        self.selection.focus = to;
         if !extend {
-            self.anchor = i;
+            self.selection.anchor = to;
         }
         self.snap_to_pills();
         self.pending = None;
-    }
-
-    /// Puts the focus at byte `i`, drawn on `side`, and the anchor with it unless `extend`.
-    fn move_to(&mut self, (i, side): (usize, Affinity), extend: bool) {
-        self.set(i, extend);
-        self.set_caret_side(if self.focus == i { side } else { Affinity::Downstream });
     }
 
     /// `layout` when it draws the text itself: no composition in it and no mask over it.
@@ -52,21 +47,21 @@ impl TextEdit {
     /// Where Left (`left`) or Right moves the caret, by a character or a `word`. With a layout it
     /// moves as the text draws: Left always toward the screen's left, through either direction
     /// of text.
-    fn step_h(&self, layout: Option<&TextLayout>, left: bool, word: bool) -> (usize, Affinity) {
+    fn step_h(&self, layout: Option<&TextLayout>, left: bool, word: bool) -> Caret {
+        let focus = self.selection.focus.byte;
         let Some(l) = self.drawn(layout) else {
-            let i = match (left, word) {
-                (true, true) => self.prev_word(self.focus),
-                (true, false) => prev_char(&self.text, self.focus),
-                (false, true) => self.next_word(self.focus),
-                (false, false) => next_char(&self.text, self.focus),
-            };
-            return (i, Affinity::Downstream);
+            return Caret::at(match (left, word) {
+                (true, true) => self.prev_word(focus),
+                (true, false) => prev_char(&self.text, focus),
+                (false, true) => self.next_word(focus),
+                (false, false) => next_char(&self.text, focus),
+            });
         };
         let blank = |side: Option<Range<usize>>| side.is_none_or(|r| self.text[r].starts_with(|c: char| c.is_ascii_whitespace()));
-        let mut at = (self.focus, self.caret_affinity());
-        while let Some(next) = l.step(at.0, at.1, left) {
-            at = next;
-            let [l_side, r_side] = l.sides(at.0, at.1);
+        let mut at = self.selection.focus;
+        while let Some((byte, affinity)) = l.step(at.byte, at.affinity(), left) {
+            at = Caret::of(byte, affinity);
+            let [l_side, r_side] = l.sides(at.byte, at.affinity());
             let (behind, ahead) = if left { (r_side, l_side) } else { (l_side, r_side) };
             if !word || (!blank(behind) && blank(ahead)) {
                 break;
@@ -77,27 +72,42 @@ impl TextEdit {
 
     /// The end of the selection a plain Left (`left`) or Right collapses it to: the end drawn
     /// furthest that way when both are on one line, else its start or end as its paragraph reads.
-    fn collapse_end(&self, layout: Option<&TextLayout>, left: bool) -> (usize, Affinity) {
+    fn collapse_end(&self, layout: Option<&TextLayout>, left: bool) -> Caret {
+        let Selection { anchor, focus } = self.selection;
         let (a, b) = self.range();
-        let ends = [(self.anchor, Affinity::Downstream), (self.focus, self.caret_affinity())];
-        let Some(l) = self.drawn(layout) else {
-            return (if left { a } else { b }, Affinity::Downstream);
+        let in_order = |start: bool| {
+            let byte = if start { a } else { b };
+            [anchor, focus].into_iter().find(|c| c.byte == byte).unwrap_or(Caret::at(byte))
         };
-        let [p, q] = ends.map(|(i, side)| l.caret_box(i, side, 0.0));
+        let Some(l) = self.drawn(layout) else {
+            return in_order(left);
+        };
+        let [p, q] = [anchor, focus].map(|c| l.caret_box(c.byte, c.affinity(), 0.0));
         if p.y0 == q.y0 {
             let anchor_further = if left { p.x0 < q.x0 } else { p.x0 > q.x0 };
-            return ends[usize::from(!anchor_further)];
+            return if anchor_further { anchor } else { focus };
         }
-        let to = if left != l.is_rtl(self.focus) { a } else { b };
-        if to == self.focus { ends[1] } else { (to, Affinity::Downstream) }
+        in_order(left != l.is_rtl(focus.byte))
+    }
+
+    /// `to`, or the anchor where `to` draws in the same place, so a selection stepped back to where
+    /// it began selects nothing.
+    fn onto_anchor(&self, layout: Option<&TextLayout>, to: Caret) -> Caret {
+        let anchor = self.selection.anchor;
+        let Some(l) = self.drawn(layout) else { return to };
+        let [p, q] = [to, anchor].map(|c| l.caret_box(c.byte, c.affinity(), 0.0));
+        if (p.x0, p.y0) == (q.x0, q.y0) { anchor } else { to }
     }
 
     /// The left (`left`) or right end of the caret's line as it draws, or its start or end in
     /// the text where the layout doesn't draw the text itself.
-    fn line_side(&self, layout: Option<&TextLayout>, left: bool) -> (usize, Affinity) {
+    fn line_side(&self, layout: Option<&TextLayout>, left: bool) -> Caret {
         match self.drawn(layout) {
-            Some(l) => l.line_side(self.focus, self.caret_affinity(), left),
-            None => (self.line_edge(layout, !left), Affinity::Downstream),
+            Some(l) => {
+                let (byte, affinity) = l.line_side(self.selection.focus.byte, self.selection.focus.affinity(), left);
+                Caret::of(byte, affinity)
+            }
+            None => Caret::at(self.line_edge(layout, !left)),
         }
     }
 
@@ -109,8 +119,8 @@ impl TextEdit {
         let m = ev.mods;
         self.normalize_hidden_selection();
         if self.is_hidden_multiline() && matches!(ev.key, Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End) {
-            self.focus = self.text.len();
-            self.anchor = if m.shift { 0 } else { self.focus };
+            let end = Caret::at(self.text.len());
+            self.selection = Selection { anchor: if m.shift { Caret::at(0) } else { end }, focus: end };
             return out;
         }
         if let Some(c) = ev.control_binding() {
@@ -124,10 +134,10 @@ impl TextEdit {
                         'e' => self.line_edge(layout, true),
                         'b' if collapse => a,
                         'f' if collapse => b,
-                        'b' => prev_char(&self.text, self.focus),
-                        _ => next_char(&self.text, self.focus),
+                        'b' => prev_char(&self.text, self.selection.focus.byte),
+                        _ => next_char(&self.text, self.selection.focus.byte),
                     };
-                    self.move_to((i, Affinity::Downstream), m.shift);
+                    self.set(Caret::at(i), m.shift);
                     return out;
                 }
                 'a' => (Key::Left, true), 'e' => (Key::Right, true), 'b' => (Key::Left, false),
@@ -282,55 +292,54 @@ impl TextEdit {
                 let left = ev.key == Key::Left;
                 let to = if m.cmd && mac {
                     self.line_side(layout, left)
-                } else if !m.shift && self.anchor != self.focus {
+                } else if !m.shift && !self.selection.is_collapsed() {
                     self.collapse_end(layout, left)
                 } else {
                     self.step_h(layout, left, word)
                 };
-                self.move_to(to, m.shift);
+                let to = if m.shift { self.onto_anchor(layout, to) } else { to };
+                self.set(to, m.shift);
             }
             // Windows and Linux move Home and End along the line, and to the text's ends with Ctrl.
             Key::Home => {
                 let i = if mac || m.cmd { 0 } else { self.line_edge(layout, false) };
-                self.set(i, m.shift)
+                self.set(Caret::at(i), m.shift)
             }
             Key::End => {
                 let i = if mac || m.cmd { self.text.len() } else { self.line_edge(layout, true) };
-                self.set(i, m.shift)
+                self.set(Caret::at(i), m.shift)
             }
             Key::Up | Key::Down => {
                 let down = ev.key == Key::Down;
                 let n = self.text.len();
-                let end = (if down { n } else { 0 }, Affinity::Downstream);
-                let (i, side) = if m.cmd || (self.secure && !self.revealed) {
+                let end = Caret::at(if down { n } else { 0 });
+                let focus = self.selection.focus;
+                let to = if m.cmd || (self.secure && !self.revealed) {
                     end
                 } else if let Some(l) = layout {
-                    match l.move_line(self.display_index(self.focus), self.caret_affinity(), down) {
-                        Some((j, side)) => {
-                            let j = self.model_index(j);
-                            if j == self.focus { end } else { (j, side) }
-                        }
-                        None => (n, Affinity::Downstream),
+                    match l.move_line(self.display_index(focus.byte), self.caret_affinity(), down) {
+                        Some((j, affinity)) => match self.model_index(j) {
+                            j if j == focus.byte => end,
+                            j => Caret::of(j.min(n), affinity),
+                        },
+                        None => Caret::at(n),
                     }
                 } else {
                     end
                 };
-                let i = i.min(n);
                 if m.shift {
-                    self.focus = i;
+                    self.selection.focus = to;
                     self.snap_to_pills();
                     self.pending = None;
                 } else {
-                    self.set_caret(i);
+                    self.set_caret(to);
                 }
-                self.set_caret_side(if self.focus == i { side } else { Affinity::Downstream });
             }
             Key::Command(c) => match c {
                 'z' if m.shift => self.redo(),
                 'z' => self.undo(),
                 'a' => {
-                    self.anchor = 0;
-                    self.focus = self.text.len();
+                    self.selection = Selection { anchor: Caret::at(0), focus: Caret::at(self.text.len()) };
                     self.pending = None;
                 }
                 'b' | 'i' | 'u' => {
@@ -357,7 +366,7 @@ impl TextEdit {
         !self.secure
             && !self.is_single_line()
             && self.preedit.is_none()
-            && (self.anchor, self.focus) == (n, n)
+            && self.ends() == (n, n)
             && matches!(self.blocks.last(), Some(Block::Code | Block::Quote))
     }
 
@@ -378,12 +387,13 @@ impl TextEdit {
             return if end { self.text.len() } else { 0 };
         }
         if let Some(l) = layout {
-            return self.model_index(l.line_edge(self.display_index(self.focus), end));
+            return self.model_index(l.line_edge(self.display_index(self.selection.focus.byte), end));
         }
+        let focus = self.selection.focus.byte;
         if end {
-            self.text[self.focus..].find('\n').map_or(self.text.len(), |i| self.focus + i)
+            self.text[focus..].find('\n').map_or(self.text.len(), |i| focus + i)
         } else {
-            self.text[..self.focus].rfind('\n').map_or(0, |i| i + 1)
+            self.text[..focus].rfind('\n').map_or(0, |i| i + 1)
         }
     }
 

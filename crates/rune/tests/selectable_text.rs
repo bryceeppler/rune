@@ -206,8 +206,7 @@ fn bidi_text_selects_by_logical_words() {
 fn the_highlight_matches_a_text_fields() {
     let mut rt = runtime();
     rt.state.field.focused = true;
-    rt.state.field.anchor = 0;
-    rt.state.field.focus = 5;
+    rt.state.field.set_selection(rune::Selection::bytes(0, 5));
     rt.invalidate();
     tick(&mut rt);
     let field = boxes(&rt, highlight());

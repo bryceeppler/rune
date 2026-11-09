@@ -447,17 +447,22 @@ impl TextLayout {
 
     /// The caret at the left (`left`) or right end of the line the caret at `byte` on its
     /// `affinity` side draws on. At a soft wrap that is the line's own end, upstream of the next
-    /// line's start.
+    /// line's start; at a hard break it is before the break, as past it is the next line.
     pub(crate) fn line_side(&self, byte: usize, affinity: Affinity, left: bool) -> (usize, Affinity) {
         let at = self.at_byte(byte);
+        let past_break = |c: Cursor| c.index().checked_sub(1).and_then(|i| parley::Cluster::from_byte_index(at.layout, i)).is_some_and(|c| c.is_hard_line_break());
         let mut cur = Cursor::from_byte_index(at.layout, byte - at.start, affinity);
         let line = drawn(at.layout, cur).0;
+        let mut end = cur;
         loop {
             let next = if left { cur.previous_visual(at.layout) } else { cur.next_visual(at.layout) };
             if next == cur || drawn(at.layout, next).0 != line {
-                return (cur.index() + at.start, cur.affinity());
+                return (end.index() + at.start, end.affinity());
             }
             cur = next;
+            if !past_break(cur) {
+                end = cur;
+            }
         }
     }
 

@@ -431,7 +431,7 @@ fn virtual_rows_inside_memos_layout_reads_live_values_and_duplicate_keys_match_f
         pixels.set(4, 4, vec![200u8; 64]);
         let mut composer = TextEdit::new("hello ");
         composer.focused = true;
-        composer.set_caret(composer.text.len());
+        composer.set_caret(crate::Caret::at(composer.text.len()));
         WorkspaceState {
             use_memo,
             probe_w: 120.0,
@@ -693,7 +693,7 @@ fn move_path_preserves_allocations_and_matches_fresh_across_exits_focus_selectio
     let make = |use_memo| {
         let mut editor = TextEdit::new("seed ");
         editor.focused = true;
-        editor.set_caret(editor.text.len());
+        editor.set_caret(crate::Caret::at(editor.text.len()));
         MoveHarness {
             use_memo,
             tick: 0,

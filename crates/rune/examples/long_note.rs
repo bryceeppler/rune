@@ -209,14 +209,14 @@ fn runtime(text: &str, caret: usize) -> Runtime<State> {
             let mut b = TextEdit::new(part);
             if (start..=start + part.len()).contains(&caret) && !fields.iter().any(|f: &TextEdit| f.focused) {
                 b.focused = true;
-                b.set_caret(caret - start);
+                b.set_caret(rune::Caret::at(caret - start));
             }
             start += part.len() + 2;
             fields.push(b);
         }
     } else {
         note.focused = true;
-        note.set_caret(caret);
+        note.set_caret(rune::Caret::at(caret));
     }
     let v = if blocks { block_view } else { view };
     let mut rt = Runtime::with_text(State { note, blocks: fields }, v, SIZE, Env::new(true, 2.0), fonts);
@@ -422,7 +422,7 @@ fn main() {
                 settle(&mut rt, &mut d);
                 rows.push(timed(&mut rt, &mut d, |rt| cmd(rt, Key::Down)));
                 settle(&mut rt, &mut d);
-                visible &= rt.state.note.focus == rt.state.note.text.len() && caret_in_view(&rt).is_some();
+                visible &= rt.state.note.selection().focus.byte == rt.state.note.text.len() && caret_in_view(&rt).is_some();
             }
             println!("CARET size={kb}k case=cmd_down at_end_in_view={visible}");
             assert!(visible, "cmd_down: caret at the end and in view");
@@ -437,12 +437,12 @@ fn main() {
             for i in 0..samples.min(30) {
                 rt.wheel(SIZE.0 / 2.0, SIZE.1 / 2.0, -900.0);
                 settle(&mut rt, &mut d);
-                let before = (editor_y(&rt), rt.state.note.focus);
+                let before = (editor_y(&rt), rt.state.note.selection().focus.byte);
                 let y = v[1] + v[3] - 40.0 - (i % 5) as f32 * LINE;
                 rows.push(timed(&mut rt, &mut d, |rt| { rt.pointer_down(200.0, y); rt.pointer_up(200.0, y); }));
                 settle(&mut rt, &mut d);
                 worst_jump = worst_jump.max((editor_y(&rt) - before.0).abs());
-                if rt.state.note.focus != before.1 && caret_in_view(&rt).is_some() { moved += 1; }
+                if rt.state.note.selection().focus.byte != before.1 && caret_in_view(&rt).is_some() { moved += 1; }
             }
             println!("CARET size={kb}k case=click clicks={} caret_landed_in_view={moved} worst_jump_pt={worst_jump:.1}", rows.len());
             report(kb, "click", &rows);

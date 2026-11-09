@@ -11,8 +11,7 @@ pub(super) const HISTORY_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Snapshot {
     text: Arc<Zeroizing<String>>,
-    anchor: usize,
-    focus: usize,
+    selection: Selection,
     marks: Vec<MarkRange>,
     blocks: Vec<Block>,
     soft_breaks: Vec<u32>,
@@ -98,8 +97,7 @@ impl TextEdit {
     pub(super) fn snapshot_now(&self) -> Snapshot {
         Snapshot {
             text: Arc::new(Zeroizing::new(self.text.clone())),
-            anchor: self.anchor,
-            focus: self.focus,
+            selection: self.selection,
             marks: self.marks.clone(),
             blocks: self.blocks.clone(),
             soft_breaks: self.soft_breaks.clone(),
@@ -111,11 +109,9 @@ impl TextEdit {
     }
 
     fn restore(&mut self, s: &Snapshot) {
-        self.upstream = None;
         self.text.zeroize();
         self.text.push_str(&s.text);
-        self.anchor = s.anchor;
-        self.focus = s.focus;
+        self.selection = s.selection;
         self.marks = s.marks.clone();
         self.blocks = s.blocks.clone();
         self.soft_breaks = s.soft_breaks.clone();
@@ -141,7 +137,7 @@ impl TextEdit {
         h.redo.clear();
         if typing
             && h.typing
-            && before.anchor == before.focus
+            && before.selection.is_collapsed()
             && h.undo.back().is_some_and(|c| c.after == before)
         {
             let last = h.undo.back_mut().unwrap();

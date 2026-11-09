@@ -19,7 +19,7 @@ fn note<const W: u16>(para: &str) -> (Runtime<TextEdit>, usize) {
 }
 
 fn put_caret(rt: &mut Runtime<TextEdit>, at: usize) {
-    rt.update(|s, _| s.set_caret(at));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(at)));
     rt.frame(0.0);
 }
 
@@ -32,7 +32,7 @@ fn press(rt: &mut Runtime<TextEdit>, key: Key, mods: Mods) {
 fn caret(rt: &Runtime<TextEdit>) -> (usize, f32, f32) {
     let i = rt.nodes.iter().position(|n| n.key.as_deref() == Some("note")).unwrap();
     let r = rt.caret_rect(&rt.nodes, i).unwrap();
-    (rt.state.focus, r[0], r[1])
+    (rt.state.selection().focus.byte, r[0], r[1])
 }
 
 /// Presses `key` from where the caret is until it leaves its line: the carets it drew on the
@@ -153,13 +153,13 @@ fn shift_arrows_select_toward_the_pressed_side() {
     assert_eq!(rt.state.selected(), "ו", "Shift+Left selects the letter drawn to the left");
     assert!(caret(&rt).1 < x);
     press(&mut rt, Key::Left, NONE);
-    assert_eq!((rt.state.anchor, rt.state.focus), (at + "ו".len(), at + "ו".len()), "Left collapses the selection to its left end");
+    assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (at + "ו".len(), at + "ו".len()), "Left collapses the selection to its left end");
     put_caret(&mut rt, at);
     press(&mut rt, Key::Right, SHIFT);
     assert_eq!(rt.state.selected(), "ל", "Shift+Right selects the letter drawn to the right");
     assert!(caret(&rt).1 > x);
     press(&mut rt, Key::Right, NONE);
-    assert_eq!((rt.state.anchor, rt.state.focus), (start + "ש".len(), start + "ש".len()), "Right collapses it to its right end");
+    assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (start + "ש".len(), start + "ש".len()), "Right collapses it to its right end");
 }
 
 #[test]
@@ -196,14 +196,14 @@ fn after_the_space(para: &str) -> (Runtime<TextEdit>, usize, (usize, f32, f32)) 
 #[test]
 fn the_caret_keeps_its_side_when_its_selection_is_set_again() {
     let (mut rt, start, at) = after_the_space("abc אבג");
-    rt.update(|s, _| s.set_selection(s.anchor, s.focus));
+    rt.update(|s, _| s.set_selection(s.selection()));
     rt.frame(0.0);
     assert_eq!(caret(&rt), at, "setting the same selection, as an app's refresh does, keeps the caret where it was");
     press(&mut rt, Key::Right, NONE);
     assert_eq!(caret(&rt).0, start + "abc אב".len(), "and the next Right steps over one letter");
-    rt.update(|s, _| s.set_caret(s.focus - "ב".len()));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(s.selection().focus.byte - "ב".len())));
     rt.frame(0.0);
-    rt.update(|s, _| s.set_caret(start + "abc ".len()));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(start + "abc ".len())));
     rt.frame(0.0);
     assert!(caret(&rt).1 > at.1, "a caret set elsewhere and back takes its default side");
 }
@@ -219,16 +219,16 @@ fn a_plain_arrow_collapses_a_selection_to_its_end_drawn_that_way() {
         assert!(!rt.state.selected().is_empty());
         press(&mut rt, key.clone(), NONE);
         assert_eq!(caret(&rt), selected, "{key:?} on a selection inside the Hebrew collapses it to its end drawn {key:?}");
-        assert_eq!(rt.state.anchor, rt.state.focus);
+        assert_eq!(rt.state.selection().anchor.byte, rt.state.selection().focus.byte);
     }
     let para = "שלום עולם גדול מאוד וארוך עוד מילים כאן";
     let (mut rt, start) = note::<300>(para);
     let (a, b) = (start + "של".len(), start + para.len() - "אן".len());
     for (key, want) in [(Key::Right, a), (Key::Left, b)] {
-        rt.update(|s, _| s.set_selection(a, b));
+        rt.update(|s, _| s.set_selection(crate::Selection::bytes(a, b)));
         rt.frame(0.0);
         press(&mut rt, key.clone(), NONE);
-        assert_eq!((rt.state.anchor, rt.state.focus), (want, want), "{key:?} on a selection over lines of Hebrew collapses it toward the side it reads from");
+        assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (want, want), "{key:?} on a selection over lines of Hebrew collapses it toward the side it reads from");
     }
 }
 
@@ -271,7 +271,19 @@ fn a_lines_ends_on_screen_are_its_drawn_left_and_right() {
     let (end, side) = l.line_side(start, Affinity::Downstream, true);
     let (left, right) = (l.caret_box(end, side, 1.0), l.caret_box(start, Affinity::Downstream, 1.0));
     assert_eq!(left.y0, right.y0, "the left end is on the same line");
-    assert!(end > start && left.x0 < 20.0, "and is where the line's text ends, at its left: {end} at {}", left.x0);
+    let line = l.lines().find(|line| line.text_range().start == start).unwrap().text_range();
+    let drawn_left = l.range_boxes(line.start, line.end, false).iter().map(|(bb, _)| bb.x0).fold(f64::INFINITY, f64::min);
+    assert!(end > start && (left.x0 - drawn_left).abs() < 0.5, "and is where the line's text ends, at its left: {end} at {} for {drawn_left}", left.x0);
+}
+
+#[test]
+fn a_lines_left_end_stays_before_its_paragraphs_break() {
+    let para = "שלום עולם";
+    let (rt, start) = note::<600>(para);
+    let i = rt.nodes.iter().position(|n| n.key.as_deref() == Some("note")).unwrap();
+    let l = rt.nodes[i].text_layout.clone().unwrap();
+    let (end, _) = l.line_side(start + "של".len(), Affinity::Downstream, true);
+    assert_eq!(end, start + para.len(), "the left end of a Hebrew paragraph is before its line break, not the next paragraph's start");
 }
 
 #[test]
@@ -281,7 +293,34 @@ fn cmd_arrows_go_to_the_ends_of_a_line_as_it_draws() {
     let (mut rt, start) = note::<600>(para);
     put_caret(&mut rt, start + "של".len());
     press(&mut rt, Key::Left, Mods { cmd: true, ..NONE });
-    assert_eq!(rt.state.focus, start + para.len(), "Cmd+Left goes to the Hebrew line's left end");
+    assert_eq!(rt.state.selection().focus.byte, start + para.len(), "Cmd+Left goes to the Hebrew line's left end");
     press(&mut rt, Key::Right, Mods { cmd: true, ..NONE });
-    assert_eq!(rt.state.focus, start, "Cmd+Right goes to its right end");
+    assert_eq!(rt.state.selection().focus.byte, start, "Cmd+Right goes to its right end");
+}
+
+#[test]
+fn shift_back_to_a_split_caret_selects_nothing_and_types_where_it_began() {
+    let (mut rt, _, at) = after_the_space("abc אבג");
+    press(&mut rt, Key::Right, SHIFT);
+    press(&mut rt, Key::Left, SHIFT);
+    assert_eq!(rt.state.selected(), "", "Shift+Right then Shift+Left leaves nothing selected");
+    assert_eq!(caret(&rt), at, "and the caret where it began");
+    press(&mut rt, Key::Text("Y".into()), NONE);
+    assert_eq!(rt.state.text, "Notes\nabc Yאבג\nend");
+    let (mut rt, _, at) = after_the_space("abc אבג");
+    press(&mut rt, Key::Right, SHIFT);
+    press(&mut rt, Key::Left, NONE);
+    assert_eq!(caret(&rt), at, "Left collapses the selection to where it began, drawn on the left");
+}
+
+#[test]
+fn undo_puts_a_split_caret_back_where_it_drew() {
+    let (mut rt, _, at) = after_the_space("abc אבג");
+    press(&mut rt, Key::Text("X".into()), NONE);
+    press(&mut rt, Key::Command('z'), NONE);
+    assert_eq!(rt.state.text, "Notes\nabc אבג\nend");
+    assert_eq!(caret(&rt), at, "Undo puts the caret back on the side it drew on");
+    press(&mut rt, Key::Right, NONE);
+    press(&mut rt, Key::Text("Y".into()), NONE);
+    assert_eq!(rt.state.text, "Notes\nabc אבYג\nend", "so Right steps over one Hebrew letter");
 }

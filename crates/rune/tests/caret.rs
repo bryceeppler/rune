@@ -87,7 +87,7 @@ fn caret_rect_tracks_grapheme_steps() {
     for i in (0..clusters.len()).rev() {
         key(&mut rt, Key::Left);
         let c = popup_follows(&mut rt, &format!("before cluster {i}"));
-        assert_eq!(rt.state.draft.focus, clusters[..i].concat().len(), "Left lands before cluster {i}");
+        assert_eq!(rt.state.draft.selection().focus.byte, clusters[..i].concat().len(), "Left lands before cluster {i}");
         assert!(c[0] < xs.last().unwrap() - 2.0, "cluster {i} moves the caret left: {c:?} after {xs:?}");
         xs.push(c[0]);
     }
@@ -95,7 +95,7 @@ fn caret_rect_tracks_grapheme_steps() {
     for i in 1..=clusters.len() {
         key(&mut rt, Key::Right);
         let c = popup_follows(&mut rt, &format!("after cluster {i}"));
-        assert_eq!(rt.state.draft.focus, clusters[..i].concat().len(), "Right lands after cluster {i}");
+        assert_eq!(rt.state.draft.selection().focus.byte, clusters[..i].concat().len(), "Right lands after cluster {i}");
         assert!((c[0] - xs[i]).abs() < 0.01, "Right retraces Left at {i}: {} vs {}", c[0], xs[i]);
     }
 

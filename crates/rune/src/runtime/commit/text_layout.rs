@@ -39,7 +39,7 @@ pub(super) fn caret_index(e: &crate::edit::TextEdit, content: &str) -> usize {
     match &e.preedit {
         Some((p, Some((_, c)))) => (e.range().0 + (*c).min(p.len())).min(content.len()),
         Some((p, None)) => (e.range().0 + p.len()).min(content.len()),
-        None => e.display_index(e.focus).min(content.len()),
+        None => e.display_index(e.selection().focus.byte).min(content.len()),
     }
 }
 

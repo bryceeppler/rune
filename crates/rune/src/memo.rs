@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(shown.as_deref(), Some("aXb"), "the composition draws at the moved caret");
         let mut edit = TextEdit::new("ab");
         let caret = hash_of(&edit);
-        edit.anchor = 0;
+        edit.set_selection(crate::Selection { anchor: crate::Caret::at(0), ..edit.selection() });
         assert_ne!(hash_of(&edit), caret, "a selection changes the version");
     }
 

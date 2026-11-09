@@ -10,7 +10,7 @@ fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
 fn field(text: &str, caret: usize, width: f32) -> Runtime<TextEdit> {
     let mut e = TextEdit::new(text);
     e.focused = true;
-    e.set_caret(caret);
+    e.set_caret(crate::Caret::at(caret));
     let mut rt = Runtime::new(e, view, (width, 400.0), Env::new(true, 1.0));
     rt.frame(0.0);
     rt.ime(Ime::Enabled);
@@ -25,7 +25,7 @@ fn review4_rtl_ime_repro() {
     let text = "a\nword\u{2028}e\u{301}\u{2028}漢שלום\rbb\u{2028}\r\n\u{2029}e\u{301} ";
     let mut e = TextEdit::from_parts(text, vec![MarkRange::new(0..1, Mark::Code), MarkRange::new(5..26, Mark::Bold)], blocks);
     e.focused = true;
-    e.set_caret(10);
+    e.set_caret(crate::Caret::at(10));
     let mut rt = Runtime::new(e, view, (148.0, 2000.0), Env::new(true, 1.0));
     rt.frame(0.0);
     rt.ime(Ime::Enabled);
@@ -61,7 +61,7 @@ fn arabic_and_hebrew_compositions_commit_where_the_caret_is() {
             rt.frame(0.0);
             let want = format!("{}{word}{}", &text[..caret], &text[caret..]);
             assert_eq!(rt.state.text, want, "{word} committed into {text:?} at width {width}");
-            assert_eq!((rt.state.anchor, rt.state.focus), (caret + word.len(), caret + word.len()), "the caret follows {word}");
+            assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (caret + word.len(), caret + word.len()), "the caret follows {word}");
             assert!(rt.state.preedit.is_none());
         }
     }

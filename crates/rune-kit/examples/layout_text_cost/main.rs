@@ -395,7 +395,7 @@ fn memo_chat_state(src: &str) -> MemoChat {
     let chat_keys = (0..CHAT_ROWS).map(|i| format!("msg-{i}")).collect();
     let mut composer = TextEdit::new("Draft reply: ");
     composer.focused = true;
-    composer.set_caret(composer.text.len());
+    composer.set_caret(rune::Caret::at(composer.text.len()));
     MemoChat { kit: Kit::neutral(true), md_style: MarkdownStyle::neutral(true), side, notes, chat, chat_keys, picked: 0, composer }
 }
 
@@ -486,7 +486,7 @@ fn run(case: &str, tag: u32, kb: usize, meta: &mut Vec<String>) -> Vec<Vec<f64>>
             let mid = src[..src.len() / 2].rfind(' ').unwrap_or(0) + 1;
             let mut note = TextEdit::new(&src);
             note.focused = true;
-            note.set_caret(mid);
+            note.set_caret(rune::Caret::at(mid));
             let mut rt = runtime(Edit { note }, edit_view, (760.0, 900.0));
             for _ in 0..3 { rt.ime(Ime::Commit("w".into())); rt.frame(1.0 / 120.0); }
             settle(&mut rt);
@@ -557,7 +557,7 @@ fn run(case: &str, tag: u32, kb: usize, meta: &mut Vec<String>) -> Vec<Vec<f64>>
                     rt.update(|s, _| {
                         let mut next = TextEdit::new("Draft reply: ");
                         next.focused = true;
-                        next.set_caret(next.text.len());
+                        next.set_caret(rune::Caret::at(next.text.len()));
                         s.composer = next;
                     });
                 } else {

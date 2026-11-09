@@ -47,7 +47,7 @@ fn assert_laid_out_whole(rt: &mut Runtime<TextEdit>) {
     for (line, w) in layout.lines().zip(whole.lines()) {
         assert_eq!((line.text_range(), line.metrics()), (w.text_range(), *w.metrics()));
     }
-    let caret = rt.state.focus;
+    let caret = rt.state.selection().focus.byte;
     let cur = parley::editing::Cursor::from_byte_index(&whole, caret, Affinity::Downstream);
     assert_eq!(layout.caret_box(caret, Affinity::Downstream, 3.0), crate::text::cursor_geometry(&cur, &whole, 3.0), "caret at {caret}");
 }
@@ -72,7 +72,7 @@ const SHIFT: Mods = Mods { shift: true, alt: false, ctrl: false, cmd: false, log
 fn edits_across_paragraph_breaks_lay_out_as_one_layout() {
     let mut rt = note();
     let at = rt.state.text.find("Short 4").unwrap() + "Short 4".len();
-    rt.update(|s, _| s.set_caret(at));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(at)));
     rt.frame(0.0);
     let shaped = rt.text.shaped;
     type_text(&mut rt, " more");
@@ -89,7 +89,7 @@ fn edits_across_paragraph_breaks_lay_out_as_one_layout() {
     assert!(rt.state.text.contains("Short 4 more\n\nParagraph 6"), "Backspace took the new paragraph back");
     assert_laid_out_whole(&mut rt);
     let next = rt.state.text.find("Paragraph 6").unwrap();
-    rt.update(|s, _| s.set_caret(next));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(next)));
     rt.frame(0.0);
     let shaped = rt.text.shaped;
     press(&mut rt, Key::Backspace, Mods::default());
@@ -99,7 +99,7 @@ fn edits_across_paragraph_breaks_lay_out_as_one_layout() {
     assert_laid_out_whole(&mut rt);
 
     let (a, b) = (rt.state.text.find("Short 7").unwrap() + 2, rt.state.text.find("Paragraph 9").unwrap() + 4);
-    rt.update(|s, _| s.set_selection(a, b));
+    rt.update(|s, _| s.set_selection(crate::Selection::bytes(a, b)));
     rt.frame(0.0);
     let shaped = rt.text.shaped;
     type_text(&mut rt, "X");
@@ -114,14 +114,14 @@ fn edits_across_paragraph_breaks_lay_out_as_one_layout() {
 fn a_selection_extends_across_paragraphs() {
     let mut rt = note();
     let start = rt.state.text.find("Paragraph 3").unwrap() + 20;
-    rt.update(|s, _| s.set_caret(start));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(start)));
     rt.frame(0.0);
     let (_, whole) = layouts(&mut rt);
     let (mut want, mut side) = (start, Affinity::Downstream);
     for _ in 0..5 {
         press(&mut rt, Key::Down, SHIFT);
         (want, side) = crate::text::move_line(&whole, want, side, true).unwrap();
-        assert_eq!((rt.state.anchor, rt.state.focus), (start, want));
+        assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (start, want));
     }
     assert!(rt.state.selected().matches('\n').count() >= 2, "the selection spans paragraphs");
     let (layout, whole) = layouts(&mut rt);
@@ -129,7 +129,7 @@ fn a_selection_extends_across_paragraphs() {
     for _ in 0..5 {
         press(&mut rt, Key::Up, SHIFT);
         (want, side) = crate::text::move_line(&whole, want, side, false).unwrap();
-        assert_eq!((rt.state.anchor, rt.state.focus), (start, want));
+        assert_eq!((rt.state.selection().anchor.byte, rt.state.selection().focus.byte), (start, want));
     }
 }
 
@@ -147,7 +147,7 @@ fn a_press_in_a_later_paragraph_puts_the_caret_where_one_layout_does() {
         rt.pointer_up(ox + x, oy + y);
         rt.frame(1.0 + k as f64);
         let at = crate::text::cursor_from_point(&whole, x * s, y * s).index();
-        assert_eq!(rt.state.focus, at, "press at ({x}, {y})");
+        assert_eq!(rt.state.selection().focus.byte, at, "press at ({x}, {y})");
     }
 }
 
@@ -157,7 +157,7 @@ fn a_press_in_a_later_paragraph_puts_the_caret_where_one_layout_does() {
 fn an_ime_composition_inside_a_paragraph() {
     let mut rt = note();
     let at = rt.state.text.find("Paragraph 6").unwrap() + 4;
-    rt.update(|s, _| s.set_caret(at));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(at)));
     rt.frame(0.0);
     let shaped = rt.text.shaped;
     rt.ime(Ime::Enabled);
@@ -175,7 +175,7 @@ fn an_ime_composition_inside_a_paragraph() {
     rt.ime(Ime::Commit("かな".into()));
     rt.frame(0.0);
     assert!(rt.state.text.contains("Paraかなgraph 6"));
-    assert_eq!(rt.state.focus, at + 6);
+    assert_eq!(rt.state.selection().focus.byte, at + 6);
     assert_laid_out_whole(&mut rt);
 }
 
@@ -186,7 +186,7 @@ fn undo_and_redo_reshape_nothing() {
     let mut rt = note();
     let before = rt.state.text.clone();
     let at = rt.state.text.find("Short 10").unwrap();
-    rt.update(|s, _| s.set_caret(at));
+    rt.update(|s, _| s.set_caret(crate::Caret::at(at)));
     rt.frame(0.0);
     type_text(&mut rt, "word ");
     press(&mut rt, Key::Enter, SHIFT);
@@ -218,7 +218,7 @@ fn a_composition_with_line_breaks_takes_one_layouts_blocks() {
         for at in [0, 2, 5, 9] {
             let mut edit = TextEdit::from_parts("aa\nbb\nccc", vec![], vec![Block::Quote, Block::Bullet(1), Block::Code]);
             edit.focused = true;
-            edit.set_caret(at);
+            edit.set_caret(crate::Caret::at(at));
             let mut rt = Runtime::new(edit, view, (420.0, 2400.0), Env::new(true, 2.0));
             rt.frame(0.0);
             rt.ime(Ime::Enabled);

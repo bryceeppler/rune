@@ -6,8 +6,9 @@ use super::*;
 impl TextEdit {
     /// Synchronize `blocks`, `soft_breaks`, and `marks` with `self.text`.
     pub(crate) fn sync_invariants(&mut self) {
-        self.anchor = Self::clamp_char_boundary(&self.text, self.anchor);
-        self.focus = Self::clamp_char_boundary(&self.text, self.focus);
+        let selection = self.selection;
+        self.selection.anchor.byte = Self::clamp_char_boundary(&self.text, selection.anchor.byte);
+        self.selection.focus.byte = Self::clamp_char_boundary(&self.text, selection.focus.byte);
         if self.secure {
             self.marks.clear();
             self.blocks.clear();
@@ -33,9 +34,10 @@ impl TextEdit {
         self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count);
         self.normalize_marks();
         self.snap_to_pills();
-        let anchor_line = self.line_of_byte(self.anchor);
+        let anchor_line = self.line_of_byte(self.selection.anchor.byte);
+        let ends = self.ends();
         if let Some((armed, ref mut marks)) = self.pending {
-            if armed != (self.anchor, self.focus) || self.blocks.get(anchor_line) == Some(&Block::Code) {
+            if armed != ends || self.blocks.get(anchor_line) == Some(&Block::Code) {
                 self.pending = None;
             } else if let Some(bits) = self.allowed_marks {
                 marks.retain(|m| bits & 1 << m.kind_order() != 0);
@@ -241,7 +243,7 @@ impl TextEdit {
                 return Vec::new();
             }
             if let Some((armed, ref p)) = self.pending
-                && armed == (self.anchor, self.focus)
+                && armed == self.ends()
             {
                 return p.clone();
             }
@@ -274,7 +276,7 @@ impl TextEdit {
         let (a, b) = self.range();
         if a == b {
             if let Some((armed, ref p)) = self.pending
-                && armed == (self.anchor, self.focus)
+                && armed == self.ends()
             {
                 return p.iter().find_map(Mark::link_url);
             }
@@ -298,7 +300,7 @@ impl TextEdit {
         }
         let mut active = self.active_marks();
         f(&mut active);
-        self.pending = Some(((self.anchor, self.focus), active));
+        self.pending = Some((self.ends(), active));
     }
 
     /// Toggle `mark` on the selection, or in the pending typing style when the selection is empty.
@@ -374,7 +376,7 @@ impl TextEdit {
         if a == b {
             let mut active = self.active_marks();
             active.retain(|m| !m.same_kind(mark));
-            self.pending = Some(((self.anchor, self.focus), active));
+            self.pending = Some((self.ends(), active));
             return;
         }
         self.break_history_group();

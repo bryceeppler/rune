@@ -387,7 +387,7 @@ impl Knobs {
         self.sync_edit();
         self.filtering = true;
         self.edit.focused = true;
-        self.edit.set_selection(0, self.edit.text.len());
+        self.edit.set_selection(rune::Selection::bytes(0, self.edit.text.len()));
     }
     /// Stops filtering; focus goes back to the panel.
     pub(crate) fn stop_filter(&mut self) {

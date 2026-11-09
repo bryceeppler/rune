@@ -88,7 +88,7 @@ fn single_line_input_scrolls_to_the_caret_instead_of_wrapping() {
     // A click lands on the scrolled text, not on the hidden start.
     rt.queue.push(Action::Focus(path.clone(), 1.0, 12.0));
     rt.frame(0.0);
-    assert!(rt.state.focus > 10, "clicked index {}", rt.state.focus);
+    assert!(rt.state.selection().focus.byte > 10, "clicked index {}", rt.state.selection().focus.byte);
 
     rt.queue.push(Action::Blur);
     rt.frame(0.0);
@@ -116,12 +116,12 @@ fn grapheme_arrow_caret_hit_tests_roundtrip_after_single_line_scroll() {
         offset += grapheme.len();
         rt.key(KeyEvent { key: crate::Key::Right, mods: Default::default() });
         rt.frame(0.0);
-        assert_eq!(rt.state.focus, offset, "arrow must cross the whole {grapheme:?}");
+        assert_eq!(rt.state.selection().focus.byte, offset, "arrow must cross the whole {grapheme:?}");
         let [x, y, _, height] = rt.ime_area.unwrap();
         assert!((0.0..=100.0).contains(&x), "caret must remain in the scrolled field");
         rt.queue.push(Action::Focus(path.clone(), x + 0.1, y + height * 0.5));
         rt.frame(0.0);
-        assert_eq!(rt.state.focus, offset, "clicking the reported caret after {grapheme:?} must hit that boundary");
+        assert_eq!(rt.state.selection().focus.byte, offset, "clicking the reported caret after {grapheme:?} must hit that boundary");
     }
     assert!(rt.input_scroll[&path] > 0.0, "the fixture must exercise scrolled caret geometry");
 }
@@ -192,7 +192,7 @@ fn rich_pastes_reach_paste_hooks_and_plain_fields_keep_pasting_text() {
     assert_eq!(rt.paste_forms(rt.paste_target().as_deref()), Forms::All);
     paste(&mut rt);
     assert_eq!((rt.state.rich.text.as_str(), rt.state.changes), ("Hello", 1), "a declining hook leaves the paste to the editor");
-    rt.update(|s, _| { s.take = true; s.rich.text.clear(); s.rich.anchor = 0; s.rich.focus = 0; }); rt.frame(0.0);
+    rt.update(|s, _| { s.take = true; s.rich.text.clear(); s.rich.set_selection(crate::Selection::bytes(0, 0)); }); rt.frame(0.0);
     paste(&mut rt);
     assert_eq!((rt.state.rich.text.as_str(), rt.state.changes), ("[rich]", 2), "a hook that takes it edits the field; on_input_change runs");
     assert_eq!(rt.state.hook, vec![Some("<b>Hello</b>".to_owned()); 2]);
@@ -335,7 +335,7 @@ fn a_paste_of_files_alone_keeps_the_selection_of_a_field_without_a_hook() {
         let mut field = crate::TextEdit::new("keep me");
         if rich { field = field.rich(); }
         field.focused = true;
-        field.set_selection(0, 7);
+        field.set_selection(crate::Selection::bytes(0, 7));
         let m = crate::clipboard::memory();
         let mut rt = Runtime::new(State { field }, view, (200.0, 100.0), Env::new(true, 1.0));
         rt.use_clipboard(&m);
@@ -386,7 +386,7 @@ fn clipboard_requests_follow_handler_order_and_are_consumed_once() {
             .child(crate::el::text_input(edit, crate::tok::TextStyle::new(14.0, 400.0)).key("input").on_edit(|e: &mut TextEdit| e))
     }
     let mut edit = TextEdit::new("héllo 👋");
-    edit.anchor = 0;
+    edit.set_selection(crate::Selection { anchor: crate::Caret::at(0), ..edit.selection() });
     let mut rt = Runtime::new(edit, view, (300.0, 200.0), Env::new(true, 2.0));
     rt.frame(0.0);
     let button = rt.nodes.iter().find(|n| n.key.as_deref() == Some("copy")).unwrap().path.clone();

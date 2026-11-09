@@ -48,7 +48,7 @@ fn a_copy_button_without_a_handler_still_keeps_its_press() {
     }
     let mut edit = TextEdit::new("text");
     edit.focused = true;
-    edit.set_caret(1);
+    edit.set_caret(rune::Caret::at(1));
     let mut rt = Runtime::new(edit, view, (400.0, 100.0), Env::new(true, 1.0));
     rt.frame(0.0);
     let (x, y) = rt.find("action").unwrap();
@@ -503,9 +503,9 @@ fn secure_text_input_revealed_draws_plain_glyphs_and_keeps_secure_protections() 
             )
     }
     let mut plain = TextEdit::new("hé🙂 world");
-    plain.set_caret(3);
+    plain.set_caret(rune::Caret::at(3));
     let mut secret = TextEdit::new("hé🙂 world");
-    secret.set_caret(3);
+    secret.set_caret(rune::Caret::at(3));
     secret.focused = true;
     let mut rt = Runtime::new(Form { plain, secret, revealed: true }, view, (320.0, 120.0), Env::new(true, 1.0));
     rt.frame(0.0);

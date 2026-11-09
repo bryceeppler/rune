@@ -856,7 +856,7 @@ fn pill_styles_follow_captured_state_through_a_cached_subtree() {
         el().size(200.0, 40.0).child(el().size(190.0, 30.0).child(field).cache())
     }
     let mut edit = TextEdit::new(" ").rich();
-    edit.set_caret(0);
+    edit.set_caret(crate::Caret::at(0));
     edit.insert_pill("p:1", "one");
     edit.insert("  ");
     edit.insert_pill("p:2", "two");

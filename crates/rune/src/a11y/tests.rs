@@ -259,7 +259,7 @@ fn field(s: &Field, _: &mut Cx<Field>) -> El {
 fn text_fields_expose_lines_caret_and_selection() {
     let mut edit = TextEdit::new("hello world");
     edit.focused = true;
-    edit.set_selection(0, 5);
+    edit.set_selection(crate::Selection::bytes(0, 5));
     let mut rt = Runtime::new(Field { edit }, field, (400.0, 200.0), Env::new(true, 1.0));
     rt.frame(0.0);
     let tree = rt.accessibility_tree();

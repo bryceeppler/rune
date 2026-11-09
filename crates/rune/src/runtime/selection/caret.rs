@@ -336,7 +336,7 @@ mod tests {
             &(0..16).map(|l| format!("tall block line {l}")).collect::<Vec<_>>().join("\n"),
         );
         blocks[160].focused = true;
-        blocks[160].set_caret(0);
+        blocks[160].set_caret(crate::Caret::at(0));
         let mut rt = Runtime::new(blocks, blocks_view, (640.0, 500.0), Env::new(true, 2.0));
         rt.frame(0.0);
         rt.update(|_, tx| tx.scroll_into_view("b160"));

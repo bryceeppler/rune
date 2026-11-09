@@ -175,7 +175,7 @@ impl<S: 'static> Runtime<S> {
             let caret = caret_index(edit, &self.a11y_drawn_text(i)?);
             (caret, caret)
         } else {
-            (edit.display_index(edit.anchor), edit.display_index(edit.focus))
+            (edit.display_index(edit.selection().anchor.byte), edit.display_index(edit.selection().focus.byte))
         };
         let at = |byte: usize| position(lines, byte).map(|(k, c)| TextPosition { node: line_id(n.id, k), character_index: c });
         Some(TextSelection { anchor: at(anchor)?, focus: at(focus)? })

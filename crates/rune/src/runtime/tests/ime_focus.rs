@@ -328,7 +328,7 @@ fn a_click_in_the_composing_field_keeps_its_composition_open() {
 #[test]
 fn a_composition_over_a_selection_commits_once_and_undoes() {
     let mut rt = composing_in_a();
-    rt.update(|s, _| { s.a.replace_text("before"); s.a.anchor = 0; s.a.focus = 6; });
+    rt.update(|s, _| { s.a.replace_text("before"); s.a.set_selection(crate::Selection::bytes(0, 6)); });
     rt.frame(0.0);
     send(&mut rt, [Ime::Preedit("か".into(), None)]);
     click(&mut rt, 100.0, 60.0);
@@ -355,7 +355,7 @@ fn clearing_undo_history_keeps_the_composition_its_fields() {
 #[test]
 fn review_formatting_the_selection_does_not_lose_a_shown_composition() {
     let mut rt = composing_in_a();
-    rt.update(|s, _| { s.a = TextEdit::new("before").rich(); s.a.focused = true; s.a.anchor = 0; s.a.focus = 6; });
+    rt.update(|s, _| { s.a = TextEdit::new("before").rich(); s.a.focused = true; s.a.set_selection(crate::Selection::bytes(0, 6)); });
     rt.frame(0.0);
     send(&mut rt, [Ime::Preedit("か".into(), None)]);
     press(&mut rt, Key::Command('b'), false);

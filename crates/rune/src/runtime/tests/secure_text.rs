@@ -22,7 +22,7 @@ fn secure_input_masks_layout_inspector_and_unicode_pointer_indices() {
     let caret = parley::editing::Cursor::from_byte_index(layout, 6, parley::layout::Affinity::Downstream).geometry(layout, 1.0);
     rt.queue.push(Action::Focus(path, caret.x0 as f32 + 0.1, ((caret.y0 + caret.y1) * 0.5) as f32));
     rt.frame(0.0);
-    assert_eq!(rt.state.focus, 3);
+    assert_eq!(rt.state.selection().focus.byte, 3);
     rt.paste("界"); rt.frame(0.0);
     assert_eq!(rt.state.text, "hé界🙂");
     rt.key(KeyEvent { key: crate::Key::Command('a'), mods: Default::default() }); rt.frame(0.0);
@@ -155,9 +155,9 @@ fn revealed_secure_input_matches_plain_layout_and_keeps_protections() {
             .child(text_input(&s.secret, style).single_line().key("secret").size(200.0, 40.0).on_edit(|s: &mut Form| &mut s.secret))
     }
     let mut plain = TextEdit::new("hé🙂 world");
-    plain.set_selection(1, 7);
+    plain.set_selection(crate::Selection::bytes(1, 7));
     let mut secret = TextEdit::new("hé🙂 world").secure().revealed(true);
-    secret.set_selection(1, 7);
+    secret.set_selection(crate::Selection::bytes(1, 7));
     secret.focused = true;
     let mut rt = Runtime::new(Form { plain, secret }, view, (240.0, 100.0), Env::new(true, 1.0));
     rt.frame(0.0);
@@ -220,7 +220,7 @@ fn revealed_secure_input_matches_plain_layout_and_keeps_protections() {
     assert_eq!(rt.state.secret.text, "hX world", "no undo on revealed field");
 
     let revealed_w = rt.nodes.iter().find(|n| n.key.as_deref() == Some("secret")).unwrap().text_layout.as_ref().unwrap().full_width();
-    rt.update(|s, _| { s.secret.set_selection(1, 4); s.secret.set_revealed(false); });
+    rt.update(|s, _| { s.secret.set_selection(crate::Selection::bytes(1, 4)); s.secret.set_revealed(false); });
     rt.frame(0.0);
     assert_eq!(rt.state.secret.range(), (1, 4), "toggling revealed keeps selection");
     let ns = rt.nodes.iter().find(|n| n.key.as_deref() == Some("secret")).unwrap();
@@ -291,7 +291,7 @@ fn multiline_secure_input_hides_length_and_lines_wraps_anywhere_and_conceals_on_
     rt_long.pointer_down(el_long.rect[0] + 4.0, el_long.rect[1] + 4.0);
     rt_long.pointer_up(el_long.rect[0] + 4.0, el_long.rect[1] + 4.0);
     rt_long.frame(0.0);
-    assert_eq!(rt_long.state.secret.focus, long_secret.len());
+    assert_eq!(rt_long.state.secret.selection().focus.byte, long_secret.len());
 
     // Revealing wraps unbroken lines at character boundaries within 180pt width.
     rt_long.update(|s, _| s.secret.set_revealed(true));

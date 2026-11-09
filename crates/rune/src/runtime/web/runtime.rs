@@ -17,7 +17,8 @@ pub(crate) struct Mirror {
 /// Read at most 512 UTF-16 units on each side, without scanning the document prefix.
 fn context_window(edit: &crate::TextEdit) -> (usize, &str, u32, u32) {
     let (a, b) = edit.range();
-    let (raw_anchor, raw_focus) = if edit.anchor <= edit.focus { (a, b) } else { (b, a) };
+    let selection = edit.selection();
+    let (raw_anchor, raw_focus) = if selection.anchor.byte <= selection.focus.byte { (a, b) } else { (b, a) };
     let mut start = a;
     let mut units = 0;
     for (i, ch) in edit.text[..a].char_indices().rev() {
@@ -70,7 +71,7 @@ mod tests {
             "start":1, "end":3, "text":"é", "anchor":2, "focus":2});
         rt.web_edit(&event);
         rt.frame(0.0);
-        assert_eq!((&*rt.state.0.text, rt.state.1, rt.state.0.focus), ("aéc", 1, 3));
+        assert_eq!((&*rt.state.0.text, rt.state.1, rt.state.0.selection().focus.byte), ("aéc", 1, 3));
         rt.web_edit(&event);
         rt.frame(0.0);
         assert_eq!((&*rt.state.0.text, rt.state.1), ("aéc", 1));
@@ -83,7 +84,7 @@ mod tests {
         let boundaries: Vec<_> = edit.text.char_indices().map(|(i, _)| i).chain([edit.text.len()]).collect();
         for &a in boundaries.iter().step_by(157) {
             for &f in boundaries.iter().step_by(271) {
-                edit.anchor = a; edit.focus = f;
+                edit.set_selection(crate::Selection::bytes(a, f));
                 let (base, text, anchor, focus) = context_window(&edit);
                 assert_eq!(base + byte_at(text, anchor as usize).unwrap(), a);
                 assert_eq!(base + byte_at(text, focus as usize).unwrap(), f);
@@ -107,7 +108,7 @@ mod tests {
         let allocation = mirror.text.as_ptr();
         for _ in 0..120 { assert!(!mirror.update("field", Some(&edit))); }
         assert_eq!(mirror.text.as_ptr(), allocation);
-        edit.anchor -= 4;
+        edit.set_selection(crate::Selection { anchor: crate::Caret::at(edit.selection().anchor.byte - 4), ..edit.selection() });
         assert!(mirror.update("field", Some(&edit)), "selection-only changes sync");
         edit.text.push('x');
         assert!(mirror.update("field", Some(&edit)), "edits within the window sync");
@@ -148,7 +149,7 @@ mod tests {
         rt.web_edit(&event);
         assert_eq!(rt.state.text, "🦀 help");
         assert!(rt.state.preedit.is_none());
-        assert_eq!(rt.state.focus, rt.state.text.len());
+        assert_eq!(rt.state.selection().focus.byte, rt.state.text.len());
         rt.web_edit(&event);
         assert_eq!(rt.state.text, "🦀 help", "stale context rejected");
         event["base"] = json!(1);
@@ -175,7 +176,7 @@ mod tests {
         event["end"] = json!(2);
         rt.web_edit(&event);
         assert_eq!(rt.state.text, "éx tail");
-        assert_eq!(rt.state.focus, 3);
+        assert_eq!(rt.state.selection().focus.byte, 3);
     }
 
     #[test]
@@ -274,9 +275,9 @@ impl<S: 'static> Runtime<S> {
                 if a > b { return EditOutcome::default(); }
                 edit.ime(&Ime::Preedit(String::new(), None));
                 let raw = (base + a, base + b);
-                edit.anchor = raw.0; edit.focus = raw.1;
-                edit.snap_to_pills();
-                let snapped = (edit.anchor, edit.focus) != raw;
+                let raw = crate::Selection::bytes(raw.0, raw.1);
+                edit.set_selection(raw);
+                let snapped = edit.selection() != raw;
                 let text = event["text"].as_str().unwrap_or_default();
                 if event["kind"] == "preedit" {
                     edit.ime(&Ime::Preedit(text.to_owned(), Some((text.len(), text.len()))));
@@ -287,8 +288,7 @@ impl<S: 'static> Runtime<S> {
             }
             if let Some((anchor, focus)) = number("anchor").zip(number("focus"))
                 && let Some((a, f)) = byte_at(&edit.text[base..], anchor).zip(byte_at(&edit.text[base..], focus)) {
-                edit.anchor = base + a; edit.focus = base + f;
-                edit.snap_to_pills();
+                edit.set_selection(crate::Selection::bytes(base + a, base + f));
             }
             EditOutcome::default()
         }, &mut tx);
