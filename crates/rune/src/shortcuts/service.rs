@@ -75,10 +75,17 @@ struct Statuses {
 }
 
 impl Statuses {
+    /// A revoked registration no longer holds its chord, here or in another App, so the app can
+    /// register the chord again before it releases the revoked one.
     fn report(&self, id: ShortcutId, status: ShortcutStatus) {
+        if status == ShortcutStatus::Revoked { NATIVE.lock().unwrap().retain(|(native, ..)| *native != id); }
         self.reported.lock().unwrap().insert(id, status);
         let watch = self.watch.lock().unwrap().clone();
         if let Some(watch) = watch { watch(id); }
+    }
+
+    fn revoked(&self, id: ShortcutId) -> bool {
+        self.reported.lock().unwrap().get(&id) == Some(&ShortcutStatus::Revoked)
     }
 }
 
@@ -87,18 +94,22 @@ struct Engine {
     headless: bool,
     wayland: bool,
     sink: Sink,
-    report: Report,
+    statuses: Arc<Statuses>,
     native: Option<NativeBackend>,
     registrations: HashMap<ShortcutId, Shortcut>,
 }
 
 impl Engine {
     fn register(&mut self, id: ShortcutId, shortcut: Shortcut) -> Result<(), ShortcutError> {
-        if self.registrations.values().any(|s| s == &shortcut) { return Err(ShortcutError::Conflict); }
+        if self.registrations.iter().any(|(id, s)| s == &shortcut && !self.statuses.revoked(*id)) { return Err(ShortcutError::Conflict); }
         if !self.headless {
             // Another App in this process holds it; some backends (the portal) wouldn't refuse.
             if NATIVE.lock().unwrap().iter().any(|(_, s, _)| s == &shortcut) { return Err(ShortcutError::Conflict); }
-            if self.native.is_none() { self.native = Some(super::backend(self.wayland, self.sink.clone(), self.report.clone())?); }
+            if self.native.is_none() {
+                let statuses = self.statuses.clone();
+                let report: Report = Arc::new(move |id, status| statuses.report(id, status));
+                self.native = Some(super::backend(self.wayland, self.sink.clone(), report)?);
+            }
             if let Err(error) = self.native.as_mut().unwrap().register(id, &shortcut) {
                 if self.registrations.is_empty() { self.native = None; }
                 return Err(error);
@@ -111,7 +122,9 @@ impl Engine {
 
     fn unregister(&mut self, id: ShortcutId) -> Result<(), ShortcutError> {
         if !self.registrations.contains_key(&id) { return Err(ShortcutError::UnknownId); }
-        if let Some(native) = self.native.as_mut() { native.unregister(id)?; }
+        if let Some(native) = self.native.as_mut()
+            && let Err(error) = native.unregister(id)
+            && !self.statuses.revoked(id) { return Err(error); }
         self.registrations.remove(&id);
         NATIVE.lock().unwrap().retain(|(native, ..)| *native != id);
         // Drop the connection/listener when the last registration goes away.
@@ -122,7 +135,7 @@ impl Engine {
     /// Who holds `shortcut`: this App, another App in this process, or the platform.
     /// Headless engines answer only for their own virtual registrations.
     fn owner(&self, shortcut: &Shortcut) -> Option<String> {
-        if self.registrations.values().any(|s| s == shortcut) { return Some(self.title.into()); }
+        if self.registrations.iter().any(|(id, s)| s == shortcut && !self.statuses.revoked(*id)) { return Some(self.title.into()); }
         if self.headless { return None; }
         let other = NATIVE.lock().unwrap().iter().find(|(_, s, _)| s == shortcut).map(|(.., title)| (*title).into());
         other.or_else(|| super::system_owner(shortcut))
@@ -259,13 +272,10 @@ impl Guard {
                 });
             }
         });
-        let statuses = Arc::downgrade(&shared.shortcuts.statuses);
-        let report: Report = Arc::new(move |id, status| {
-            if let Some(statuses) = statuses.upgrade() { statuses.report(id, status); }
-        });
+        let statuses = shared.shortcuts.statuses.clone();
         let control = shared.shortcuts.control.clone();
         let title = shared.shortcuts.title.get().copied().unwrap_or_default();
-        let engine = Engine { title, headless, wayland, sink, report, native: None, registrations: HashMap::new() };
+        let engine = Engine { title, headless, wayland, sink, statuses, native: None, registrations: HashMap::new() };
         #[cfg(not(target_os = "linux"))]
         ENGINES.with(|engines| engines.borrow_mut().insert(control.key, Rc::new(RefCell::new(engine))));
         #[cfg(target_os = "linux")]
@@ -315,6 +325,27 @@ mod tests {
     use super::*;
     use crate::{App, AppSpec, el};
     #[test]
+    fn a_chord_the_desktop_revoked_registers_again_and_its_old_registration_still_releases() {
+        struct Portal { closed: ShortcutId }
+        impl Backend for Portal {
+            fn register(&mut self, _: ShortcutId, _: &Shortcut) -> Result<(), ShortcutError> { Ok(()) }
+            fn unregister(&mut self, id: ShortcutId) -> Result<(), ShortcutError> {
+                if id == self.closed { Err(ShortcutError::Backend("the session is closed".into())) } else { Ok(()) }
+            }
+        }
+        let (revoked, again, third) = (ShortcutId(9001), ShortcutId(9002), ShortcutId(9003));
+        let statuses = Arc::<Statuses>::default();
+        let mut engine = Engine { title: "portal", headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: statuses.clone(), native: Some(Box::new(Portal { closed: revoked })), registrations: HashMap::new() };
+        let chord: Shortcut = "ctrl+alt+shift+f19".parse().unwrap();
+        assert_eq!(engine.register(revoked, chord.clone()), Ok(()));
+        assert_eq!(engine.register(again, chord.clone()), Err(ShortcutError::Conflict), "a delivered chord is held");
+        statuses.report(revoked, ShortcutStatus::Revoked);
+        assert_eq!(engine.register(again, chord.clone()), Ok(()), "Try again recovers the revoked chord");
+        assert_eq!(engine.unregister(revoked), Ok(()), "a revoked registration releases though its session is gone");
+        assert_eq!(engine.registrations.keys().collect::<Vec<_>>(), [&again]);
+        assert_eq!(engine.register(third, chord), Err(ShortcutError::Conflict), "the new registration holds it");
+    }
+    #[test]
     fn mock_backend_errors_are_not_confused_with_conflicts() {
         struct Mock(ShortcutError);
         impl Backend for Mock {
@@ -322,7 +353,7 @@ mod tests {
             fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Ok(()) }
         }
         for error in [ShortcutError::Conflict, ShortcutError::Unsupported, ShortcutError::PermissionDenied, ShortcutError::Backend("disconnected".into())] {
-            let mut engine = Engine { title: "mock", headless: false, wayland: false, sink: Arc::new(|_, _| {}), report: Arc::new(|_, _| {}), native: Some(Box::new(Mock(error.clone()))), registrations: HashMap::new() };
+            let mut engine = Engine { title: "mock", headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: Arc::default(), native: Some(Box::new(Mock(error.clone()))), registrations: HashMap::new() };
             assert_eq!(engine.register(ShortcutId(1), "ctrl+a".parse().unwrap()), Err(error));
             assert!(engine.registrations.is_empty());
         }
@@ -339,7 +370,7 @@ mod tests {
             fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Ok(()) }
         }
         let chord: Shortcut = "ctrl+alt+shift+f17".parse().unwrap();
-        let native = |title| Engine { title, headless: false, wayland: false, sink: Arc::new(|_, _| {}), report: Arc::new(|_, _| {}), native: Some(Box::new(Accept)), registrations: HashMap::new() };
+        let native = |title| Engine { title, headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: Arc::default(), native: Some(Box::new(Accept)), registrations: HashMap::new() };
         let (mut first, mut second) = (native("First"), native("Second"));
         first.register(ShortcutId(u32::MAX - 1), chord.clone()).unwrap();
         assert_eq!(second.register(ShortcutId(u32::MAX - 2), chord.clone()), Err(ShortcutError::Conflict),
