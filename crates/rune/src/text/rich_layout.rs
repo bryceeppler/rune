@@ -105,7 +105,7 @@ impl TextSystem {
         wrapping: Wrapping,
         cache: bool,
     ) -> Rc<Layout<Ink>> {
-        self.layout_keyed(None, text, spans, blocks, pills, style, scale, max_width, align, wrapping, parley::BaseDirection::Auto, cache)
+        self.layout_keyed(None, text, spans, blocks, pills, style, scale, max_width, align, wrapping, cache)
     }
 
     /// Secure display runs must not enter the shared layout cache or leave character

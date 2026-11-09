@@ -236,7 +236,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
             }
         }
         let style = if step / 13 % 3 == 0 { TextStyle { family: Family::Mono, ..STYLE } } else { STYLE };
-        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [Some(60.0), Some(160.0), Some(400.0), None][step / 7 % 4], [Wrapping::Words, Wrapping::Anywhere, Wrapping::BreakAll][step % 3]);
+        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [Some(60.0), Some(160.0), Some(400.0), None][step / 7 % 4], [Wrapping::Words, Wrapping::Anywhere, Wrapping::BreakAll][step / 5 % 3]);
         let stacked = ts.layout_text(None, &text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, wrapping, true);
         let whole = ts.layout_blocks_inner(&text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, wrapping, true);
         let what = format!("step {step}: {text:?}, spans {:?}, blocks {blocks:?}, pills {:?}", spans.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(), pills.iter().map(|p| (p.start, p.end)).collect::<Vec<_>>());
@@ -255,12 +255,19 @@ fn random_edits_lay_out_stacked_as_one_layout() {
     assert!(stacked_steps > STEPS * 3 / 4, "{stacked_steps} of {STEPS} steps stacked");
 }
 
+/// Each run of a line: whether it reads right to left.
+fn directions(line: &parley::Line<'_, Ink>) -> Vec<bool> {
+    line.runs().map(|r| r.is_rtl()).collect()
+}
+
 /// Random edits of text in several scripts and both directions, with numbers, neutrals, marks,
-/// isolates and embeddings at paragraph edges: each stacked paragraph lays out as Parley lays
-/// out the paragraph alone in the direction Parley gives the whole text, its top at the whole
-/// text's line tops, caret for caret.
+/// isolates and embeddings at paragraph edges, and deletions at its end. Each stack, built from the one before, is the
+/// stack of the same text laid out from nothing, line for line, glyph for glyph and direction
+/// for direction. Each stacked paragraph is Parley's layout of that paragraph alone in its own
+/// direction, at the whole text's line tops, for its lines, carets, hits, line ends, moves
+/// down and selection boxes.
 #[test]
-fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction() {
+fn random_mixed_script_edits_lay_out_each_paragraph_in_its_own_direction() {
     const STEPS: usize = 300;
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
     let mut next = move |n: usize| {
@@ -270,12 +277,14 @@ fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction
         (seed % n.max(1) as u64) as usize
     };
     let tokens = ["word", "o", " ", "שלום", "مرحبا", "\u{64e}", "١٢", "12", "!", "(", ")", "- ", "\u{200f}", "\u{2067}", "\u{2069}", "\u{202b}", "\u{202c}", "漢字", "かな", "👍🏽", "e\u{301}", "\t", "\r", "\u{2029}", "\n", "\n", "\n"];
-    let (mut ts, mut oracle) = (TextSystem::default(), TextSystem::default());
+    let (mut ts, mut full, mut oracle) = (TextSystem::default(), TextSystem::default(), TextSystem::default());
     let mut text = String::from("שלום world\nword\n");
     let (mut rtl, mut ltr) = (0, 0);
     for step in 0..STEPS {
         let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
-        if text.len() > 160 || (bounds.len() > 2 && next(4) == 0) {
+        if step % 7 == 3 {
+            text.pop();
+        } else if text.len() > 160 || (bounds.len() > 2 && next(4) == 0) {
             let a = next(bounds.len() - 1);
             let b = (a + 1 + next(if text.len() > 160 { 30 } else { 4 })).min(bounds.len() - 1);
             text.replace_range(bounds[a]..bounds[b], "");
@@ -286,20 +295,32 @@ fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction
         if step % 10 == 0 {
             text.insert_str(0, ["a", "ש", "\u{2067}ש\u{2069}"][step / 10 % 3]);
         }
-        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [60.0, 160.0, 400.0][step / 7 % 3], [Wrapping::Words, Wrapping::Anywhere][step % 2]);
-        let stacked = ts.layout_text(None, &text, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, true);
+
+        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [60.0, 160.0, 400.0][step / 7 % 3], [Wrapping::Words, Wrapping::Anywhere][step / 5 % 2]);
+        let lay = |ts: &mut TextSystem| ts.layout_text(None, &text, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, true);
+        let stacked = lay(&mut ts);
         ts.end_commit();
+        full.drop_shaped();
+        let fresh = lay(&mut full);
         let what = format!("step {step}: {text:?} at {width} x{scale}");
-        let auto = oracle.layout_keyed(None, &text, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, BaseDirection::Auto, false);
-        let base = if auto.is_rtl() { BaseDirection::Rtl } else { BaseDirection::Ltr };
-        (rtl, ltr) = (rtl + auto.is_rtl() as usize, ltr + !auto.is_rtl() as usize);
+        assert_eq!((stacked.len(), stacked.height().to_bits(), stacked.pieces().count()), (fresh.len(), fresh.height().to_bits(), fresh.pieces().count()), "{what}");
+        for (a, b) in stacked.pieces().zip(fresh.pieces()) {
+            assert_eq!((a.start, a.y.to_bits(), a.lines, a.layout.is_rtl()), (b.start, b.y.to_bits(), b.lines, b.layout.is_rtl()), "{what}");
+            for j in 0..a.lines {
+                let (la, lb) = (a.layout.get(j).unwrap(), b.layout.get(j).unwrap());
+                assert_eq!((la.text_range(), la.break_reason(), *la.metrics()), (lb.text_range(), lb.break_reason(), *lb.metrics()), "{what}: paragraph at {}", a.start);
+                assert_eq!(runs(&la, a.y, |k| k), runs(&lb, b.y, |k| k), "{what}: paragraph at {}", a.start);
+                assert_eq!(directions(&la), directions(&lb), "{what}: paragraph at {}", a.start);
+            }
+        }
         let (mut line, mut y, mut start) = (0, 0f64, 0);
         let paragraphs: Vec<&str> = if text.is_empty() { vec![""] } else { text.split_inclusive('\n').collect() };
-        for (k, para) in paragraphs.iter().enumerate() {
-            let alone = oracle.layout_keyed(None, para, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, base, false);
-            let last = k + 1 == paragraphs.len();
-            let shown = if last { alone.len() } else { alone.len() - 1 };
-            let top = y.round() as f32;
+        for (k, (para, piece)) in paragraphs.iter().zip(stacked.pieces()).enumerate() {
+            let alone = oracle.layout_keyed(None, para, &[], &[], &[], STYLE, scale, Some(width), Alignment::Start, wrapping, false);
+            assert_eq!(piece.layout.is_rtl(), alone.is_rtl(), "{what}: paragraph {k}");
+            (rtl, ltr) = (rtl + alone.is_rtl() as usize, ltr + !alone.is_rtl() as usize);
+            let shown = if k + 1 == paragraphs.len() { alone.len() } else { alone.len() - 1 };
+            let (top, first) = (y.round() as f32, line);
             for j in 0..shown {
                 let (a, b) = (stacked.line(line).unwrap(), alone.get(j).unwrap());
                 let mut m = *b.metrics();
@@ -310,16 +331,32 @@ fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction
                 assert_eq!(a.text_range(), r.start + start..r.end + start, "{what}: line {line}");
                 assert_eq!(a.metrics(), m, "{what}: line {line}");
                 assert_eq!(runs(a.parley(), top, |k| k), runs(&b, top, |k| k), "{what}: line {line}");
+                assert_eq!(directions(a.parley()), directions(&b), "{what}: line {line}");
+                if step % 3 == 0 {
+                    let mid = (b.metrics().block_min_coord + b.metrics().block_max_coord) * 0.5;
+                    for x in (-1..=(width / 23.0) as i32 + 1).map(|i| i as f32 * 23.0) {
+                        let cur = cursor_from_point(&alone, x, mid);
+                        assert_eq!(stacked.hit(x, top + mid), (cur.index() + start, cur.affinity()), "hit at ({x}, {}), {what}", top + mid);
+                    }
+                }
                 y += b.metrics().line_height as f64;
                 line += 1;
             }
             if step % 3 == 0 {
-                for (i, _) in para.char_indices() {
+                let bytes: Vec<usize> = para.char_indices().map(|(i, _)| i).chain([para.len()]).collect();
+                for (n, &i) in bytes[..bytes.len() - 1].iter().enumerate() {
                     let cur = parley::editing::Cursor::from_byte_index(&alone, i, parley::layout::Affinity::Downstream);
                     let mut bb = cursor_geometry(&cur, &alone, 1.0);
                     (bb.y0, bb.y1) = (bb.y0 + top as f64, bb.y1 + top as f64);
                     assert_eq!(stacked.caret_box(start + i, 1.0), bb, "caret at {}, {what}", start + i);
                     assert_eq!(stacked.line_edge(start + i, true), line_edge(&alone, i, true) + start, "line end from {}, {what}", start + i);
+                    if let Some(to) = move_line(&alone, i, true).filter(|&to| to < para.len()) {
+                        assert_eq!(stacked.move_line(start + i, true), Some(to + start), "down from {}, {what}", start + i);
+                    }
+                    let end = bytes[(n + 1 + n % 4).min(bytes.len() - 1)];
+                    let shift = |boxes: Vec<(parley::BoundingBox, usize)>| boxes.into_iter().filter(|&(_, l)| l < shown)
+                        .map(|(mut bb, l)| { (bb.y0, bb.y1) = (bb.y0 + top as f64, bb.y1 + top as f64); (bb, l + first) }).collect();
+                    assert_eq!(f32_boxes(stacked.range_boxes(start + i, start + end, false)), f32_boxes(shift(range_boxes(&alone, i, end, false))), "boxes {}..{}, {what}", start + i, start + end);
                 }
             }
             start += para.len();
@@ -327,40 +364,48 @@ fn random_mixed_script_edits_lay_out_each_paragraph_alone_in_the_texts_direction
         assert_eq!(stacked.len(), line, "{what}");
         assert_eq!(stacked.pieces().count(), paragraphs.len(), "{what}");
     }
-    assert!(rtl > STEPS / 5 && ltr > STEPS / 5, "{rtl} right-to-left and {ltr} left-to-right texts");
+    assert!(rtl > STEPS && ltr > STEPS, "{rtl} right-to-left and {ltr} left-to-right paragraphs");
 }
 
-/// Paragraphs in both directions whose edges are strong characters lay out stacked as one
-/// layout of the whole text does, each in the whole text's direction.
+/// Each paragraph reads in its own direction, as a natural writing direction resolves it: a
+/// Hebrew list item in an English note, an Arabic paragraph, an English word inside Arabic,
+/// and Hebrew with punctuation each draw right to left, aligned right, with the caret at their
+/// start on the right. The English lines around them, and a line of digits after Hebrew, which
+/// has no strong character, stay left to right.
 #[test]
-fn paragraphs_in_both_directions_take_the_texts_direction() {
+fn each_paragraph_reads_in_its_own_direction() {
+    let width = 600.0;
+    let cases: [(&str, &str, &[&str]); 5] = [
+        ("Notes\nשלום\n- עברית!\nשלום\nend", "- עברית!", &["!", "עברית", "-"]),
+        ("Notes\nمرحبا بالعالم!\nend", "مرحبا بالعالم!", &["!", "بالعالم", "مرحبا"]),
+        ("Notes\nمرحبا Rune بالعالم!\nend", "مرحبا Rune بالعالم!", &["!", "بالعالم", "Rune", "مرحبا"]),
+        ("Notes\nעברית!\nend", "עברית!", &["!", "עברית"]),
+        ("Notes\nשלום\n123 456\nend", "123 456", &["123", "456"]),
+    ];
     let mut ts = TextSystem::default();
-    for text in ["Hello world\nשלום עולם\nmore words\nمرحبا بالعالم", "שלום עולם\nHello world\nمرحبا بالعالم\nmore words"] {
-        let whole = ts.layout_blocks(text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start);
-        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, true);
-        assert_eq!(stacked.pieces().count(), 4, "{text:?}");
-        assert_line_for_line(&whole, &stacked, text);
+    for (text, line, left_to_right) in cases {
+        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(width), Alignment::Start, Wrapping::Words, true);
+        assert_eq!(stacked.pieces().count(), text.matches('\n').count() + 1, "{text:?}");
+        let start = text.find(line).unwrap();
+        let span = |part: &&str| {
+            let a = start + line.find(part).unwrap();
+            let boxes = stacked.range_boxes(a, a + part.len(), false);
+            assert_eq!(boxes.len(), 1, "{part:?} in {text:?}");
+            (boxes[0].0.x0 as f32, boxes[0].0.x1 as f32)
+        };
+        let order: Vec<(f32, f32)> = left_to_right.iter().map(span).collect();
+        assert!(order.windows(2).all(|w| w[0].1 <= w[1].0 + 0.01), "{line:?} draws {left_to_right:?} left to right: {order:?}");
+        let caret = stacked.caret_box(start, 1.0).x0 as f32;
+        if line.starts_with('1') {
+            assert_eq!((order[0].0, caret), (0.0, 0.0), "{line:?} reads left to right");
+        } else {
+            assert!((order[order.len() - 1].1 - width).abs() < 1.0, "{line:?} aligns right: {order:?}");
+            assert!((caret - width).abs() < 1.5, "the caret starts {line:?} on the right: {caret}");
+        }
+        for edge in ["Notes", "end"] {
+            assert_eq!(stacked.caret_box(text.find(edge).unwrap(), 1.0).x0, 0.0, "{edge:?} starts on the left in {text:?}");
+        }
     }
-}
-
-/// A `\n` ends a paragraph for the bidirectional algorithm: a dash starting a Hebrew item in
-/// a left-to-right note sits at the item's left, and the item's closing `!` at its right, as
-/// each would alone, whatever the paragraphs around them are written in. One layout of the
-/// whole text carries the Hebrew around them across the breaks and draws the item `!תירבע -`.
-#[test]
-fn a_newline_ends_a_paragraph_for_bidi() {
-    let text = "Notes\nשלום\n- עברית!\nשלום\nend";
-    let mut ts = TextSystem::default();
-    let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, true);
-    let (dash, bang) = (text.find("- ").unwrap(), text.find('!').unwrap());
-    let span = |a: usize, b: usize| {
-        let boxes = stacked.range_boxes(a, b, false);
-        assert_eq!(boxes.len(), 1);
-        (boxes[0].0.x0, boxes[0].0.x1)
-    };
-    let (dash, hebrew, bang) = (span(dash, dash + 1), span(dash + 2, bang), span(bang, bang + 1));
-    assert_eq!(dash.0, 0.0, "the item starts at the left");
-    assert!(dash.1 < hebrew.0 && hebrew.1 <= bang.0, "the dash, then the Hebrew, then the `!`: {dash:?} {hebrew:?} {bang:?}");
 }
 
 /// A text ending in a hard break ends in an empty paragraph indented by its own block, also
@@ -583,7 +628,8 @@ fn new_fonts_lay_stacks_out_again() {
     assert!(ts.shaped > shaped, "its paragraphs shaped again");
 }
 
-/// Text with unsorted spans or one paragraph, or unwrapped and right to left, lays out whole.
+/// Text with unsorted spans or one paragraph, or unwrapped with right-to-left letters, lays out
+/// whole.
 #[test]
 fn texts_that_cannot_stack_lay_out_whole() {
     let mut ts = TextSystem::default();
@@ -592,8 +638,7 @@ fn texts_that_cannot_stack_lay_out_whole() {
     };
     assert_eq!(pieces("one\ntwo", &[]), 2);
     assert_eq!(pieces("one\n", &[]), 1);
-    assert_eq!(pieces("one\nשלום", &[]), 2);
-    assert_eq!(pieces("שלום\none", &[]), 1, "unwrapped right-to-left lines align on the widest");
+    assert_eq!(pieces("one\nשלום", &[]), 1, "unwrapped right-to-left lines align on the widest");
     assert_eq!(pieces("one\ntwo", &[Span::new(4, 7), Span::new(0, 3)]), 1);
     let centred = ts.layout_text(None, "one\ntwo", &[], &[], &[], STYLE, 2.0, None, Alignment::Center, Wrapping::Words, true);
     assert_eq!(centred.pieces().count(), 1, "unwrapped centred lines centre on the widest");

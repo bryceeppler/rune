@@ -108,16 +108,16 @@ A text of several hard paragraphs now lays out one Parley layout per paragraph, 
 A stacked paragraph ends at a `\n`, where Parley always ends a paragraph and monospace tab stops restart their columns.
 Parley's other hard breaks (`\r`, U+2028, U+2029, and a `\r\n` that a style change or inline box splits in two) stay inside it; it lays out with one block per paragraph Parley makes of it, a count read back from its layout.
 A `\n` ends a paragraph as the Unicode bidirectional algorithm ends one, so a text splits at every `\n` in any script or direction.
-Each paragraph resolves its own bidi levels and gives its characters with no script of their own (spaces, digits, punctuation, emoji) the script of its own text; every paragraph takes the whole text's base direction.
-One Parley layout of the whole text carries both across `\n` instead: a dash starting a Hebrew item in an English note drew on the item's right, and a `(` after a line of kana took the kana's script and didn't kern with the Latin after it.
+Each paragraph takes its own direction from its first strong character, left to right when it has none, as a natural writing direction does (UAX #9 P2 and P3), and gives its characters with no script of their own (spaces, digits, punctuation, emoji) the script of its own text.
+One Parley layout of the whole text takes one direction for every paragraph and carries bidi levels and scripts across `\n`: a Hebrew list item in an English note drew left to right with its dash on the right, and a `(` after a line of kana took the kana's script and didn't kern with the Latin after it.
 An earlier rule kept paragraphs together wherever that carrying would change their script, and laid out any text with right-to-left characters whole; a Japanese note, whose lines end in kana and start with a marker or an indent and then Han, and any note with Arabic or Hebrew in it, reshaped whole on every keystroke.
 A property test edits random text in one script and direction with every hard break, spans that split `\r\n`, pills, monospace tabs, emoji, blocks, widths and scales, and checks each stack against one layout of the same text, glyph for glyph.
-Another edits random text in Latin, Han, kana, Hebrew and Arabic with numbers, marks, isolates and embeddings, and checks each stacked paragraph against Parley's layout of that paragraph alone in the direction Parley gives the whole text, line for line and caret for caret.
+Another edits random text in Latin, Han, kana, Hebrew and Arabic with numbers, marks, isolates and embeddings, and checks each stack against the same text laid out from nothing, and each stacked paragraph against Parley's layout of that paragraph alone, line for line, direction for direction and caret, hit and selection box for each.
 An edit's stack starts from the last one built, so only the paragraphs it touches are laid out.
 A stack stays cached only while a node shows it or for two commits; its paragraphs then stay or go under the layout cache's stale budget like any other layout.
 Carets, hits, line moves, selection boxes, decorations, pills, glyphs and accessibility lines go through the stack, and its tests check each against one layout of the same text.
 A paragraph's first line lands where one layout puts it; with line heights off the pixel grid (a heading, or 1.5x), a wrapped paragraph's later lines can sit a device pixel off one layout's, because each paragraph rounds its own lines.
-Unsorted spans, and lines without a wrap width that are centred or right to left, still lay out whole.
+Unsorted spans, and lines without a wrap width that are centred or hold right-to-left letters, still lay out whole.
 
 Measured typing into a notes app's long note (40 KB, 3,091 lines) on Linux with an NVIDIA GPU, five alternating runs a side, the `perf` build pinned to the performance cores: a typed character's frame went from 31.6 ms to 3.1 ms at p95 (2.95 to 3.50), and 30.8 to 2.46 ms at p50.
 Shaping fell from 27.7 ms to 0.04 ms of it.

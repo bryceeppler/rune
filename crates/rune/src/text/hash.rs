@@ -63,19 +63,6 @@ pub(crate) fn shape_key(text: &str, spans: &[Span], style: TextStyle, scale: f32
     h.finish()
 }
 
-/// A shaping laid out in `direction`: the shape key itself in the direction its text takes alone.
-/// The tags are words no other key mixes in, as [`shape_key`] mixes small numbers.
-pub(crate) fn directed(shape: u64, direction: parley::BaseDirection) -> u64 {
-    let tag = match direction {
-        parley::BaseDirection::Auto => return shape,
-        parley::BaseDirection::Ltr => u64::from_be_bytes(*b"bidi:ltr"),
-        parley::BaseDirection::Rtl => u64::from_be_bytes(*b"bidi:rtl"),
-    };
-    let mut h = KeyHasher::default();
-    (shape, tag).hash(&mut h);
-    h.finish()
-}
-
 /// A shaping broken at `max_width`, aligned and block-indented: the shape key itself when the
 /// layout is unwrapped, start-aligned and unindented.
 pub(crate) fn break_key(shape: u64, max_width: Option<f32>, align: parley::Alignment, blocks: Option<&[crate::edit::Block]>) -> u64 {
