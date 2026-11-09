@@ -668,7 +668,7 @@ pub fn text(content: impl Into<String>) -> El {
         rich_style: crate::edit::RichStyle::default(),
         redacted: false,
         secure_revealed: false,
-        wrap_anywhere: false,
+        wrapping: crate::text::Wrapping::Words,
         shape: None,
     }));
     e
@@ -720,7 +720,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
     e.a11y.secure = edit.is_secure();
     if let Some(t) = &mut e.text {
         t.wrap = true;
-        t.wrap_anywhere = edit.is_secure();
+        t.wrapping = if edit.is_secure() { crate::text::Wrapping::Anywhere } else { crate::text::Wrapping::Words };
         t.redacted = edit.is_secure();
     }
     e.input = Some(Box::new(InputSpec {
@@ -815,7 +815,7 @@ impl El {
                 text.replace_content(input.edit.display().0);
                 text.redacted = true;
                 if !single {
-                    text.wrap_anywhere = true;
+                    text.wrapping = text.wrapping.anywhere();
                 }
             }
             self.sync_input_pills();

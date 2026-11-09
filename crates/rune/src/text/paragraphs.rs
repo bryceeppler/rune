@@ -69,7 +69,7 @@ struct Source {
     scale: f32,
     max_width: Option<f32>,
     align: Alignment,
-    wrap_anywhere: bool,
+    wrapping: Wrapping,
 }
 
 /// One paragraph of a text being stacked: its bytes, spans and pills, the text's blocks and
@@ -601,14 +601,14 @@ impl TextSystem {
         scale: f32,
         max_width: Option<f32>,
         align: Alignment,
-        wrap_anywhere: bool,
+        wrapping: Wrapping,
         cache: bool,
     ) -> TextLayout {
         self.follow_language();
         if !cache || !stacks(text, spans, max_width, align) {
-            return self.layout_keyed(shape, text, spans, blocks, pills, style, scale, max_width, align, wrap_anywhere, cache).into();
+            return self.layout_keyed(shape, text, spans, blocks, pills, style, scale, max_width, align, wrapping, cache).into();
         }
-        let shape = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrap_anywhere, pills));
+        let shape = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrapping, pills));
         let has_indented_blocks = blocks.iter().any(|&b| b != crate::edit::Block::Paragraph);
         let key = hash::break_key(shape, max_width, align, has_indented_blocks.then_some(blocks));
         let g = self.generation;
@@ -616,7 +616,7 @@ impl TextSystem {
             e.used = g;
             return TextLayout(Laid::Stacked(e.value.clone()));
         }
-        let stack = Rc::new(self.stack(text, spans, blocks, pills, style, scale, max_width, align, wrap_anywhere));
+        let stack = Rc::new(self.stack(text, spans, blocks, pills, style, scale, max_width, align, wrapping));
         let cost = stack.paras.len() * size_of::<Para>();
         self.stacks.cache.insert(key, Entry::with_cost(stack.clone(), g, cost, shape));
         self.stacks.last = Some(Source {
@@ -625,7 +625,7 @@ impl TextSystem {
             spans: spans.into(),
             pills: pills.into(),
             blocks: blocks.into(),
-            style, scale, max_width, align, wrap_anywhere,
+            style, scale, max_width, align, wrapping,
         });
         TextLayout(Laid::Stacked(stack))
     }
@@ -641,11 +641,11 @@ impl TextSystem {
         scale: f32,
         max_width: Option<f32>,
         align: Alignment,
-        wrap_anywhere: bool,
+        wrapping: Wrapping,
     ) -> Stack {
         let (mut local_spans, mut local_pills) = (std::mem::take(&mut self.stacks.spans), std::mem::take(&mut self.stacks.pills));
         let last = self.stacks.last.take().filter(|l| {
-            (l.style, l.scale, l.max_width, l.align, l.wrap_anywhere) == (style, scale, max_width, align, wrap_anywhere)
+            (l.style, l.scale, l.max_width, l.align, l.wrapping) == (style, scale, max_width, align, wrapping)
         }).and_then(|l| Some((l.stack.upgrade()?, l)));
         let (prefix, suffix) = last.as_ref().map_or((0, 0), |(_, l)| shared(l.text.as_bytes(), text.as_bytes()));
         let mut paras = Vec::with_capacity(last.as_ref().map_or(text.len() / 32 + 1, |(old, _)| old.paras.len() + 1));
@@ -671,7 +671,7 @@ impl TextSystem {
                     }));
                     local_pills.clear();
                     local_pills.extend(draft.pills.iter().map(|p| PillChip { start: p.start - start as u32, end: p.end.saturating_sub(start as u32), ..p.clone() }));
-                    let lay = |ts: &mut Self, breaks| ts.layout_keyed(None, piece, &local_spans, draft.blocks(breaks), &local_pills, style, scale, max_width, align, wrap_anywhere, true);
+                    let lay = |ts: &mut Self, breaks| ts.layout_keyed(None, piece, &local_spans, draft.blocks(breaks), &local_pills, style, scale, max_width, align, wrapping, true);
                     let likely = likely_breaks(piece);
                     let layout = lay(self, likely);
                     let breaks = hard_breaks(&layout);

@@ -50,13 +50,13 @@ pub fn text_hash(text: &str, spans: &[Span], style: TextStyle, scale: f32, width
 }
 
 /// What shaping depends on: the text, its spans, style and scale, overflow-wrap and pills.
-pub(crate) fn shape_key(text: &str, spans: &[Span], style: TextStyle, scale: f32, wrap_anywhere: bool, pills: &[PillChip]) -> u64 {
+pub(crate) fn shape_key(text: &str, spans: &[Span], style: TextStyle, scale: f32, wrapping: super::Wrapping, pills: &[PillChip]) -> u64 {
     let key = text_hash(text, spans, style, scale, None);
-    if !wrap_anywhere && pills.is_empty() {
+    if wrapping == super::Wrapping::Words && pills.is_empty() {
         return key;
     }
     let mut h = KeyHasher::default();
-    (key, wrap_anywhere).hash(&mut h);
+    (key, wrapping).hash(&mut h);
     for p in pills {
         (p.start, p.end, p.icon.is_some()).hash(&mut h);
     }

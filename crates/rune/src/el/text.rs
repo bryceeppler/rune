@@ -194,7 +194,20 @@ impl El {
         }
         if let Some(t) = &mut self.text {
             t.wrap = true;
-            t.wrap_anywhere = true;
+            t.wrapping = t.wrapping.anywhere();
+        }
+        self
+    }
+    /// Wrap text at the element's width, breaking between any two characters (`word-break:
+    /// break-all`), so an opaque token such as a key or hash fills each line rather than moving
+    /// to the next at a hyphen. Copying and the accessibility text keep the text as it is.
+    pub fn break_all(mut self) -> Self {
+        if self.input.as_ref().is_some_and(|i| i.single_line) {
+            return self;
+        }
+        if let Some(t) = &mut self.text {
+            t.wrap = true;
+            t.wrapping = crate::text::Wrapping::BreakAll;
         }
         self
     }
@@ -232,7 +245,7 @@ impl El {
     fn one_line(mut self, cut: impl FnOnce(&mut TextSpec)) -> Self {
         if let Some(t) = &mut self.text {
             t.wrap = false;
-            t.wrap_anywhere = false;
+            t.wrapping = crate::text::Wrapping::Words;
             t.max_lines = 0;
             cut(t);
         }
@@ -282,7 +295,7 @@ impl El {
             i.edit.set_single_line(true);
             if let Some(t) = &mut self.text {
                 t.wrap = false;
-                t.wrap_anywhere = false;
+                t.wrapping = crate::text::Wrapping::Words;
                 if i.edit.is_secure() && !i.edit.is_revealed() {
                     t.replace_content(i.edit.display().0);
                 }

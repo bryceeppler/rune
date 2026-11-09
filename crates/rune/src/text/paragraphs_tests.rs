@@ -51,7 +51,7 @@ fn note(paragraphs: usize, trailing_newline: bool) -> Note {
 
 fn lay_out(ts: &mut TextSystem, n: &Note, scale: f32, width: Option<f32>) -> (Rc<Layout<Ink>>, TextLayout) {
     let whole = ts.layout_blocks(&n.text, &n.spans, &n.blocks, &n.pills, STYLE, scale, width, Alignment::Start);
-    let stacked = ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, scale, width, Alignment::Start, false, true);
+    let stacked = ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, scale, width, Alignment::Start, Wrapping::Words, true);
     assert!(stacked.pieces().count() > 1, "the note stacks");
     (whole, stacked)
 }
@@ -141,7 +141,7 @@ fn a_paragraph_starting_without_a_script_takes_the_one_before_it() {
         ("abc\n\nかな\n(かな)\n", 4),
     ] {
         let whole = ts.layout_blocks(text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start);
-        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, false, true);
+        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, Wrapping::Words, true);
         assert_eq!(stacked.pieces().count(), pieces, "{text:?}");
         assert_line_for_line(&whole, &stacked, text);
     }
@@ -212,9 +212,9 @@ fn random_edits_lay_out_stacked_as_one_layout() {
             }
         }
         let style = if step / 13 % 3 == 0 { TextStyle { family: Family::Mono, ..STYLE } } else { STYLE };
-        let (scale, width, anywhere) = ([1.0, 2.0][step / 11 % 2], [Some(60.0), Some(160.0), Some(400.0), None][step / 7 % 4], step % 2 == 0);
-        let stacked = ts.layout_text(None, &text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, anywhere, true);
-        let whole = ts.layout_blocks_inner(&text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, anywhere, true);
+        let (scale, width, wrapping) = ([1.0, 2.0][step / 11 % 2], [Some(60.0), Some(160.0), Some(400.0), None][step / 7 % 4], [Wrapping::Words, Wrapping::Anywhere, Wrapping::BreakAll][step % 3]);
+        let stacked = ts.layout_text(None, &text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, wrapping, true);
+        let whole = ts.layout_blocks_inner(&text, &spans, &blocks, &pills, style, scale, width, Alignment::Start, wrapping, true);
         let what = format!("step {step}: {text:?}, spans {:?}, blocks {blocks:?}, pills {:?}", spans.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(), pills.iter().map(|p| (p.start, p.end)).collect::<Vec<_>>());
         assert_line_for_line(&whole, &stacked, &what);
         if step % 4 == 0 {
@@ -322,7 +322,7 @@ fn an_edit_reshapes_only_the_paragraphs_it_touches() {
     let mut ts = TextSystem::default();
     let lay = |ts: &mut TextSystem, text: &str| {
         let before = ts.shaped;
-        ts.layout_text(None, text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        ts.layout_text(None, text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
         ts.end_commit();
         ts.shaped - before
     };
@@ -365,9 +365,9 @@ fn a_stack_built_from_the_last_lays_out_as_one_built_fresh() {
     versions.push((versions.last().unwrap().0.clone(), versions.last().unwrap().1.clone(), coded));
     for (text, spans, blocks) in versions {
         let pills: Vec<PillChip> = Vec::new();
-        let built = ts.layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        let built = ts.layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
         ts.end_commit();
-        let fresh = TextSystem::default().layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+        let fresh = TextSystem::default().layout_text(None, &text, &spans, &blocks, &pills, STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
         assert_eq!(built.len(), fresh.len());
         for (a, b) in built.pieces().zip(fresh.pieces()) {
             assert_eq!((a.start, a.y.to_bits(), a.lines), (b.start, b.y.to_bits(), b.lines));
@@ -386,7 +386,7 @@ fn a_stack_built_from_the_last_lays_out_as_one_built_fresh() {
 fn a_kept_stack_keeps_its_paragraphs_through_idle_commits() {
     let n = note(20, true);
     let mut ts = TextSystem::default();
-    let held = ts.layout_text(None, &n.text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    let held = ts.layout_text(None, &n.text, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
     ts.end_commit();
     for i in 0..40 {
         ts.layout_rich(&format!("{i} {}", "filler words ".repeat(400)), &[], STYLE, 2.0, Some(700.0));
@@ -395,7 +395,7 @@ fn a_kept_stack_keeps_its_paragraphs_through_idle_commits() {
     let before = ts.shaped;
     let at = n.text.find("task 9").unwrap();
     let typed = format!("{}x{}", &n.text[..at], &n.text[at..]);
-    ts.layout_text(None, &typed, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    ts.layout_text(None, &typed, &[], &n.blocks, &[], STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
     assert_eq!(ts.shaped - before, 1);
     drop(held);
 }
@@ -407,7 +407,7 @@ fn stacks_shown_no_more_keep_only_the_stale_budget() {
     let mut ts = TextSystem::default();
     for i in 0..80 {
         let text = format!("{i} {}\n{i} {}", "word ".repeat(400), "other ".repeat(400));
-        ts.layout_text(None, &text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, false, true);
+        ts.layout_text(None, &text, &[], &[], &[], STYLE, 2.0, Some(400.0), Alignment::Start, Wrapping::Words, true);
         ts.end_commit();
     }
     for _ in 0..4 {
@@ -423,7 +423,7 @@ fn stacks_shown_no_more_keep_only_the_stale_budget() {
 fn new_fonts_lay_stacks_out_again() {
     let n = note(3, true);
     let mut ts = TextSystem::default();
-    let lay = |ts: &mut TextSystem| ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, 2.0, Some(700.0), Alignment::Start, false, true);
+    let lay = |ts: &mut TextSystem| ts.layout_text(None, &n.text, &n.spans, &n.blocks, &n.pills, STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
     let before = lay(&mut ts);
     assert!(ts.set_language(parley::fontique::Language::parse("ja").ok()));
     let shaped = ts.shaped;
@@ -437,12 +437,12 @@ fn new_fonts_lay_stacks_out_again() {
 fn texts_that_cannot_stack_lay_out_whole() {
     let mut ts = TextSystem::default();
     let mut pieces = |text: &str, spans: &[Span]| {
-        ts.layout_text(None, text, spans, &[], &[], STYLE, 2.0, None, Alignment::Start, false, true).pieces().count()
+        ts.layout_text(None, text, spans, &[], &[], STYLE, 2.0, None, Alignment::Start, Wrapping::Words, true).pieces().count()
     };
     assert_eq!(pieces("one\ntwo", &[]), 2);
     assert_eq!(pieces("one\n", &[]), 1);
     assert_eq!(pieces("one\nשלום", &[]), 1);
     assert_eq!(pieces("one\ntwo", &[Span::new(4, 7), Span::new(0, 3)]), 1);
-    let centred = ts.layout_text(None, "one\ntwo", &[], &[], &[], STYLE, 2.0, None, Alignment::Center, false, true);
+    let centred = ts.layout_text(None, "one\ntwo", &[], &[], &[], STYLE, 2.0, None, Alignment::Center, Wrapping::Words, true);
     assert_eq!(centred.pieces().count(), 1, "unwrapped centred lines centre on the widest");
 }

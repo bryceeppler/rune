@@ -36,6 +36,8 @@ mod line_break;
 mod span;
 mod system_fallback;
 mod system_fonts;
+mod wrapping;
+pub(crate) use wrapping::Wrapping;
 mod default_fonts;
 #[cfg(all(test, target_os = "macos"))]
 mod core_text_tests;
@@ -410,7 +412,7 @@ impl TextSystem {
         scale: f32,
         max_width: Option<f32>,
         align: Alignment,
-        wrap_anywhere: bool,
+        wrapping: Wrapping,
         cache: bool,
     ) -> Rc<Layout<Ink>> {
         self.follow_language();
@@ -419,7 +421,7 @@ impl TextSystem {
         // Shaping depends on the text, spans, style, scale, overflow-wrap and pills; line
         // breaking adds the width, alignment and block indents. A layout cached at one width
         // is re-broken at another rather than shaped again.
-        let shape_key = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrap_anywhere, pills));
+        let shape_key = shape.unwrap_or_else(|| shape_key(text, spans, style, scale, wrapping, pills));
         let key = hash::break_key(shape_key, max_width, align, has_indented_blocks.then_some(blocks));
         let g = self.generation;
         if cache && let Some(Entry { value: l, used, .. }) = self.layouts.get_mut(&key) {
@@ -638,8 +640,11 @@ impl TextSystem {
                 b.push_default(parley::FontVariations::List(std::borrow::Cow::Owned(settings)));
             }
             b.push_default(LineHeight::Absolute(style.line_px()));
-            if wrap_anywhere {
+            if wrapping != Wrapping::Words {
                 b.push_default(StyleProperty::OverflowWrap(parley::OverflowWrap::Anywhere));
+            }
+            if wrapping == Wrapping::BreakAll {
+                b.push_default(StyleProperty::WordBreak(parley::WordBreak::BreakAll));
             }
             if base_spacing != 0.0 {
                 b.push_default(StyleProperty::LetterSpacing(base_spacing));

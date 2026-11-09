@@ -185,7 +185,7 @@ fn spec_elide_keys(spec: &TextSpec, scale: f32, mode: u8, param: usize, max_w: f
         return None;
     }
     let shape = spec.shape_key(scale).unwrap_or_else(|| {
-        crate::text::shape_key(&spec.content, &spec.spans, spec.style, scale, spec.wrap_anywhere, &spec.pills)
+        crate::text::shape_key(&spec.content, &spec.spans, spec.style, scale, spec.wrapping, &spec.pills)
     });
     let blocks = spec.blocks.iter().any(|&b| b != crate::edit::Block::Paragraph).then_some(spec.blocks.as_slice());
     Some((shape, crate::text::elide_key(shape, mode, param, max_w, align, blocks)))
@@ -223,13 +223,13 @@ pub(super) fn truncated(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_
         e.spans_into(&spec.spans, &mut span_buf);
         if spec.redacted {
             let s = zeroize::Zeroizing::new([&content[..e.head], Elision::ELLIPSIS, &content[e.tail..]].concat());
-            text.layout_blocks_inner(&s, &span_buf, &spec.blocks, &[], spec.style, scale, None, parley::Alignment::Start, spec.wrap_anywhere, false)
+            text.layout_blocks_inner(&s, &span_buf, &spec.blocks, &[], spec.style, scale, None, parley::Alignment::Start, spec.wrapping, false)
         } else {
             str_buf.clear();
             str_buf.push_str(&content[..e.head]);
             str_buf.push_str(Elision::ELLIPSIS);
             str_buf.push_str(&content[e.tail..]);
-            text.layout_blocks_inner(&str_buf, &span_buf, &spec.blocks, &[], spec.style, scale, None, parley::Alignment::Start, spec.wrap_anywhere, true)
+            text.layout_blocks_inner(&str_buf, &span_buf, &spec.blocks, &[], spec.style, scale, None, parley::Alignment::Start, spec.wrapping, true)
         }
     };
     let (mut lo, mut hi) = (0usize, n);
@@ -408,12 +408,12 @@ pub(super) fn clamped(text: &mut TextSystem, spec: &TextSpec, scale: f32, max_w:
         e.spans_into(&spec.spans, &mut span_buf);
         if spec.redacted {
             let s = zeroize::Zeroizing::new([&content[..e.head], Elision::ELLIPSIS].concat());
-            text.layout_blocks_inner(&s, &span_buf, &spec.blocks, &[], spec.style, scale, Some(max_w), align, spec.wrap_anywhere, false)
+            text.layout_blocks_inner(&s, &span_buf, &spec.blocks, &[], spec.style, scale, Some(max_w), align, spec.wrapping, false)
         } else {
             str_buf.clear();
             str_buf.push_str(&content[..e.head]);
             str_buf.push_str(Elision::ELLIPSIS);
-            text.layout_blocks_inner(&str_buf, &span_buf, &spec.blocks, &[], spec.style, scale, Some(max_w), align, spec.wrap_anywhere, true)
+            text.layout_blocks_inner(&str_buf, &span_buf, &spec.blocks, &[], spec.style, scale, Some(max_w), align, spec.wrapping, true)
         }
     };
     let fits = |l: &Rc<Layout<Ink>>| l.len() <= lines && last_line_width(&l.clone().into(), lines) <= max_w + 0.5;

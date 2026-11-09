@@ -30,11 +30,11 @@ struct Case {
     pills: Vec<PillChip>,
     style: TextStyle,
     align: Alignment,
-    wrap_anywhere: bool,
+    wrapping: Wrapping,
 }
 
 fn case(name: &'static str, text: &str, style: TextStyle) -> Case {
-    Case { name, text: text.into(), spans: Vec::new(), blocks: Vec::new(), pills: Vec::new(), style, align: Alignment::Start, wrap_anywhere: false }
+    Case { name, text: text.into(), spans: Vec::new(), blocks: Vec::new(), pills: Vec::new(), style, align: Alignment::Start, wrapping: Wrapping::Words }
 }
 
 fn cases() -> Vec<Case> {
@@ -60,7 +60,8 @@ fn cases() -> Vec<Case> {
         .collect();
     vec![
         Case { spans: spans.clone(), ..case("spans", rich, body) },
-        Case { spans: spans.clone(), wrap_anywhere: true, ..case("wrap anywhere", rich, body) },
+        Case { spans: spans.clone(), wrapping: Wrapping::Anywhere, ..case("wrap anywhere", rich, body) },
+        Case { spans: spans.clone(), wrapping: Wrapping::BreakAll, ..case("break all", rich, body) },
         Case { spans: spans.clone(), align: Alignment::Center, ..case("centred", rich, body) },
         Case { spans: spans.clone(), align: Alignment::End, ..case("end", rich, body) },
         Case { spans, align: Alignment::Justify, ..case("justified", rich, body) },
@@ -74,7 +75,7 @@ fn cases() -> Vec<Case> {
 }
 
 fn lay(ts: &mut TextSystem, c: &Case, width: Option<f32>) -> Rc<Layout<Ink>> {
-    ts.layout_blocks_inner(&c.text, &c.spans, &c.blocks, &c.pills, c.style, 2.0, width, c.align, c.wrap_anywhere, true)
+    ts.layout_blocks_inner(&c.text, &c.spans, &c.blocks, &c.pills, c.style, 2.0, width, c.align, c.wrapping, true)
 }
 
 /// A text shaped once is re-broken, not reshaped, at every other width, and lands every
@@ -128,8 +129,8 @@ fn a_text_style_span_or_scale_change_still_shapes() {
     assert_eq!(shapes(&mut ts, &|ts| { ts.layout_rich(text, &[], TextStyle::new(15.0, 600.0), 2.0, Some(300.0)); }), 1);
     assert_eq!(shapes(&mut ts, &|ts| { ts.layout_rich(text, &[Span::new(0, 1).bold()], style, 2.0, Some(300.0)); }), 1);
     assert_eq!(shapes(&mut ts, &|ts| { ts.layout_rich(text, &[], style, 3.0, Some(300.0)); }), 1);
-    assert_eq!(shapes(&mut ts, &|ts| { ts.layout_blocks_inner(text, &[], &[], &[], style, 2.0, Some(300.0), Alignment::Start, true, true); }), 1);
-    assert_eq!(shapes(&mut ts, &|ts| { ts.layout_blocks_inner(text, &[], &[], &[], style, 2.0, Some(200.0), Alignment::Start, true, true); }), 0);
+    assert_eq!(shapes(&mut ts, &|ts| { ts.layout_blocks_inner(text, &[], &[], &[], style, 2.0, Some(300.0), Alignment::Start, Wrapping::Anywhere, true); }), 1);
+    assert_eq!(shapes(&mut ts, &|ts| { ts.layout_blocks_inner(text, &[], &[], &[], style, 2.0, Some(200.0), Alignment::Start, Wrapping::Anywhere, true); }), 0);
 }
 
 /// The re-break index follows the layouts cache: it survives commits while a width of the

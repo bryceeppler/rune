@@ -7,7 +7,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RichLayoutOptions {
     align: Alignment,
-    wrap_anywhere: bool,
+    wrapping: Wrapping,
 }
 
 impl RichLayoutOptions {
@@ -25,7 +25,7 @@ impl RichLayoutOptions {
     /// (a long URL, hash or token) instead of letting it run past the line, as
     /// [`El::wrap_anywhere`](crate::El::wrap_anywhere) does. Words that fit still break at spaces.
     pub fn wrap_anywhere(mut self) -> Self {
-        self.wrap_anywhere = true;
+        self.wrapping = Wrapping::Anywhere;
         self
     }
 }
@@ -68,7 +68,7 @@ impl TextSystem {
         max_width: Option<f32>,
         options: RichLayoutOptions,
     ) -> Rc<Layout<Ink>> {
-        self.layout_blocks_inner(text, spans, &[], &[], style, scale, max_width, options.align, options.wrap_anywhere, true)
+        self.layout_blocks_inner(text, spans, &[], &[], style, scale, max_width, options.align, options.wrapping, true)
     }
 
     /// [`layout_aligned`](Self::layout_aligned) with per-paragraph [`Block`](crate::Block)
@@ -86,7 +86,7 @@ impl TextSystem {
         max_width: Option<f32>,
         align: Alignment,
     ) -> Rc<Layout<Ink>> {
-        self.layout_blocks_inner(text, spans, blocks, pills, style, scale, max_width, align, false, true)
+        self.layout_blocks_inner(text, spans, blocks, pills, style, scale, max_width, align, Wrapping::Words, true)
     }
 
     /// [`layout_blocks`](Self::layout_blocks) with overflow-wrap, and out of the shared cache
@@ -102,10 +102,10 @@ impl TextSystem {
         scale: f32,
         max_width: Option<f32>,
         align: Alignment,
-        wrap_anywhere: bool,
+        wrapping: Wrapping,
         cache: bool,
     ) -> Rc<Layout<Ink>> {
-        self.layout_keyed(None, text, spans, blocks, pills, style, scale, max_width, align, wrap_anywhere, cache)
+        self.layout_keyed(None, text, spans, blocks, pills, style, scale, max_width, align, wrapping, cache)
     }
 
     /// Secure display runs must not enter the shared layout cache or leave character
@@ -119,7 +119,7 @@ impl TextSystem {
         align: Alignment,
     ) -> TextLayout {
         let shape = spec.shape_key(scale);
-        self.layout_text(shape, &spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, scale, max_width, align, spec.wrap_anywhere, !spec.redacted)
+        self.layout_text(shape, &spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, scale, max_width, align, spec.wrapping, !spec.redacted)
     }
 }
 

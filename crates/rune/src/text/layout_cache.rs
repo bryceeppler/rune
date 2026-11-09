@@ -126,7 +126,7 @@ impl TextSystem {
 
     /// A live run owns its latest layout; don't retain every timer tick in the commit cache.
     pub(crate) fn layout_live(&mut self, text: &str, style: TextStyle, scale: f32) -> Rc<Layout<Ink>> {
-        let key = shape_key(text, &[], style, scale, false, &[]);
+        let key = shape_key(text, &[], style, scale, super::Wrapping::Words, &[]);
         let cached = self.layouts.contains_key(&key);
         let prev_shape = self.shapes.get(&key).copied();
         let layout = self.layout_rich(text, &[], style, scale, None);

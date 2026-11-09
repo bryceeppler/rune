@@ -35,7 +35,7 @@ fn layouts(rt: &mut Runtime<TextEdit>) -> (TextLayout, Rc<Layout<Ink>>) {
     let n = node(rt);
     let (spec, layout) = (n.text.as_deref().unwrap().clone(), n.text_layout.clone().unwrap());
     let w = (n.local.w - n.inset[0] - n.inset[2]) * rt.env.scale;
-    let whole = rt.text.layout_blocks_inner(&spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, rt.env.scale, Some(w), parley::Alignment::Start, false, true);
+    let whole = rt.text.layout_blocks_inner(&spec.content, &spec.spans, &spec.blocks, &spec.pills, spec.style, rt.env.scale, Some(w), parley::Alignment::Start, crate::text::Wrapping::Words, true);
     (layout, whole)
 }
 
