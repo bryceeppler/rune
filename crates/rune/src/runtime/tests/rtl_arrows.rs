@@ -123,6 +123,7 @@ fn the_caret_stops_on_both_sides_of_a_direction_change() {
     put_caret(&mut rt, start + "abc".len());
     press(&mut rt, Key::Right, NONE);
     let (at, after_space, _) = caret(&rt);
+    put_caret(&mut rt, start);
     put_caret(&mut rt, boundary);
     let (_, right_end, _) = caret(&rt);
     assert_eq!(at, boundary, "Right steps over the space");
@@ -180,4 +181,81 @@ fn word_steps_move_as_the_text_draws() {
     );
     assert!(stops[..4].windows(2).all(|w| w[1].1 < w[0].1), "Alt+Left moves left: {stops:?}");
     assert!(stops[3..].windows(2).all(|w| w[1].1 > w[0].1), "Alt+Right moves right: {stops:?}");
+}
+
+/// The caret after Right from the end of `abc` in `abc אבג`: on the space's far side, where the
+/// Hebrew's first letter would draw it at the line's far right.
+fn after_the_space(para: &str) -> (Runtime<TextEdit>, usize, (usize, f32, f32)) {
+    let (mut rt, start) = note::<600>(para);
+    put_caret(&mut rt, start + "abc".len());
+    press(&mut rt, Key::Right, NONE);
+    let at = caret(&rt);
+    (rt, start, at)
+}
+
+#[test]
+fn the_caret_keeps_its_side_when_its_selection_is_set_again() {
+    let (mut rt, start, at) = after_the_space("abc אבג");
+    rt.update(|s, _| s.set_selection(s.anchor, s.focus));
+    rt.frame(0.0);
+    assert_eq!(caret(&rt), at, "setting the same selection, as an app's refresh does, keeps the caret where it was");
+    press(&mut rt, Key::Right, NONE);
+    assert_eq!(caret(&rt).0, start + "abc אב".len(), "and the next Right steps over one letter");
+    rt.update(|s, _| s.set_caret(s.focus - "ב".len()));
+    rt.frame(0.0);
+    rt.update(|s, _| s.set_caret(start + "abc ".len()));
+    rt.frame(0.0);
+    assert!(caret(&rt).1 > at.1, "a caret set elsewhere and back takes its default side");
+}
+
+#[test]
+fn a_plain_arrow_collapses_a_selection_to_its_end_drawn_that_way() {
+    let para = "abc אבג xyz";
+    let (mut rt, start) = note::<600>(para);
+    for (from, key) in [("abc אב", Key::Right), ("abc א", Key::Left)] {
+        put_caret(&mut rt, start + from.len());
+        press(&mut rt, key.clone(), SHIFT);
+        let selected = caret(&rt);
+        assert!(!rt.state.selected().is_empty());
+        press(&mut rt, key.clone(), NONE);
+        assert_eq!(caret(&rt), selected, "{key:?} on a selection inside the Hebrew collapses it to its end drawn {key:?}");
+        assert_eq!(rt.state.anchor, rt.state.focus);
+    }
+    let para = "שלום עולם גדול מאוד וארוך עוד מילים כאן";
+    let (mut rt, start) = note::<300>(para);
+    let (a, b) = (start + "של".len(), start + para.len() - "אן".len());
+    for (key, want) in [(Key::Right, a), (Key::Left, b)] {
+        rt.update(|s, _| s.set_selection(a, b));
+        rt.frame(0.0);
+        press(&mut rt, key.clone(), NONE);
+        assert_eq!((rt.state.anchor, rt.state.focus), (want, want), "{key:?} on a selection over lines of Hebrew collapses it toward the side it reads from");
+    }
+}
+
+#[test]
+fn up_and_down_start_from_the_caret_where_it_draws() {
+    let digits = "12345678901234567890";
+    let (mut rt, start) = note::<600>(&format!("{digits}\nabc אבג\n{digits}"));
+    let mixed = start + digits.len() + 1;
+    for key in [Key::Down, Key::Up] {
+        put_caret(&mut rt, mixed + "abc".len());
+        press(&mut rt, Key::Right, NONE);
+        let at = caret(&rt);
+        press(&mut rt, key.clone(), NONE);
+        let to = caret(&rt);
+        assert!(to.2 != at.2 && (to.1 - at.1).abs() < 8.0, "{key:?} keeps the column the caret draws in: {at:?} to {to:?}");
+    }
+}
+
+#[test]
+fn a_press_at_a_direction_change_draws_the_caret_where_it_was_pressed() {
+    let (mut rt, start, at) = after_the_space("abc אבג");
+    put_caret(&mut rt, start);
+    let line = rt.caret_rect(&rt.nodes, rt.nodes.iter().position(|n| n.key.as_deref() == Some("note")).unwrap()).unwrap()[3];
+    rt.pointer_down(at.1, at.2 + line * 0.5);
+    rt.pointer_up(at.1, at.2 + line * 0.5);
+    rt.frame(1.0);
+    let pressed = caret(&rt);
+    assert_eq!(pressed.0, start + "abc ".len());
+    assert!((pressed.1 - at.1).abs() < 1.0, "the caret draws at the press, not at the Hebrew's far end: {pressed:?} for {at:?}");
 }
