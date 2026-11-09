@@ -469,6 +469,25 @@ fn an_edit_reshapes_only_the_paragraphs_it_touches() {
     assert_eq!(lay(&mut ts, &n.text), 0, "undo");
 }
 
+/// Typing in a note whose lines start with a marker or an indent and then Han after a line
+/// ending in kana, with Hebrew and Arabic lines among them, reshapes the one paragraph it
+/// touches.
+#[test]
+fn typing_in_a_japanese_note_with_right_to_left_lines_reshapes_one_paragraph() {
+    let text = "　春の雨です。\n- 東京の電車です\n## 図書館です\n> 手紙を書きます\nשלום עולם\nمرحبا بالعالم\n".repeat(30);
+    let mut ts = TextSystem::default();
+    let lay = |ts: &mut TextSystem, text: &str| {
+        let before = ts.shaped;
+        let stacked = ts.layout_text(None, text, &[], &[], &[], STYLE, 2.0, Some(700.0), Alignment::Start, Wrapping::Words, true);
+        ts.end_commit();
+        (ts.shaped - before, stacked.pieces().count())
+    };
+    assert_eq!(lay(&mut ts, &text).1, 180);
+    let at = text.len() / 2 + text[text.len() / 2..].find("電車").unwrap();
+    let typed = format!("{}か{}", &text[..at], &text[at..]);
+    assert_eq!(lay(&mut ts, &typed), (1, 180));
+}
+
 /// Each version of a note built from the one before (typing, Return, a join, a span appearing
 /// in another paragraph, a block changing) lays out as the same note built fresh.
 #[test]
