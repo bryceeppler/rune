@@ -81,3 +81,17 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
         assert!(layout.lines().all(|l| l.metrics().inline_min_coord == 0.0), "{text:?} wraps at the margin");
     }
 }
+
+#[test]
+fn a_hanging_task_line_measured_at_no_width_lays_out_every_character() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let text = "- [ ] Oat milk\n";
+    let pills = [PillChip { start: 0, end: 6, icon: None, bg: None, fg: None }];
+    let style = TextStyle::new(15.5, 400.0);
+    for scale in [1.0, 2.0] {
+        let layout = ts.layout_blocks_inner(text, &[], &[Block::Hanging(6)], &pills, style, scale, Some(0.0), Alignment::Start, Wrapping::Anywhere, false);
+        let laid: usize = layout.lines().map(|line| line.text_range()).filter(|r| r.start <= r.end).map(|r| r.len()).sum();
+        assert_eq!(laid, text.len(), "every character is on a line at scale {scale}");
+    }
+}

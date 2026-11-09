@@ -1,0 +1,1 @@
+- Text: a hanging-indented paragraph measured at no width, such as a task line whose pill is wider than the line, no longer overflows on the empty line Parley gives it.

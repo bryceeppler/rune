@@ -44,14 +44,22 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
     let mut first_line = true;
     let mut para_idx = 0usize;
     for line in layout.lines() {
+        let range = line.text_range();
+        // An emergency line that holds nothing, as a pill wider than the whole width leaves,
+        // spans no text, and Parley gives it an inverted range.
+        let holds_text = range.start <= range.end;
         if first_line
+            && holds_text
             && let Some(&crate::edit::Block::Hanging(marker)) = blocks.get(para_idx)
-            && let Some(width) = text_start(layout, &line, line.text_range().start + usize::from(marker))
+            && let Some(width) = text_start(layout, &line, range.start + usize::from(marker))
         {
             widths[para_idx] = width;
         }
-        first_line = line.break_reason() == parley::BreakReason::Explicit;
-        para_idx += usize::from(first_line);
+        let ends_paragraph = line.break_reason() == parley::BreakReason::Explicit;
+        if holds_text || ends_paragraph {
+            first_line = ends_paragraph;
+            para_idx += usize::from(first_line);
+        }
     }
     widths
 }
