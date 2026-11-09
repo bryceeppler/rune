@@ -38,9 +38,7 @@ pub(crate) fn bring_here(window: &winit::window::Window, time: u32) -> bool {
         Some(RawWindowHandle::Xcb(w)) => w.window.get(),
         _ => return false,
     };
-    let sent = send(id, time).is_some();
-    eprintln!("DEBUG bring_here {time} sent {sent}");
-    sent
+    send(id, time).is_some()
 }
 
 fn send(id: u32, time: u32) -> Option<()> {
@@ -51,15 +49,15 @@ fn send(id: u32, time: u32) -> Option<()> {
     let cardinal = |of: u32, property: u32| connection.get_property(false, of, property, AtomEnum::CARDINAL, 0, 1).ok()?
         .reply().ok()?.value32()?.next();
     let mask = EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY;
-    let planned = asks(cardinal(root, current_desktop), cardinal(id, wm_desktop), time);
-    eprintln!("DEBUG window {id:#x} asks {planned:?}");
-    for ask in planned {
+    for ask in asks(cardinal(root, current_desktop), cardinal(id, wm_desktop), time) {
         let (kind, data) = match ask {
             Ask::MoveTo(desktop) => (wm_desktop, [desktop, FROM_THE_PERSON, 0, 0, 0]),
             Ask::Activate(time) => (active, [FROM_THE_PERSON, time, 0, 0, 0]),
         };
         connection.send_event(false, root, mask, ClientMessageEvent::new(32, id, kind, data)).ok()?;
     }
+    // Closing the connection straight after a flush lost most of these messages on Openbox;
+    // a round trip makes the server read them before the connection goes.
     connection.get_input_focus().ok()?.reply().ok().map(drop)
 }
 
