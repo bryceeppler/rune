@@ -4,23 +4,37 @@ use swash::text::{BidiClass, Codepoint as _};
 
 use super::*;
 
-/// The direction `text` reads in when a pill's label (one of `labels`) comes before its first
-/// strong character: that of its first strong character outside every label, as a chip draws
-/// in place of its label like an inline object, which the bidirectional algorithm counts as
-/// neutral. Otherwise [`BaseDirection::Auto`], Parley's first strong one.
+/// The direction a text with pill `labels` reads in: that of its first strong character outside
+/// every label and every isolate, else left to right (rules P2 and P3). A chip draws in place of
+/// its label like an inline object, which the bidirectional algorithm counts as neutral, and an
+/// isolate runs to its matching PDI or the paragraph's end. Without labels, [`BaseDirection::Auto`]
+/// leaves it to Parley.
 pub(super) fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>]) -> BaseDirection {
+    if labels.is_empty() {
+        return BaseDirection::Auto;
+    }
+    let mut isolates = 0usize;
     let strong = text.char_indices().find_map(|(at, c)| {
         let direction = match c.bidi_class() {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => {
+                isolates += 1;
+                return None;
+            }
+            BidiClass::PDI => {
+                isolates = isolates.saturating_sub(1);
+                return None;
+            }
+            BidiClass::B => {
+                isolates = 0;
+                return None;
+            }
             BidiClass::L => BaseDirection::Ltr,
             BidiClass::R | BidiClass::AL => BaseDirection::Rtl,
             _ => return None,
         };
-        (!labels.iter().any(|r| r.contains(&at))).then_some((at, direction))
+        (isolates == 0 && !labels.iter().any(|r| r.contains(&at))).then_some(direction)
     });
-    match strong {
-        Some((at, direction)) if labels.iter().any(|r| r.start < at) => direction,
-        _ => BaseDirection::Auto,
-    }
+    strong.unwrap_or(BaseDirection::Ltr)
 }
 
 /// Whether a pill's `label` starts a right-to-left text laid out `direction`. Parley gives an

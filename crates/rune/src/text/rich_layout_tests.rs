@@ -131,7 +131,7 @@ fn a_right_to_left_list_item_indents_from_the_right() {
 }
 
 #[test]
-fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_after_it() {
+fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_after_it_outside_isolates() {
     let mut ts = TextSystem::default();
     let style = TextStyle::new(15.5, 400.0);
     let pill = [PillChip { start: 0, end: 6, icon: None, bg: None, fg: None }];
@@ -140,6 +140,11 @@ fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_a
         ("- [x] hello", &pill[..], false),
         ("x שלום", &[][..], false),
         ("- [ ] שלום", &[][..], true),
+        ("- [ ] \u{2066}English\u{2069} שלום עולם", &pill[..], true),
+        ("- [x] \u{2067}שלום\u{2069} hello", &pill[..], false),
+        ("- [ ] \u{2068}English\u{2069}\u{2069} שלום", &pill[..], true),
+        ("- [x] \u{2067}שלום", &pill[..], false),
+        ("שלום - [x] \u{2066}English", &[PillChip { start: 9, end: 15, icon: None, bg: None, fg: None }][..], true),
     ] {
         let layout = ts.layout_blocks_inner(text, &[], &[crate::edit::Block::Hanging(6)], pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
         assert_eq!(layout.is_rtl(), rtl, "{text:?} with {} pills", pills.len());
