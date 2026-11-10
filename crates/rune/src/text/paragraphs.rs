@@ -276,6 +276,7 @@ pub(crate) struct TextLine<'a> {
     start: usize,
     y: f32,
     inline_max: Option<f32>,
+    rtl: bool,
 }
 
 impl<'a> TextLine<'a> {
@@ -302,6 +303,9 @@ impl<'a> TextLine<'a> {
     }
 
     pub(crate) fn break_reason(&self) -> parley::BreakReason { self.line.break_reason() }
+
+    /// Whether its paragraph reads right to left.
+    pub(crate) fn is_rtl(&self) -> bool { self.rtl }
 
     /// Parley's line: its x geometry is the text's, but its bytes are its paragraph's
     /// ([`Self::byte`] maps them) and so is its y.
@@ -387,7 +391,7 @@ impl TextLayout {
 
     pub(crate) fn lines(&self) -> impl DoubleEndedIterator<Item = TextLine<'_>> + '_ {
         let inline_max = self.unwrapped_width();
-        self.pieces().flat_map(move |p| (0..p.lines).filter_map(move |i| Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max })))
+        self.pieces().flat_map(move |p| (0..p.lines).filter_map(move |i| Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max, rtl: p.layout.is_rtl() })))
     }
 
     fn unwrapped_width(&self) -> Option<f32> {
@@ -399,11 +403,11 @@ impl TextLayout {
 
     pub(crate) fn line(&self, index: usize) -> Option<TextLine<'_>> {
         match &self.0 {
-            Laid::Whole(l) => Some(TextLine { line: l.get(index)?, start: 0, y: 0.0, inline_max: None }),
+            Laid::Whole(l) => Some(TextLine { line: l.get(index)?, start: 0, y: 0.0, inline_max: None, rtl: l.is_rtl() }),
             Laid::Stacked(s) => {
                 let p = s.para_of_line(index);
                 let i = index.checked_sub(p.line).filter(|&i| i < p.lines)?;
-                Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max: s.unwrapped_width })
+                Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max: s.unwrapped_width, rtl: p.layout.is_rtl() })
             }
         }
     }

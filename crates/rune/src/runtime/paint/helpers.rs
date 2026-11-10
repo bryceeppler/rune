@@ -1,5 +1,16 @@
 //! Free paint helpers for rich-text block decorations, field carets, glyphs and rects.
 use super::*;
+use crate::edit::Block;
+
+/// A list item's marker: where its text starts (device x), on the right when it reads right to
+/// left, and its baseline, block and number.
+struct Marker {
+    text_x: f32,
+    rtl: bool,
+    baseline: f32,
+    block: Block,
+    number: u32,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_block_decorations(
@@ -22,7 +33,7 @@ pub(super) fn emit_block_decorations(
     clip: [f32; 4],
     fade: [f32; 4],
 ) {
-    use crate::edit::{Block, MAX_LIST_LEVEL};
+    use crate::edit::MAX_LIST_LEVEL;
     let line_h_default = spec.style.line_px() * s * tk;
     let box_w = (x1 - x0).max(layout.full_width() * tk).max(40.0 * s * tk);
     let mut para_idx = 0usize;
@@ -30,7 +41,7 @@ pub(super) fn emit_block_decorations(
     let mut list_counts = [0u32; (MAX_LIST_LEVEL as usize) + 1];
     let mut code_run: Option<(f32, f32)> = None;
     let mut quote_run: Option<(f32, f32)> = None;
-    let mut markers: Vec<(f32, f32, Block, u32)> = Vec::new();
+    let mut markers: Vec<Marker> = Vec::new();
 
     let flush_code = |instances: &mut Vec<Instance>, run: &mut Option<(f32, f32)>| {
         if let Some((top, bot)) = run.take() {
@@ -72,6 +83,11 @@ pub(super) fn emit_block_decorations(
             top + line_h_default
         };
         let baseline = origin[1] + m.baseline * tk;
+        let marker = |block: Block, number: u32| {
+            let rtl = line.is_rtl();
+            let text_x = if rtl { m.inline_max_coord * tk } else { (block.indent_pt(spec.style.size) * s).round() * tk };
+            Marker { text_x: origin[0] + text_x, rtl, baseline, block, number }
+        };
 
         if blk == Block::Code {
             flush_quote(instances, &mut quote_run);
@@ -99,8 +115,7 @@ pub(super) fn emit_block_decorations(
                     }
                     list_counts[l] = 0;
                     if !is_soft {
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
-                        markers.push((indent, baseline, blk, 0));
+                        markers.push(marker(blk, 0));
                     }
                 }
                 Block::Numbered(lvl) => {
@@ -110,8 +125,7 @@ pub(super) fn emit_block_decorations(
                     }
                     if !is_soft {
                         list_counts[l] += 1;
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
-                        markers.push((indent, baseline, blk, list_counts[l]));
+                        markers.push(marker(blk, list_counts[l]));
                     }
                 }
                 Block::Paragraph | Block::Hanging(_) | Block::Quote | Block::Code => {
@@ -139,13 +153,14 @@ pub(super) fn emit_block_decorations(
         match blk {
             Block::Code => code_run = Some((top, bot)),
             Block::Quote => quote_run = Some((top, bot)),
-            Block::Bullet(_) => {
-                let indent = (blk.indent_pt(spec.style.size) * s).round();
-                markers.push((indent, baseline, blk, 0));
-            }
-            Block::Numbered(_) => {
-                let indent = (blk.indent_pt(spec.style.size) * s).round();
-                markers.push((indent, baseline, blk, 1));
+            Block::Bullet(_) | Block::Numbered(_) => {
+                markers.push(Marker {
+                    text_x: origin[0] + (blk.indent_pt(spec.style.size) * s).round() * tk,
+                    rtl: false,
+                    baseline,
+                    block: blk,
+                    number: u32::from(matches!(blk, Block::Numbered(_))),
+                });
             }
             Block::Paragraph | Block::Hanging(_) => {}
         }
@@ -157,11 +172,12 @@ pub(super) fn emit_block_decorations(
     if !markers.is_empty() {
         let marker_color = spec.rich_style.marker.unwrap_or_else(|| text_color.alpha(0.68));
         let mc = premul(marker_color, o, srgb);
-        for (indent_px, baseline_y, blk, num) in markers {
-            match blk {
+        for Marker { text_x, rtl, baseline: baseline_y, block, number: num } in markers {
+            match block {
                 Block::Bullet(lvl) => {
                     let d = if tk == 1.0 { (4.5 * s).round().max(3.0) } else { (4.5 * s * tk).max(3.0 * tk) };
-                    let cx = origin[0] + (indent_px - (7.0 * s).round()) * tk - d;
+                    let gap = (7.0 * s).round() * tk;
+                    let cx = if rtl { text_x + gap } else { text_x - gap - d };
                     let cy = baseline_y - 0.34 * spec.style.size * s * tk - d * 0.5;
                     let (cx, cy) = if tk == 1.0 { (cx.round(), cy.round()) } else { (cx, cy) };
                     let radius = if lvl >= 2 { 1.0 * s * tk } else { d * 0.5 };
@@ -169,11 +185,13 @@ pub(super) fn emit_block_decorations(
                     instances.push(rect_inst([cx + glide[0], cy + glide[1], d, d], c, radius, clip, fade));
                 }
                 Block::Numbered(_) => {
-                    let label = format!("{num}.");
+                    // Right to left, the bidirectional algorithm draws `1.` as `.1`.
+                    let label = if rtl { format!(".{num}") } else { format!("{num}.") };
                     let ml = text_sys.layout_rich(&label, &[], spec.style, s, None);
                     let mw = ml.full_width();
                     let m_base = ml.lines().next().map_or(spec.style.size * 0.8 * s, |l| l.metrics().baseline);
-                    let mx = origin[0] + (indent_px - (5.0 * s).round() - mw) * tk;
+                    let gap = (5.0 * s).round() * tk;
+                    let mx = if rtl { text_x + gap } else { text_x - gap - mw * tk };
                     let my = baseline_y - m_base * tk;
                     let m_origin = if tk == 1.0 { [mx.round(), my.round()] } else { [mx, my] };
                     let m_r_origin = if scale_motion == ScaleMotion::Still { m_origin } else { [0.0, 0.0] };

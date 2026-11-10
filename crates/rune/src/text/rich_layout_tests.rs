@@ -73,12 +73,108 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
     let starts: Vec<f32> = alone.lines().skip(1).map(|l| l.metrics().inline_min_coord).collect();
     assert!(starts.iter().all(|&s| s == x), "the word starts under where text follows the marker, at {x}: {starts:?}");
 
-    let rtl = "- [ ] שלום עולם ".repeat(8);
     let wide = format!("{}x", "-".repeat(80));
-    for (text, marker) in [(rtl.as_str(), 6), (wide.as_str(), 81)] {
-        let layout = ts.layout_blocks(text, &[], &[Block::Hanging(marker)], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let layout = ts.layout_blocks(&wide, &[], &[Block::Hanging(81)], &[], style, 2.0, Some(240.0), Alignment::Start);
+    assert!(layout.len() > 1, "{wide:?} wraps");
+    assert!(layout.lines().all(|l| l.metrics().inline_min_coord == 0.0), "{wide:?} wraps at the margin");
+}
+
+/// Where each line of a right-to-left layout starts on the right, in device px: a wrapped
+/// line's trailing space hangs past its left end.
+fn right_edges(layout: &Layout<Ink>) -> Vec<f32> {
+    layout.lines().map(|l| { let m = l.metrics(); m.inline_min_coord + m.offset + m.advance }).collect()
+}
+
+#[test]
+fn a_right_to_left_hanging_paragraph_wraps_under_the_text_after_its_marker_from_the_right() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    let item = format!("- [ ] {}", "שלום עולם ".repeat(8));
+    let plain = ts.layout_blocks(&item, &[], &[Block::Paragraph], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let text = parley::Cluster::from_byte_index(&plain, 6).unwrap();
+    let marker = 240.0 - (text.visual_offset().unwrap() + text.advance());
+    assert!(marker > 10.0, "the marker takes room on the right: {marker}");
+    let hung = ts.layout_blocks(&item, &[], &[Block::Hanging(6)], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let edges = right_edges(&hung);
+    assert!(edges.len() > 2, "the item wraps");
+    assert!((edges[0] - 240.0).abs() < 0.5, "the marker starts the first line at the right margin: {edges:?}");
+    for (i, edge) in edges.iter().enumerate().skip(1) {
+        assert!((edge - (240.0 - marker)).abs() < 0.5, "line {i} starts under the text, {marker} from the right: {edges:?}");
+        assert!(hung.get(i).unwrap().metrics().inline_min_coord >= 0.0, "line {i} fits");
+    }
+}
+
+#[test]
+fn a_right_to_left_list_item_indents_from_the_right() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    let indent = (Block::Bullet(0).indent_pt(14.0) * 2.0).round();
+    for (text, rtl) in [("שלום עולם ".repeat(8), true), ("hello world ".repeat(8), false)] {
+        let layout = ts.layout_blocks(text.trim_end(), &[], &[Block::Bullet(0)], &[], style, 2.0, Some(240.0), Alignment::Start);
         assert!(layout.len() > 1, "{text:?} wraps");
-        assert!(layout.lines().all(|l| l.metrics().inline_min_coord == 0.0), "{text:?} wraps at the margin");
+        for line in layout.lines() {
+            let m = line.metrics();
+            let (left, right) = if rtl {
+                (m.inline_min_coord + m.offset + m.hanging_advance, m.inline_min_coord + m.offset + m.advance)
+            } else {
+                (m.inline_min_coord + m.offset, m.inline_min_coord + m.offset + m.advance - m.hanging_advance)
+            };
+            if rtl {
+                assert!((right - (240.0 - indent)).abs() < 0.5 && left >= -0.5, "{text:?} starts {indent} in from the right: {left}..{right}");
+            } else {
+                assert!((left - indent).abs() < 0.5 && right <= 240.5, "{text:?} starts {indent} in from the left: {left}..{right}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_after_it() {
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(15.5, 400.0);
+    let pill = [PillChip { start: 0, end: 6, icon: None, bg: None, fg: None }];
+    for (text, pills, rtl) in [
+        ("- [x] שלום", &pill[..], true),
+        ("- [x] hello", &pill[..], false),
+        ("x שלום", &[][..], false),
+        ("- [ ] שלום", &[][..], true),
+    ] {
+        let layout = ts.layout_blocks_inner(text, &[], &[crate::edit::Block::Hanging(6)], pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
+        assert_eq!(layout.is_rtl(), rtl, "{text:?} with {} pills", pills.len());
+    }
+}
+
+#[test]
+fn a_pill_starting_a_right_to_left_paragraph_draws_its_chip_and_icon_on_the_right() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(15.5, 400.0);
+    let pm = PillMetrics::new(15.5);
+    static BOX: Icon = Icon { name: "box", view: 24.0, body: "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\"/>" };
+    let icon = Some(&BOX);
+    for (text, rtl) in [("- [ ] שלום עולם", true), ("- [ ] hello world", false)] {
+        let pills = [PillChip { start: 0, end: 6, icon, bg: None, fg: None }];
+        let hidden = [Span::new(0, 6).size(0.01)];
+        let laid = ts.layout_blocks_inner(text, &hidden, &[Block::Hanging(6)], &pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
+        let word = parley::Cluster::from_byte_index(&laid, 6).unwrap();
+        let (word_x0, word_x1) = (word.visual_offset().unwrap(), word.visual_offset().unwrap() + word.advance());
+        let layout = TextLayout::from(laid.clone());
+        let rects = pill_chip_rects(&layout, &pills, 15.5, 2.0, 0.0..100.0);
+        let [(0, chip)] = rects[..] else { panic!("{text:?}: one chip, {rects:?}") };
+        let mut icons = Vec::new();
+        pill_chips(&layout, &pills, 15.5, 2.0, [0.0, 0.0], 0.0..100.0, Color::TRANSPARENT, &mut Vec::new(), &mut icons);
+        let [(_, px, [ix, _], _)] = icons[..] else { panic!("{text:?}: one icon") };
+        let edge = (pm.margin + pm.pad) * 2.0;
+        assert!(ix >= chip[0] && ix + px as f32 <= chip[0] + chip[2] + 0.5, "{text:?}: the icon is inside its chip");
+        if rtl {
+            assert!((600.0 - (ix + px as f32) - edge).abs() <= 1.0, "{text:?}: the icon stands {edge} in from the right margin, at {ix}");
+            assert!(chip[0] >= word_x1 - 0.5, "{text:?}: the chip is right of the text, {chip:?} after {word_x1}");
+        } else {
+            assert!((ix - edge).abs() <= 1.0, "{text:?}: the icon stands {edge} in from the left margin, at {ix}");
+            assert!(chip[0] + chip[2] <= word_x0 + 0.5, "{text:?}: the chip is left of the text");
+        }
     }
 }
 
@@ -95,3 +191,4 @@ fn a_hanging_task_line_measured_at_no_width_lays_out_every_character() {
         assert_eq!(laid, text.len(), "every character is on a line at scale {scale}");
     }
 }
+

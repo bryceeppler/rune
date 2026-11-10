@@ -48,6 +48,7 @@ mod text_rebreak;
 mod unseen_entrances;
 mod window_wake;
 mod rtl_arrows;
+mod rtl_lists;
 
 thread_local! {
     /// Runs once inside the next frame, after layout and just before live values latch: a

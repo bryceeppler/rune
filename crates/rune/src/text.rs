@@ -433,15 +433,17 @@ impl TextSystem {
         // Each pill's label range, and the room before and after it in device px; boxes keep
         // the pill's index in their id, so ranges that fail the checks keep no chip.
         let pm = PillMetrics::new(style.size);
-        let pills: Vec<(usize, std::ops::Range<usize>, u32, u32)> = pills
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let r = (p.start as usize).min(text.len())..(p.end as usize).min(text.len());
-                (i, r, (pm.lead(p.icon.is_some()) * scale).round() as u32, (pm.trail() * scale).round() as u32)
-            })
-            .filter(|(_, r, ..)| {
+        let labels = || {
+            pills.iter().enumerate().map(|(i, p)| (i, p, (p.start as usize).min(text.len())..(p.end as usize).min(text.len()))).filter(|(_, _, r)| {
                 !r.is_empty() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end) && !text.as_bytes()[r.clone()].contains(&b'\n')
+            })
+        };
+        let direction = pill_chips::direction_past_labels(text, &labels().map(|(_, _, r)| r).collect::<Vec<_>>());
+        let pills: Vec<(usize, std::ops::Range<usize>, u32, u32)> = labels()
+            .map(|(i, p, r)| {
+                let (lead, trail) = (pm.lead(p.icon.is_some()), pm.trail());
+                let (lead, trail) = if pill_chips::starts_rtl(direction, &r) { (0.0, lead + trail) } else { (lead, trail) };
+                (i, r, (lead * scale).round() as u32, (trail * scale).round() as u32)
             })
             .collect();
         let break_lines = |layout: &mut Layout<Ink>| {
@@ -614,6 +616,7 @@ impl TextSystem {
         type Spacings = [(std::ops::Range<usize>, f32)];
         let build = |lcx: &mut LayoutContext<Ink>, fcx: &mut FontContext, exact: &Spacings, widen: &Spacings, system: &[(std::ops::Range<usize>, Vec<FontFamilyName<'_>>)]| {
             let mut b = lcx.ranged_builder(fcx, text, scale, true);
+            b.set_base_direction(direction);
             b.push_default(FontFamily::from(sans.as_slice()));
             b.push_default(StyleProperty::Locale(language));
             b.push_default(StyleProperty::FontSize(style.size));

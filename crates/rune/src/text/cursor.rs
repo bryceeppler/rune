@@ -118,7 +118,7 @@ pub(super) fn plain(layout: &Layout<Ink>) -> bool {
 pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: bool) -> parley::editing::Cursor {
     use parley::{BreakReason, editing::Cursor, layout::Affinity};
     if plain {
-        return Cursor::from_point(layout, x, y);
+        return before_break(layout, Cursor::from_point(layout, x, y));
     }
     if layout.len() == 0 {
         return Cursor::from_byte_index(layout, 0, Affinity::Downstream);
@@ -143,8 +143,13 @@ pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: 
     };
     let m = line.metrics();
     let r = line.text_range();
+    let start = Cursor::from_byte_index(layout, r.start, Affinity::Downstream);
+    let end = || match parley::Cluster::from_byte_index(layout, r.end.saturating_sub(1)) {
+        Some(cl) if line.break_reason() == BreakReason::Explicit && r.end > r.start => Cursor::from_byte_index(layout, cl.text_range().start, Affinity::Downstream),
+        _ => Cursor::from_byte_index(layout, r.end, Affinity::Upstream),
+    };
     if x <= m.inline_min_coord + m.offset {
-        return Cursor::from_byte_index(layout, r.start, Affinity::Downstream);
+        return if layout.is_rtl() { end() } else { start };
     }
     for item in line.items() {
         if let PositionedLayoutItem::InlineBox(b) = item
@@ -163,7 +168,7 @@ pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: 
             let adv = cl.advance();
             if x <= cx + adv {
                 let leading = x - cx <= adv * 0.5;
-                let (idx, aff) = if cl.is_rtl() {
+                let (idx, aff) = if cl.is_rtl() && !cl.is_hard_line_break() {
                     if leading {
                         (cl.text_range().end, Affinity::Upstream)
                     } else {
@@ -179,12 +184,20 @@ pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: 
             cx += adv;
         }
     }
-    if line.break_reason() == BreakReason::Explicit && r.end > r.start {
-        if let Some(cl) = parley::Cluster::from_byte_index(layout, r.end - 1) {
-            return Cursor::from_byte_index(layout, cl.text_range().start, Affinity::Downstream);
+    if layout.is_rtl() { start } else { end() }
+}
+
+/// `cursor`, or where it stands before the hard break it follows: Parley's hit test gives the
+/// byte after a break, which draws on the next line, for a point by a right-to-left line's
+/// break.
+fn before_break(layout: &Layout<Ink>, cursor: parley::editing::Cursor) -> parley::editing::Cursor {
+    use parley::layout::Affinity;
+    match cursor.index().checked_sub(1).and_then(|at| parley::Cluster::from_byte_index(layout, at)) {
+        Some(cl) if cursor.affinity() == Affinity::Upstream && cl.is_hard_line_break() && cl.text_range().end == cursor.index() => {
+            parley::editing::Cursor::from_byte_index(layout, cl.text_range().start, Affinity::Downstream)
         }
+        _ => cursor,
     }
-    Cursor::from_byte_index(layout, r.end, Affinity::Upstream)
 }
 
 /// Start (`!end`) or end (`end`) byte of the visual line containing `byte`.

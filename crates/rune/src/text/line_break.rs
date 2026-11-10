@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// Breaks `layout` into lines, each paragraph indented by its block. A pill's chip that would
-/// end a line apart from its label, or run past the line's end, moves to the next line.
+/// Breaks `layout` into lines, each paragraph indented by its block from the side it reads from.
+/// A pill's chip that would end a line apart from its label, or run past the line's end, moves
+/// to the next line.
 pub(super) fn break_lines_with_blocks(
     layout: &mut Layout<Ink>,
     blocks: &[crate::edit::Block],
@@ -38,7 +39,7 @@ pub(super) fn break_lines_with_blocks(
 /// For each paragraph, how far its wrapped lines start from its first line's start in device
 /// px: where the text after a [`Block::Hanging`](crate::edit::Block::Hanging) paragraph's
 /// marker starts, or would start when a word too wide for the rest of the line moved it on,
-/// when the marker ends on the first line of a left-to-right paragraph, else 0.
+/// when the marker ends on the paragraph's first line, else 0.
 fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> {
     let mut widths = vec![0.0; blocks.len()];
     let mut first_line = true;
@@ -64,24 +65,31 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
     widths
 }
 
-/// How far from the start of `line` the text from byte `at` on starts, when `at` follows the
-/// line's first byte and the line runs left to right: the line's whole advance when the line
-/// ends at `at` because what follows went on to the next line.
+/// How far from the start of `line` the text from byte `at` on starts, its left edge in a
+/// left-to-right paragraph and its right edge in a right-to-left one, when `at` follows the
+/// line's first byte and its character reads the paragraph's way: the line's whole advance when
+/// the line ends at `at` because what follows went on to the next line.
 fn text_start(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>, at: usize) -> Option<f32> {
     let range = line.text_range();
-    let rtl = line.runs().any(|run| run.is_rtl());
-    if rtl || at <= range.start || at > range.end {
+    if at <= range.start || at > range.end {
         return None;
     }
+    let m = line.metrics();
     if at == range.end {
-        return (line.break_reason() != parley::BreakReason::Explicit).then(|| line.metrics().advance);
+        return (line.break_reason() != parley::BreakReason::Explicit).then_some(m.advance);
     }
-    Some(parley::Cluster::from_byte_index(layout, at)?.visual_offset()? - line.metrics().offset)
+    let cluster = parley::Cluster::from_byte_index(layout, at)?;
+    if cluster.is_rtl() != layout.is_rtl() {
+        return None;
+    }
+    let left = cluster.visual_offset()? - m.offset;
+    Some(if layout.is_rtl() { m.advance - left - cluster.advance() } else { left })
 }
 
 /// [`break_lines_with_blocks`] once, with `caps` setting the room on given `(para_idx, line_in_para)`
-/// lines (the last for a line wins) and `hangs` indenting each paragraph's wrapped lines. Fills
-/// `out` with `((para_idx, line_in_para), uncapped_room)`.
+/// lines (the last for a line wins) and `hangs` indenting each paragraph's wrapped lines. A
+/// right-to-left layout indents from the right, and a line given more room grows to the left.
+/// Fills `out` with `((para_idx, line_in_para), uncapped_room)`.
 fn break_lines_capped(
     layout: &mut Layout<Ink>,
     blocks: &[crate::edit::Block],
@@ -94,21 +102,27 @@ fn break_lines_capped(
 ) {
     out.clear();
     let layout_max = max_width.unwrap_or(f32::MAX);
+    let rtl = layout.is_rtl();
     let mut breaker = layout.break_lines();
     breaker.state_mut().set_layout_max_advance(layout_max);
     let (mut para_idx, mut line_in_para) = (0usize, 0usize);
     while !breaker.is_done() {
         let blk = blocks.get(para_idx).copied().unwrap_or(crate::edit::Block::Paragraph);
         let hang = if line_in_para > 0 { hangs.get(para_idx).copied().unwrap_or(0.0) } else { 0.0 };
-        let indent = (blk.indent_pt(font_size) * scale).round() + hang;
-        let right_pad = if blk == crate::edit::Block::Code { indent } else { 0.0 };
+        let indent = (blk.indent_pt(font_size) * scale).round();
+        let start = indent + hang;
+        let end = if blk == crate::edit::Block::Code { indent } else { 0.0 };
         let line_max = max_width
-            .map_or(f32::MAX, |w| (w - indent - right_pad).max(1.0))
+            .map_or(f32::MAX, |w| (w - start - end).max(1.0))
             .min(layout_max);
         let key = (para_idx, line_in_para);
         out.push((key, line_max));
         let capped = caps.iter().rfind(|c| c.0 == key).map_or(line_max, |c| c.1);
-        breaker.state_mut().set_line_x(indent);
+        let line_x = match max_width {
+            Some(w) if rtl => w - start - capped,
+            _ => start,
+        };
+        breaker.state_mut().set_line_x(line_x);
         // Parley wants no line wider than the layout: a widened line widens it while it breaks.
         breaker.state_mut().set_layout_max_advance(layout_max.max(capped));
         breaker.state_mut().set_line_max_advance(capped);

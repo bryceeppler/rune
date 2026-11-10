@@ -1,5 +1,35 @@
 //! The chips drawn behind pill labels in a laid-out paragraph.
+use parley::BaseDirection;
+use swash::text::{BidiClass, Codepoint as _};
+
 use super::*;
+
+/// The direction `text` reads in when a pill's label (one of `labels`) comes before its first
+/// strong character: that of its first strong character outside every label, as a chip draws
+/// in place of its label like an inline object, which the bidirectional algorithm counts as
+/// neutral. Otherwise [`BaseDirection::Auto`], Parley's first strong one.
+pub(super) fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>]) -> BaseDirection {
+    let strong = text.char_indices().find_map(|(at, c)| {
+        let direction = match c.bidi_class() {
+            BidiClass::L => BaseDirection::Ltr,
+            BidiClass::R | BidiClass::AL => BaseDirection::Rtl,
+            _ => return None,
+        };
+        (!labels.iter().any(|r| r.contains(&at))).then_some((at, direction))
+    });
+    match strong {
+        Some((at, direction)) if labels.iter().any(|r| r.start < at) => direction,
+        _ => BaseDirection::Auto,
+    }
+}
+
+/// Whether a pill's `label` starts a right-to-left text laid out `direction`. Parley gives an
+/// inline box before a text's first character the left-to-right level, which draws it at the
+/// line's far left, so such a pill keeps all its chip's room in the box after its label, which
+/// draws beside the label on its left, and its icon at that room's right.
+pub(super) fn starts_rtl(direction: BaseDirection, label: &std::ops::Range<usize>) -> bool {
+    direction == BaseDirection::Rtl && label.start == 0
+}
 
 /// The chip behind each pill in the layouts of `layout` that meet `band` (its y, device px),
 /// at `origin`, and each leading icon with its size in px and top-left corner. A pill whose
@@ -108,6 +138,20 @@ fn chips(
                 out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
                 continue;
             };
+            if lead.width == 0.0
+                && let Some(room) = trail
+            {
+                let (x0, x1) = (room.x + margin, (room.x + room.width - margin).max(gr_x1));
+                let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
+                let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
+                out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                if let Some(icon) = pill.icon {
+                    let px = (pm.icon * scale).round().max(1.0);
+                    let ix = origin[0] + room.x + room.width - (pm.margin + pm.pad) * scale - px;
+                    icons.push((icon, px as u32, [ix.round(), ((top + bot - px) * 0.5).round()], pill.fg));
+                }
+                continue;
+            }
             let rtl_lead = gr_x0 <= gr_x1 && (lead.x - gr_x1).abs() < 1.0;
             let x0 = if gr_x0 <= gr_x1 {
                 if rtl_lead {
@@ -131,12 +175,7 @@ fn chips(
             } else {
                 trail.map_or(line_end, |t| t.x + t.width - margin)
             };
-            if asc < size * scale * 0.25 {
-                (asc, desc) = (size * scale * 0.95, size * scale * 0.25);
-            }
-            let base = origin[1] + m.baseline;
-            let top = (base - asc - 1.0 * scale).round();
-            let bot = (base + desc + 1.0 * scale).round();
+            let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
             let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
             out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
             if let Some(icon) = pill.icon {
@@ -146,4 +185,11 @@ fn chips(
             }
         }
     }
+}
+
+/// A chip's top and bottom for a label on the baseline at `base` whose glyphs rise `asc` and
+/// fall `desc`, or for text of `size` points when its glyphs are too small to measure.
+fn chip_band(base: f32, asc: f32, desc: f32, size: f32, scale: f32) -> (f32, f32) {
+    let (asc, desc) = if asc < size * scale * 0.25 { (size * scale * 0.95, size * scale * 0.25) } else { (asc, desc) };
+    ((base - asc - 1.0 * scale).round(), (base + desc + 1.0 * scale).round())
 }
