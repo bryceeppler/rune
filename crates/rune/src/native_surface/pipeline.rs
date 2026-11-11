@@ -56,9 +56,54 @@ impl Drop for TimingSlot {
     }
 }
 
-enum Wake {
-    Drain(wgpu::Queue),
-    Stop,
+struct Drain(wgpu::Queue);
+
+struct CompletionWorker {
+    drains: Option<Arc<std::sync::mpsc::SyncSender<Drain>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl CompletionWorker {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn(device: &wgpu::Device) -> Self {
+        let (drains, lent) = std::sync::mpsc::sync_channel(1);
+        let device = device.clone();
+        let thread = std::thread::Builder::new()
+            .name("rune-video-completion".into())
+            .spawn(move || {
+                // Nonblocking poll releases wgpu's snatch lock before sleeping. A fence wait here
+                // would keep that read lock and serialize queue.present's write lock behind GPU work.
+                // Wakeups are coalesced; the final frame still completes after the window goes idle.
+                // Each drain holds its queue while polling: wgpu never reports a dropped queue empty.
+                for Drain(_queue) in lent {
+                    loop {
+                        match device.poll(wgpu::PollType::Poll) {
+                            Ok(wgpu::PollStatus::QueueEmpty) => break,
+                            Ok(_) => std::thread::sleep(std::time::Duration::from_millis(1)),
+                            Err(_) => return,
+                        }
+                    }
+                }
+            })
+            .expect("video completion thread");
+        Self { drains: Some(Arc::new(drains)), thread: Some(thread) }
+    }
+
+    /// Lends drains only while the renderer lives, so a frame callback still pending when it
+    /// drops never keeps the worker, or a thread waiting for the worker, from finishing.
+    fn lender(&self) -> std::sync::Weak<std::sync::mpsc::SyncSender<Drain>> {
+        self.drains.as_ref().map_or_else(std::sync::Weak::new, Arc::downgrade)
+    }
+}
+impl Drop for CompletionWorker {
+    fn drop(&mut self) {
+        self.drains = None;
+        // A worker left to drop its device last can be inside the GPU driver when the process
+        // exits, while the driver's exit handlers unload it. Frame observers run on the worker
+        // and may drop the renderer's last owner there, where the worker cannot wait for itself.
+        if let Some(thread) = self.thread.take().filter(|t| t.thread().id() != std::thread::current().id()) {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// Standalone pipeline, also used by Rune's renderer. A frame must be submitted through `submit`
@@ -68,8 +113,7 @@ pub struct SurfaceRenderer {
     timing_pool: Option<Arc<TimingPool>>,
     queries: Option<Arc<TimingSlot>>,
     queries_used: std::sync::atomic::AtomicBool,
-    completion: std::sync::mpsc::SyncSender<Wake>,
-    completion_worker: Option<std::thread::JoinHandle<()>>,
+    completion: CompletionWorker,
     pipeline: wgpu::RenderPipeline,
     format: wgpu::TextureFormat,
     extra: Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
@@ -102,26 +146,6 @@ impl SurfaceRenderer {
                 free: std::sync::Mutex::new((0..TIMING_SLOTS).map(|i| i * 2).collect()),
             })
         });
-        let (completion, receiver) = std::sync::mpsc::sync_channel(1);
-        let poll_device = device.clone();
-        let completion_worker = std::thread::Builder::new()
-            .name("rune-video-completion".into())
-            .spawn(move || {
-                // Nonblocking poll releases wgpu's snatch lock before sleeping. A fence wait here
-                // would keep that read lock and serialize queue.present's write lock behind GPU work.
-                // Wakeups are coalesced; the final frame still completes after the window goes idle.
-                // Each wake holds its queue while polling: wgpu never reports a dropped queue empty.
-                while let Ok(Wake::Drain(_queue)) = receiver.recv() {
-                    loop {
-                        match poll_device.poll(wgpu::PollType::Poll) {
-                            Ok(wgpu::PollStatus::QueueEmpty) => break,
-                            Ok(_) => std::thread::sleep(std::time::Duration::from_millis(1)),
-                            Err(_) => return,
-                        }
-                    }
-                }
-            })
-            .expect("video completion thread");
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("video"),
             entries: &[
@@ -157,8 +181,7 @@ impl SurfaceRenderer {
             timing_pool,
             queries: None,
             queries_used: std::sync::atomic::AtomicBool::new(false),
-            completion,
-            completion_worker: Some(completion_worker),
+            completion: CompletionWorker::spawn(device),
             pipeline,
             format,
             extra: Vec::new(),
@@ -497,12 +520,15 @@ impl SurfaceRenderer {
             let queries = queries.clone();
             let device = self.device.clone();
             let queue = queue.clone();
-            let completion = self.completion.clone();
+            let lender = self.completion.lender();
             // Metal counter resolves can race the render pass's final fragment sample when
             // encoded into the same command buffer. Resolve after its completion fence; this
             // is timestamp metadata only, never a readback or wait on the video pixel path.
             encoder.on_submitted_work_done(move || {
                 let completed_at = Instant::now();
+                let Some(drains) = lender.upgrade() else {
+                    return complete(frames, completed_at, None);
+                };
                 let mut timestamps = device.create_command_encoder(&Default::default());
                 timestamps.resolve_query_set(&queries.pool.queries, queries.start..queries.start + 2, &resolve, 0);
                 timestamps.copy_buffer_to_buffer(&resolve, 0, &readback, 0, 16);
@@ -521,25 +547,13 @@ impl SurfaceRenderer {
                     }
                     // The sample pair must survive both GPU submissions and CPU mapping.
                     drop(queries);
-                    for (s, _, mut t) in frames {
-                        t.completed_at = Some(completed_at);
-                        if let Some((a, b)) = times {
-                            t.gpu_start_seconds = Some(a);
-                            t.gpu_end_seconds = Some(b);
-                        }
-                        s.report(t);
-                    }
+                    complete(frames, completed_at, times);
                 });
                 queue.submit([timestamps.finish()]);
-                let _ = completion.try_send(Wake::Drain(queue));
+                let _ = drains.try_send(Drain(queue));
             });
         } else {
-            encoder.on_submitted_work_done(move || {
-                for (s, _, mut t) in frames {
-                    t.completed_at = Some(Instant::now());
-                    s.report(t);
-                }
-            });
+            encoder.on_submitted_work_done(move || complete(frames, Instant::now(), None));
         }
         let index = queue.submit([encoder.finish()]);
         self.wake(queue);
@@ -548,16 +562,19 @@ impl SurfaceRenderer {
 
     /// Has the completion worker poll until `queue` drains; false when a wake already waits.
     pub(super) fn wake(&self, queue: &wgpu::Queue) -> bool {
-        self.completion.try_send(Wake::Drain(queue.clone())).is_ok()
+        self.completion.lender().upgrade().is_some_and(|drains| drains.try_send(Drain(queue.clone())).is_ok())
     }
 }
 
-impl Drop for SurfaceRenderer {
-    fn drop(&mut self) {
-        let _ = self.completion.send(Wake::Stop);
-        if let Some(worker) = self.completion_worker.take() {
-            let _ = worker.join();
+#[cfg(not(target_arch = "wasm32"))]
+fn complete(frames: Vec<(NativeSurface, Arc<Imported>, FrameTiming)>, completed_at: Instant, gpu: Option<(f64, f64)>) {
+    for (surface, _, mut timing) in frames {
+        timing.completed_at = Some(completed_at);
+        if let Some((start, end)) = gpu {
+            timing.gpu_start_seconds = Some(start);
+            timing.gpu_end_seconds = Some(end);
         }
+        surface.report(timing);
     }
 }
 
