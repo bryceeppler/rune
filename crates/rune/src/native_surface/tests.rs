@@ -190,14 +190,31 @@ fn completion_worker_preserves_cpu_gpu_overlap() {
     panic!("the snatch write lock never returned while GPU work was pending: {outcomes:?}");
 }
 
+fn eventually(done: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while !done() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    true
+}
+
+/// Whether every holder of `device` has let it go, a renderer's completion worker included.
+fn released(device: &wgpu::Device) -> impl Fn() -> bool + use<> {
+    let alive = Arc::new(());
+    let watched = Arc::downgrade(&alive);
+    device.set_device_lost_callback(move |_, _| drop(alive.clone()));
+    move || watched.strong_count() == 0
+}
+
 /// A completion worker that outlives its renderer can still be inside the GPU driver when the
 /// process exits, while the driver's exit handlers tear it down.
 #[test]
 fn a_dropped_renderer_leaves_no_worker_on_its_device() {
     let Gpu { device, queue, .. } = Gpu::headless_wgpu();
-    let device_alive = Arc::new(());
-    let device_released = Arc::downgrade(&device_alive);
-    device.set_device_lost_callback(move |_, _| drop(device_alive.clone()));
+    let device_released = released(&device);
     let renderer = SurfaceRenderer::new(&device, OFFSCREEN_FORMAT);
     let (entered, worker_polling) = std::sync::mpsc::channel();
     let (resume, resumed) = std::sync::mpsc::channel::<()>();
@@ -212,7 +229,70 @@ fn a_dropped_renderer_leaves_no_worker_on_its_device() {
     resume.send(()).unwrap();
     drop(renderer);
     drop(device);
-    assert!(device_released.upgrade().is_none(), "the completion worker outlived its renderer and still holds the device");
+    assert!(device_released(), "the completion worker outlived its renderer and still holds the device");
+}
+
+/// Frame observers run inside wgpu callbacks on the completion worker, so the last owner of a
+/// renderer can be released there.
+fn a_renderer_dropped_inside_a_completion_callback_finishes_dropping_with(wake_waiting: bool) {
+    let Gpu { device, queue, .. } = Gpu::headless_wgpu();
+    let device_released = released(&device);
+    let renderer = SurfaceRenderer::new(&device, OFFSCREEN_FORMAT);
+    let (entered, callback_running) = std::sync::mpsc::channel();
+    let (hand_over, last_owner) = std::sync::mpsc::channel::<SurfaceRenderer>();
+    let (dropped, renderer_dropped) = std::sync::mpsc::channel();
+    queue.on_submitted_work_done(move || {
+        entered.send(()).unwrap();
+        drop(last_owner.recv().unwrap());
+        dropped.send(()).unwrap();
+    });
+    assert!(renderer.wake(&queue), "the first wake is queued");
+    callback_running.recv_timeout(std::time::Duration::from_secs(10)).expect("the woken worker runs the callback");
+    if wake_waiting {
+        assert!(renderer.wake(&queue), "a second wake waits while the callback holds the worker");
+    }
+    hand_over.send(renderer).unwrap();
+    renderer_dropped
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("a renderer dropped inside its own completion callback finishes dropping");
+    drop((device, queue));
+    assert!(eventually(device_released), "the completion worker ended after its renderer was dropped in a callback");
+}
+
+#[test]
+fn a_renderer_dropped_inside_a_completion_callback_finishes_dropping() {
+    a_renderer_dropped_inside_a_completion_callback_finishes_dropping_with(false);
+}
+
+#[test]
+fn a_renderer_dropped_inside_a_completion_callback_with_a_wake_waiting_finishes_dropping() {
+    a_renderer_dropped_inside_a_completion_callback_finishes_dropping_with(true);
+}
+
+#[test]
+fn a_frame_in_flight_when_its_renderer_drops_still_reports_its_completion() {
+    let gpu = Gpu::headless_wgpu();
+    let surface = NativeSurface::new();
+    surface.push_bytes(synthetic(16, 16, 0), 1).unwrap();
+    let (completed, completion) = std::sync::mpsc::channel();
+    surface.set_observer(Arc::new(move |t| {
+        if t.completed_at.is_some() {
+            let _ = completed.send(t);
+        }
+    }));
+    let mut renderer = SurfaceRenderer::new(&gpu.device, OFFSCREEN_FORMAT);
+    renderer.prepare(&gpu.device, &gpu.queue, &[draw(&surface, [0.0, 0.0, 16.0, 16.0])], (16, 16));
+    let target = Offscreen::new(&gpu.device, 16, 16);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = clear_pass(&mut encoder, &target.view, wgpu::Color::BLACK, renderer.timestamp_writes());
+        renderer.draw(&mut pass, 0);
+    }
+    renderer.submit(&gpu.queue, encoder);
+    drop(renderer);
+    completion
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the frame in flight reports its completion with no other poll of the device");
 }
 fn publish(s: &NativeSurface, b: ByteFrame, id: u64, native: bool) {
     #[cfg(target_os = "macos")]
