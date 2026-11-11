@@ -10,6 +10,7 @@ mod gpu_tests;
 mod place_tests;
 #[cfg(target_os = "macos")]
 pub mod macos;
+mod completion;
 mod pipeline;
 pub(crate) mod place;
 pub use pipeline::SurfaceRenderer;
@@ -173,6 +174,8 @@ impl NativeSurface {
     pub fn set_waker(&self, waker: crate::Waker) {
         self.0.lock().unwrap().waker = Some(waker);
     }
+    /// The observer hears each draw's submission on the thread that submits it, and its
+    /// completion on the renderer's completion thread.
     pub fn set_observer(&self, observer: FrameObserver) {
         self.0.lock().unwrap().observer = Some(observer);
     }
@@ -286,21 +289,21 @@ impl NativeSurface {
         Arc::as_ptr(&self.0) as usize
     }
     fn report(&self, timing: FrameTiming) {
-        let observer = {
-            let mut s = self.0.lock().unwrap();
-            if timing.completed_at.is_some() {
-                s.completed += 1;
-            } else {
-                s.submitted += 1;
-            }
-            if s.timing.as_ref().is_none_or(|old| old.submitted_at <= timing.submitted_at) {
-                s.timing = Some(timing.clone());
-            }
-            s.observer.clone()
-        };
-        if let Some(f) = observer {
-            f(timing);
+        if let Some(observer) = self.record(&timing) {
+            observer(timing);
         }
+    }
+    fn record(&self, timing: &FrameTiming) -> Option<FrameObserver> {
+        let mut s = self.0.lock().unwrap();
+        if timing.completed_at.is_some() {
+            s.completed += 1;
+        } else {
+            s.submitted += 1;
+        }
+        if s.timing.as_ref().is_none_or(|old| old.submitted_at <= timing.submitted_at) {
+            s.timing = Some(timing.clone());
+        }
+        s.observer.clone()
     }
 }
 

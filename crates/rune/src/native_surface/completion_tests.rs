@@ -108,8 +108,8 @@ fn completion_worker_preserves_cpu_gpu_overlap() {
             let _ = done.send(());
         });
         renderer.submit(&gpu.queue, encoder);
-        // The worker has taken submit's wakeup once its one-slot channel has room again: it is
-        // in its polling loop, which only leaves once the queue is empty.
+        // The completion thread has taken submit's wakeup once a new wake is accepted: it is
+        // polling, and keeps polling while the frame is in flight.
         while !renderer.wake(&gpu.queue) {
             std::thread::yield_now();
         }
@@ -178,8 +178,8 @@ fn a_dropped_renderer_leaves_no_worker_on_its_device() {
     assert!(device_released(), "the completion worker outlived its renderer and still holds the device");
 }
 
-/// Frame observers run inside wgpu callbacks on the completion worker, so the last owner of a
-/// renderer can be released there.
+/// wgpu runs callbacks on the completion thread while it polls, so the last owner of a renderer
+/// can be released there.
 fn a_renderer_dropped_inside_a_completion_callback_finishes_dropping_with(wake_waiting: bool) {
     let Gpu { device, queue, .. } = Gpu::headless_wgpu();
     let device_released = released(&device);
