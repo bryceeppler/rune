@@ -111,7 +111,7 @@ impl Completions {
     /// and wgpu runs the readback's callback only on a thread that polls.
     pub(super) fn wait_if_dropped(&self, device: &wgpu::Device, readback: wgpu::SubmissionIndex) {
         if !self.renderer_open() {
-            let _ = device.poll(wgpu::PollType::Wait { submission_index: Some(readback), timeout: None });
+            device.poll(wgpu::PollType::Wait { submission_index: Some(readback), timeout: None }).ok();
         }
     }
 
@@ -125,7 +125,7 @@ impl Completions {
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap()
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn set(&self, renderer: Renderer) {
@@ -135,7 +135,6 @@ impl Completions {
 
     fn run(self: Arc<Self>) {
         ON_A_COMPLETION_THREAD.set(true);
-        let mut device_lost = false;
         loop {
             let step = {
                 let mut state = self.state();
@@ -147,15 +146,16 @@ impl Completions {
                     match renderer {
                         Renderer::Dropped => break Step::Drain,
                         Renderer::Drained if state.in_flight == 0 => return,
-                        Renderer::Open if !device_lost && std::mem::take(&mut state.woken) => break Step::Poll,
-                        Renderer::Open if !device_lost && state.in_flight > 0 => {
-                            let (next, waited) = self.changed.wait_timeout(state, POLL_INTERVAL).unwrap();
+                        Renderer::Open if std::mem::take(&mut state.woken) => break Step::Poll,
+                        Renderer::Open if state.in_flight > 0 => {
+                            let (next, waited) =
+                                self.changed.wait_timeout(state, POLL_INTERVAL).unwrap_or_else(PoisonError::into_inner);
                             state = next;
                             if waited.timed_out() {
                                 break Step::Poll;
                             }
                         }
-                        _ => state = self.changed.wait(state).unwrap(),
+                        _ => state = self.changed.wait(state).unwrap_or_else(PoisonError::into_inner),
                     }
                 }
             };
@@ -165,7 +165,7 @@ impl Completions {
                         observer(timing);
                     }
                 }
-                Step::Poll => device_lost = !self.poll(),
+                Step::Poll => self.poll(),
                 Step::Drain => {
                     self.set(Renderer::Drained);
                     self.drain();
@@ -174,10 +174,10 @@ impl Completions {
         }
     }
 
-    /// False once the device is lost.
-    fn poll(&self) -> bool {
-        let device = self.device.lock().unwrap_or_else(PoisonError::into_inner);
-        device.as_ref().is_none_or(|device| device.poll(wgpu::PollType::Poll).is_ok())
+    fn poll(&self) {
+        if let Some(device) = &*self.device.lock().unwrap_or_else(PoisonError::into_inner) {
+            device.poll(wgpu::PollType::Poll).ok();
+        }
     }
 
     /// Takes the device back, waiting for a poll in progress, then, with frames in flight, waits
@@ -185,7 +185,7 @@ impl Completions {
     fn drain(&self) {
         let device = self.device.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(device) = device.filter(|_| self.state().in_flight > 0) {
-            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            device.poll(wgpu::PollType::wait_indefinitely()).ok();
         }
     }
 }
