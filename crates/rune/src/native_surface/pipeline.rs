@@ -56,6 +56,11 @@ impl Drop for TimingSlot {
     }
 }
 
+enum Wake {
+    Drain(wgpu::Queue),
+    Stop,
+}
+
 /// Standalone pipeline, also used by Rune's renderer. A frame must be submitted through `submit`
 /// for timing notifications; texture lifetimes are safe even with ordinary wgpu submission.
 pub struct SurfaceRenderer {
@@ -63,7 +68,8 @@ pub struct SurfaceRenderer {
     timing_pool: Option<Arc<TimingPool>>,
     queries: Option<Arc<TimingSlot>>,
     queries_used: std::sync::atomic::AtomicBool,
-    pub(super) completion: std::sync::mpsc::SyncSender<()>,
+    completion: std::sync::mpsc::SyncSender<Wake>,
+    completion_worker: Option<std::thread::JoinHandle<()>>,
     pipeline: wgpu::RenderPipeline,
     format: wgpu::TextureFormat,
     extra: Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
@@ -98,13 +104,14 @@ impl SurfaceRenderer {
         });
         let (completion, receiver) = std::sync::mpsc::sync_channel(1);
         let poll_device = device.clone();
-        std::thread::Builder::new()
+        let completion_worker = std::thread::Builder::new()
             .name("rune-video-completion".into())
             .spawn(move || {
                 // Nonblocking poll releases wgpu's snatch lock before sleeping. A fence wait here
                 // would keep that read lock and serialize queue.present's write lock behind GPU work.
                 // Wakeups are coalesced; the final frame still completes after the window goes idle.
-                while receiver.recv().is_ok() {
+                // Each wake holds its queue while polling: wgpu never reports a dropped queue empty.
+                while let Ok(Wake::Drain(_queue)) = receiver.recv() {
                     loop {
                         match poll_device.poll(wgpu::PollType::Poll) {
                             Ok(wgpu::PollStatus::QueueEmpty) => break,
@@ -151,6 +158,7 @@ impl SurfaceRenderer {
             queries: None,
             queries_used: std::sync::atomic::AtomicBool::new(false),
             completion,
+            completion_worker: Some(completion_worker),
             pipeline,
             format,
             extra: Vec::new(),
@@ -523,7 +531,7 @@ impl SurfaceRenderer {
                     }
                 });
                 queue.submit([timestamps.finish()]);
-                let _ = completion.try_send(());
+                let _ = completion.try_send(Wake::Drain(queue));
             });
         } else {
             encoder.on_submitted_work_done(move || {
@@ -534,13 +542,22 @@ impl SurfaceRenderer {
             });
         }
         let index = queue.submit([encoder.finish()]);
-        let _ = self.completion.try_send(());
+        self.wake(queue);
         index
     }
 
-    #[cfg(test)]
-    pub(super) fn wake(&self, _queue: &wgpu::Queue) -> bool {
-        self.completion.try_send(()).is_ok()
+    /// Has the completion worker poll until `queue` drains; false when a wake already waits.
+    pub(super) fn wake(&self, queue: &wgpu::Queue) -> bool {
+        self.completion.try_send(Wake::Drain(queue.clone())).is_ok()
+    }
+}
+
+impl Drop for SurfaceRenderer {
+    fn drop(&mut self) {
+        let _ = self.completion.send(Wake::Stop);
+        if let Some(worker) = self.completion_worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

@@ -164,7 +164,7 @@ fn completion_worker_preserves_cpu_gpu_overlap() {
         renderer.submit(&gpu.queue, encoder);
         // The worker has taken submit's wakeup once its one-slot channel has room again: it is
         // in its polling loop, which only leaves once the queue is empty.
-        while renderer.completion.try_send(()).is_err() {
+        while !renderer.wake(&gpu.queue) {
             std::thread::yield_now();
         }
         std::thread::sleep(Duration::from_millis(1));
