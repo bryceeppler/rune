@@ -394,13 +394,14 @@ fn a_renderer_drops_while_other_work_keeps_its_queue_busy() {
         std::thread::yield_now();
     }
     let (dropped, renderer_dropped) = channel();
-    std::thread::spawn(move || {
+    let dropping = std::thread::spawn(move || {
         drop(renderer);
         let _ = dropped.send(());
     });
     renderer_dropped
         .recv_timeout(Duration::from_secs(10))
         .expect("a renderer drops while other work keeps its queue busy");
+    dropping.join().unwrap();
     completions.recv_timeout(Duration::from_secs(10)).expect("its frame reports its completion");
     drop(busy);
 }
@@ -428,7 +429,7 @@ fn a_renderer_drops_while_its_frame_observer_waits_for_the_dropping_thread() {
     let encoder = frame(&gpu, &mut renderer, &surface, &target);
     let queue = gpu.queue.clone();
     let (dropped, renderer_dropped) = channel();
-    std::thread::spawn(move || {
+    let app_thread = std::thread::spawn(move || {
         let state = app.lock().unwrap();
         renderer.submit(&queue, encoder);
         observer_waiting.recv_timeout(Duration::from_secs(10)).expect("the frame observer hears the completion");
@@ -439,5 +440,6 @@ fn a_renderer_drops_while_its_frame_observer_waits_for_the_dropping_thread() {
     renderer_dropped
         .recv_timeout(Duration::from_secs(10))
         .expect("a renderer drops while its frame observer waits for the thread dropping it");
+    app_thread.join().unwrap();
 }
 
