@@ -537,6 +537,11 @@ impl SurfaceRenderer {
         let _ = self.completion.try_send(());
         index
     }
+
+    #[cfg(test)]
+    pub(super) fn wake(&self, _queue: &wgpu::Queue) -> bool {
+        self.completion.try_send(()).is_ok()
+    }
 }
 
 pub(super) fn descriptor(width: u32, height: u32, format: wgpu::TextureFormat) -> wgpu::TextureDescriptor<'static> {
