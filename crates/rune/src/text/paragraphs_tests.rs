@@ -127,7 +127,7 @@ fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
         for j in 0..p.lines {
             let (i, w) = lines.next().unwrap();
             let line = stacked.line(i).unwrap();
-            assert_eq!(line.text_range(), w.text_range(), "{what}: line {i}");
+            assert_eq!(line.text_range(), line_bytes(whole, i), "{what}: line {i}");
             assert_eq!(line.break_reason(), w.break_reason(), "{what}: line {i}");
             assert_eq!(line.metrics(), *w.metrics(), "{what}: line {i}");
             assert_same_glyphs(&placed(&p.layout.get(j).unwrap(), p.y, |k| p.ink(k)), &placed(&w, 0.0, |k| k), &format!("{what}: line {i}"));
