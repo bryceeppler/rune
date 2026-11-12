@@ -169,6 +169,13 @@ mod tests {
     }
 
     #[test]
+    fn about_hide_and_quit_carry_the_app_name() {
+        let titles: Vec<_> = ["orderFrontStandardAboutPanel:", "hide:", "terminate:", "hideOtherApplications:", "unhideAllApplications:"]
+            .iter().map(|action| app_item_title(action, "Nokto")).collect();
+        assert_eq!(titles, [Some("About Nokto".into()), Some("Hide Nokto".into()), Some("Quit Nokto".into()), None, None]);
+    }
+
+    #[test]
     fn appkit_answers_zoom_and_bring_all_to_front_in_the_window_menu() {
         let plan: Vec<_> = APPKIT_ITEMS.iter().map(|i| (i.menu, i.title, i.action, i.after, i.separator_before)).collect();
         assert_eq!(plan, [

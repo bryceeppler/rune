@@ -69,6 +69,23 @@ fn main() {
         assert!(std::ptr::eq(&*app.servicesMenu().unwrap(), &*services));
         assert!(!default_macos::is_winit_default(&app), "an app-owned menu bar gets no standard items");
 
+        // winit's default app menu, named after the process, takes the app's name; its other
+        // items keep theirs.
+        app.setMainMenu(None);
+        let winit_root = NSMenu::new(mtm);
+        let winit_top = NSMenuItem::new(mtm);
+        let winit_menu = NSMenu::new(mtm);
+        for (title, selector) in [("About winit", sel!(orderFrontStandardAboutPanel:)), ("Hide winit", sel!(hide:)),
+            ("Hide Others", sel!(hideOtherApplications:)), ("Quit winit", sel!(terminate:))] {
+            winit_menu.addItem(&NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(title), Some(selector), &NSString::from_str("")));
+        }
+        winit_top.setSubmenu(Some(&winit_menu));
+        winit_root.addItem(&winit_top);
+        app.setMainMenu(Some(&winit_root));
+        default_macos::name_app_menu(&app);
+        let named: Vec<_> = (0..winit_menu.numberOfItems()).map(|i| winit_menu.itemAtIndex(i).unwrap().title().to_string()).collect();
+        assert_eq!(named, [format!("About {name}"), format!("Hide {name}"), "Hide Others".into(), format!("Quit {name}")]);
+
         // A regular app's default menu bar takes the standard Edit and Window items.
         app.setMainMenu(None);
         let root = default_macos::ensure(&app);
@@ -191,5 +208,5 @@ fn main() {
         assert_eq!(app.activationPolicy(), NSApplicationActivationPolicy::Accessory);
         app.setMainMenu(None);
     }
-    println!("PASS: default titles/selectors/keys, Services, idempotence, custom and empty menus preserved; standard Edit/Window items with Zoom, Bring All to Front and the window list, the Help menu, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
+    println!("PASS: default titles/selectors/keys, winit's app menu named after the app, Services, idempotence, custom and empty menus preserved; standard Edit/Window items with Zoom, Bring All to Front and the window list, the Help menu, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
 }
