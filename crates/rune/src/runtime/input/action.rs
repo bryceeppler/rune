@@ -46,6 +46,9 @@ pub(super) enum Action {
     Gesture(Vec<String>, gesture_dispatch::Gesture),
     /// An input method event and the session it belongs to.
     Ime(Ime, u64),
+    /// The range the input method's next event replaces, in the session it belongs to.
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    ImeReplace(crate::platform::text_input::Replacement, u64),
     /// The window stopped taking keys: the composition finishes after the input before it.
     ImeFinish,
     Paste(crate::ClipboardContent, Option<Option<String>>),
@@ -64,7 +67,7 @@ impl Action {
     /// before it reached the app is asked again (`Closing::heard_input`).
     fn from_person(&self) -> bool {
         match self {
-            Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(..) | Action::ImeFinish | Action::Paste(..)
+            Action::Physical(..) | Action::Key { .. } | Action::KeyUp(_) | Action::Ime(..) | Action::ImeReplace(..) | Action::ImeFinish | Action::Paste(..)
             | Action::Files(_) | Action::Press(..) | Action::DoublePress(_) | Action::SecondaryPress(..)
             | Action::Link(..) | Action::PillPress(..) | Action::LinkSecondary(..) | Action::Drag(..) | Action::DragRepeat(..)
             | Action::DragStart(_) | Action::DragEnd(..) | Action::PointerMove(..) | Action::Wheel(..)
@@ -176,7 +179,7 @@ fn handler_name(action: &Action) -> &'static str {
         Action::VisibleRows(..) => "on_visible_rows",
         Action::ScreenLayout(..) => "on_screen_layout",
         Action::Files(_) => "on_drop_files",
-        Action::Ime(..) | Action::ImeFinish => "a text input's edit",
+        Action::Ime(..) | Action::ImeReplace(..) | Action::ImeFinish => "a text input's edit",
         Action::Paste(..) => "on_paste",
         Action::ClipboardRead(..) => "a `read_clipboard` callback",
         Action::FileDialog(..) => "a file dialog callback",
@@ -463,6 +466,7 @@ impl<S: 'static> Runtime<S> {
             Action::Wheel(gesture, chain, ev) => self.run_wheel(gesture, chain, ev, &mut one),
             Action::Gesture(chain, gesture) => self.run_gesture(chain, gesture, &mut one),
             Action::Ime(ev, session) => self.run_ime(ev, session, &mut one),
+            Action::ImeReplace(replacement, session) => self.run_ime_replace(replacement, session, &mut one),
             Action::ImeFinish => self.finish_composition(),
             Action::Paste(content, target) => {
                 if target.is_some_and(|target| target != self.paste_target()) { return false; }

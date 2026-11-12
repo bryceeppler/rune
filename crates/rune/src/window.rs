@@ -836,6 +836,8 @@ impl<S: 'static> Host<S> {
         crate::platform::macos::configure_window(&window, &self.macos_window);
         #[cfg(target_os = "macos")]
         crate::platform::macos::drop::install(&window);
+        #[cfg(target_os = "macos")]
+        crate::platform::macos::text_input::install(&window);
         if self.options.click_through && let Err(error) = window.set_cursor_hittest(false) {
             eprintln!("click-through unavailable for {}: {error}", self.native_handle.key());
         }

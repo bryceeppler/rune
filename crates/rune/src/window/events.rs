@@ -397,6 +397,10 @@ impl<S: 'static> Host<S> {
                 if redraw { l.window.request_redraw(); }
             }
             WindowEvent::Ime(ime) => {
+                #[cfg(target_os = "macos")]
+                if let Some(replacement) = crate::platform::macos::text_input::take_replacement(&l.window) {
+                    rt.ime_replace_from_platform(replacement);
+                }
                 rt.ime_from_platform(match ime {
                     WIme::Preedit(s, cur) => Ime::Preedit(s, cur),
                     WIme::Commit(s) => Ime::Commit(s),

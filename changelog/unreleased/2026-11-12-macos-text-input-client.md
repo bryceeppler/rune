@@ -1,0 +1,1 @@
+- **macOS input methods can read and replace a field's text.** The focused text field answers the system's text input client with its selection and the text around it, and an input method's `replacementRange` replaces that range, so Japanese reconversion of a selected word works. Linux and Windows input is unchanged.

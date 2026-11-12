@@ -21,6 +21,8 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     if let Some(a) = rt.ime_area { set_ime_area(l, a); }
     #[cfg(target_os = "windows")]
     if let Some(fill) = rt.window_fill() { crate::platform::title_bar::show(&l.window, crate::platform::title_bar::TitleBar::of(fill)); }
+    #[cfg(target_os = "macos")]
+    crate::platform::macos::text_input::publish(&l.window, rt);
 }
 
 /// Turns the window's input method off, discarding the composition the runtime finished, then

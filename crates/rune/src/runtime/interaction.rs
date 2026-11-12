@@ -25,7 +25,7 @@ impl<S: 'static> Runtime<S> {
             Action::LinkSecondary(p, ..) => ("on_link_secondary", 3, Some(p)),
             Action::Dismiss(p) => ("dismiss", 3, Some(p)),
             Action::Key { .. } | Action::Physical(..) => (if editing() { "key_edit" } else { "key" }, 3, focused),
-            Action::Ime(..) => ("key_edit", 3, focused),
+            Action::Ime(..) | Action::ImeReplace(..) => ("key_edit", 3, focused),
             Action::Paste(..) => ("paste", 3, focused),
             Action::Files(_) => ("on_drop_files", 3, None),
             Action::DragStart(p) => ("on_drag_start", 2, Some(p)),
