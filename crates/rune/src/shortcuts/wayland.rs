@@ -264,6 +264,27 @@ mod tests {
         assert_eq!(status_in(&vec![listed("3", Some("Ctrl+Q"))], id), ShortcutStatus::Revoked);
         assert_eq!(status_in(&Vec::new(), id), ShortcutStatus::Revoked);
     }
+    fn session_of(id: ShortcutId) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(format!("{PATH}/session/1_42/rune_{}_session", id.0)).unwrap()
+    }
+    #[test]
+    fn after_any_number_of_retries_one_press_reaches_only_the_latest_registration() {
+        let chord: Shortcut = "ctrl+alt+n".parse().unwrap();
+        let tries = [1, 2, 3, 4].map(ShortcutId);
+        let mut sessions = Sessions::default();
+        for (n, &id) in tries.iter().enumerate() {
+            sessions.bound(id, chord.clone(), session_of(id));
+            if n + 1 < tries.len() {
+                assert_eq!(sessions.changed(&session_of(id), &Vec::new()), [(id, ShortcutStatus::Revoked)], "the person removed {id:?}");
+            }
+        }
+        for &old in &tries[..3] {
+            let relisted = vec![listed(&old.0.to_string(), Some("Ctrl+Alt+N"))];
+            assert_eq!(sessions.changed(&session_of(old), &relisted), [], "relisting {old:?} after a retry does not reinstate it");
+        }
+        let delivered: Vec<_> = tries.iter().filter_map(|&id| sessions.activated(&session_of(id), &id.0.to_string())).collect();
+        assert_eq!(delivered, [tries[3]], "the portal sends one press to every session bound to the trigger");
+    }
     #[test]
     fn missing_portal_is_unsupported() {
         let fdo = |e| zbus::Error::FDO(Box::new(e));
