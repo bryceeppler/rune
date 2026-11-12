@@ -254,7 +254,7 @@ pub struct Menu {
 }
 
 /// Makes an open surface modal: it takes focus, Escape and outside presses dismiss it, and
-/// focus returns to the trigger when it closes.
+/// focus returns to whatever had it when the surface opened, or to nothing.
 pub(crate) type Modal = Box<dyn FnOnce(El) -> El>;
 
 /// The outside-press scrim and the modal for a close request.
@@ -331,7 +331,8 @@ impl Menu {
         self.at = Some((x, y));
         self
     }
-    /// Presses outside and Escape close the menu. While open it holds keyboard focus.
+    /// Presses outside and Escape close the menu. While open it holds keyboard focus; however
+    /// it closes, focus goes back to whatever had it when it opened, or to nothing.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S) + 'static) -> Self {
         self.dismiss = Some(dismissal(format!("{}-scrim", self.key), f));
         self
@@ -387,10 +388,11 @@ impl Menu {
         };
         // Submenus anchor to items inside this surface, so they mount after it.
         let mut subs = Vec::new();
-        let mut surface = self.surface(k, &mut subs).focus_return(anchor_key);
-        if let Some(modal) = modal {
-            surface = modal(surface);
-        }
+        let surface = self.surface(k, &mut subs);
+        let surface = match modal {
+            Some(modal) => modal(surface),
+            None => surface.focus_return(anchor_key),
+        };
         layer.push(menu_anchor(k, surface, &key, placement, gutter));
         layer.extend(subs);
         trigger
