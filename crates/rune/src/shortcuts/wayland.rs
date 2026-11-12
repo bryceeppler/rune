@@ -50,27 +50,32 @@ fn status_in(bindings: &Bindings, id: ShortcutId) -> ShortcutStatus {
     }
 }
 
-struct Held { session: OwnedObjectPath, shortcut: Shortcut }
+struct Held { session: OwnedObjectPath, shortcut: Shortcut, superseded: bool }
 
 #[derive(Default)]
 struct Sessions(HashMap<ShortcutId, Held>);
 
 impl Sessions {
     fn bound(&mut self, id: ShortcutId, shortcut: Shortcut, session: OwnedObjectPath) {
-        self.0.insert(id, Held { session, shortcut });
+        for held in self.0.values_mut().filter(|held| held.shortcut == shortcut) { held.superseded = true; }
+        self.0.insert(id, Held { session, shortcut, superseded: false });
+    }
+
+    fn heard(&self) -> impl Iterator<Item = (ShortcutId, &OwnedObjectPath)> {
+        self.0.iter().filter(|(_, held)| !held.superseded).map(|(id, held)| (*id, &held.session))
     }
 
     fn activated(&self, session: &OwnedObjectPath, key: &str) -> Option<ShortcutId> {
         let id = key.parse::<u32>().map(ShortcutId).ok()?;
-        (self.0.get(&id)?.session == *session).then_some(id)
+        self.heard().any(|(heard, held)| heard == id && held == session).then_some(id)
     }
 
     fn changed(&self, session: &OwnedObjectPath, bindings: &Bindings) -> Vec<(ShortcutId, ShortcutStatus)> {
-        self.0.iter().filter(|(_, held)| held.session == *session).map(|(id, _)| (*id, status_in(bindings, *id))).collect()
+        self.heard().filter(|(_, held)| *held == session).map(|(id, _)| (id, status_in(bindings, id))).collect()
     }
 
     fn closed(&mut self, session: &str) -> Vec<ShortcutId> {
-        self.0.iter().filter(|(_, held)| held.session.as_str() == session).map(|(id, _)| *id).collect()
+        self.heard().filter(|(_, held)| held.as_str() == session).map(|(id, _)| id).collect()
     }
 
     fn session(&self, id: ShortcutId) -> Option<&OwnedObjectPath> {

@@ -1,0 +1,1 @@
+- Shortcuts: on Wayland, registering a chord again after the portal revoked it supersedes the revoked registration, so the portal relisting the old binding no longer reinstates it, and each press of the chord reaches only the newest registration once.
