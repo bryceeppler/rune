@@ -161,7 +161,8 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph | Block::Hanging { .. } => 0.0,
+            Block::Paragraph => 0.0,
+            Block::Hanging { level, .. } => unit * level.min(MAX_LIST_LEVEL) as f32,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),
