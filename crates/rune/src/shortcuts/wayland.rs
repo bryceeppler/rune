@@ -50,6 +50,42 @@ fn status_in(bindings: &Bindings, id: ShortcutId) -> ShortcutStatus {
     }
 }
 
+struct Held { session: OwnedObjectPath, shortcut: Shortcut }
+
+#[derive(Default)]
+struct Sessions(HashMap<ShortcutId, Held>);
+
+impl Sessions {
+    fn bound(&mut self, id: ShortcutId, shortcut: Shortcut, session: OwnedObjectPath) {
+        self.0.insert(id, Held { session, shortcut });
+    }
+
+    fn activated(&self, session: &OwnedObjectPath, key: &str) -> Option<ShortcutId> {
+        let id = key.parse::<u32>().map(ShortcutId).ok()?;
+        (self.0.get(&id)?.session == *session).then_some(id)
+    }
+
+    fn changed(&self, session: &OwnedObjectPath, bindings: &Bindings) -> Vec<(ShortcutId, ShortcutStatus)> {
+        self.0.iter().filter(|(_, held)| held.session == *session).map(|(id, _)| (*id, status_in(bindings, *id))).collect()
+    }
+
+    fn closed(&mut self, session: &str) -> Vec<ShortcutId> {
+        self.0.iter().filter(|(_, held)| held.session.as_str() == session).map(|(id, _)| *id).collect()
+    }
+
+    fn session(&self, id: ShortcutId) -> Option<&OwnedObjectPath> {
+        self.0.get(&id).map(|held| &held.session)
+    }
+
+    fn released(&mut self, id: ShortcutId) {
+        self.0.remove(&id);
+    }
+
+    fn all(&self) -> impl Iterator<Item = &OwnedObjectPath> {
+        self.0.values().map(|held| &held.session)
+    }
+}
+
 async fn request<B: serde::Serialize + zbus::Type>(conn: &Connection, portal: &Proxy<'_>, token: &str,
     method: &str, body: &B) -> Result<HashMap<String, OwnedVariant>, ShortcutError> {
     let sender = conn.unique_name().ok_or(ShortcutError::Unsupported)?.trim_start_matches(':').replace('.', "_");
@@ -136,23 +172,23 @@ impl Native {
                     Ok(v) => { let _ = ready.send(Ok(())); v },
                     Err(e) => { let _ = ready.send(Err(e)); return; }
                 };
-                let mut sessions: HashMap<ShortcutId, OwnedObjectPath> = HashMap::new();
+                let mut sessions = Sessions::default();
                 loop {
                     tokio::select! {
                         command = receiver.recv() => match command {
                             Some(Command::Register(id, shortcut, reply)) => {
                                 let result = bind(&conn, &portal, id, &shortcut).await.map(|(session, status)| {
-                                    sessions.insert(id, session);
+                                    sessions.bound(id, shortcut, session);
                                     report(id, status);
                                 });
                                 let _ = reply.send(result);
                             }
                             Some(Command::Unregister(id, reply)) => {
-                                let result = match sessions.get(&id) {
+                                let result = match sessions.session(id) {
                                     Some(session) => close(&conn, session).await,
                                     None => Err(ShortcutError::UnknownId),
                                 };
-                                if result.is_ok() { sessions.remove(&id); }
+                                if result.is_ok() { sessions.released(id); }
                                 let _ = reply.send(result);
                             }
                             None => break,
@@ -160,8 +196,7 @@ impl Native {
                         event = events.next() => {
                             let Some(event) = event else { break };
                             if let Ok((session, key, _, options)) = event.body().deserialize::<(OwnedObjectPath, String, u64, HashMap<String, OwnedVariant>)>()
-                                && let Ok(id) = key.parse::<u32>().map(ShortcutId)
-                                && sessions.get(&id) == Some(&session) {
+                                && let Some(id) = sessions.activated(&session, &key) {
                                 let token = options.get("activation_token").and_then(|v| <&str>::try_from(v).ok()).map(str::to_owned);
                                 sink(id, token);
                             }
@@ -169,21 +204,17 @@ impl Native {
                         change = changes.next() => {
                             let Some(change) = change else { break };
                             if let Ok((session, bindings)) = change.body().deserialize::<(OwnedObjectPath, Bindings)>() {
-                                for (id, held) in &sessions {
-                                    if *held == session { report(*id, status_in(&bindings, *id)); }
-                                }
+                                for (id, status) in sessions.changed(&session, &bindings) { report(id, status); }
                             }
                         }
                         closing = closings.next() => {
                             let Some(closing) = closing else { break };
                             let path = closing.ok().and_then(|m| m.header().path().map(|p| p.as_str().to_owned()));
-                            for (id, held) in &sessions {
-                                if path.as_deref() == Some(held.as_str()) { report(*id, ShortcutStatus::Revoked); }
-                            }
+                            for id in path.map(|path| sessions.closed(&path)).unwrap_or_default() { report(id, ShortcutStatus::Revoked); }
                         }
                     }
                 }
-                for session in sessions.values() { let _ = close(&conn, session).await; }
+                for session in sessions.all() { let _ = close(&conn, session).await; }
                 let _ = conn.close().await;
             });
         }).map_err(|e| ShortcutError::Backend(e.to_string()))?;
