@@ -4,7 +4,8 @@ use std::ops::Range;
 
 use crate::color::{oklch, oklcha, Color};
 
-/// Maximum nesting level (`0..=MAX_LIST_LEVEL`) for [`Block::Bullet`] and [`Block::Numbered`].
+/// Maximum nesting level (`0..=MAX_LIST_LEVEL`) for [`Block::Bullet`], [`Block::Numbered`] and
+/// [`Block::Hanging`].
 pub const MAX_LIST_LEVEL: u8 = 3;
 
 /// An inline formatting mark stored alongside [`TextEdit::text`]. More marks may come, so a
@@ -105,10 +106,10 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
-    /// A paragraph that starts with a marker of its own, this many bytes long, such as a
-    /// Markdown list item's `- [ ] `: its wrapped lines start under the text after the marker.
-    /// It edits as a [`Block::Paragraph`].
-    Hanging(u16),
+    /// A paragraph that starts with a marker of its own, `marker` bytes long, such as a
+    /// Markdown list item's `- [ ] `, at list nesting `level` `0..=MAX_LIST_LEVEL`: its wrapped
+    /// lines start under the text after the marker. It edits as a [`Block::Paragraph`].
+    Hanging { marker: u16, level: u8 },
 }
 
 impl Block {
@@ -141,14 +142,14 @@ impl Block {
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
-                | (Block::Hanging(_), Block::Hanging(_))
+                | (Block::Hanging { .. }, Block::Hanging { .. })
         )
     }
 
     /// This block's kind as one bit, for [`TextEdit::allow_blocks`].
     pub(super) fn kind_bit(self) -> u8 {
         1 << match self {
-            Block::Paragraph | Block::Hanging(_) => 0,
+            Block::Paragraph | Block::Hanging { .. } => 0,
             Block::Bullet(_) => 1,
             Block::Numbered(_) => 2,
             Block::Quote => 3,
@@ -160,7 +161,7 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph | Block::Hanging(_) => 0.0,
+            Block::Paragraph | Block::Hanging { .. } => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),

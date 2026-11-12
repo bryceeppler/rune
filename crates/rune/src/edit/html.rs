@@ -879,7 +879,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
                 out.push_str("</blockquote>");
             }
-            Block::Paragraph | Block::Hanging(_) => {
+            Block::Paragraph | Block::Hanging { .. } => {
                 out.push_str("<p>");
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;

@@ -19,7 +19,7 @@ pub(super) fn break_lines_with_blocks(
     let mut caps: Vec<((usize, usize), f32)> = Vec::new();
     let mut lines_meta = Vec::new();
     let mut hangs: Option<Vec<f32>> = None;
-    let hanging = max_width.is_some() && blocks.iter().any(|b| matches!(b, crate::edit::Block::Hanging(_)));
+    let hanging = max_width.is_some() && blocks.iter().any(|b| matches!(b, crate::edit::Block::Hanging { .. }));
     for _ in 0..=2 * pills + usize::from(hanging) {
         let hung = hangs.as_deref().unwrap_or_default();
         break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, hung, &mut lines_meta);
@@ -51,7 +51,7 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
         let holds_text = range.start <= range.end;
         if first_line
             && holds_text
-            && let Some(&crate::edit::Block::Hanging(marker)) = blocks.get(para_idx)
+            && let Some(&crate::edit::Block::Hanging { marker, .. }) = blocks.get(para_idx)
             && let Some(width) = text_start(layout, &line, range.start + usize::from(marker))
         {
             widths[para_idx] = width;
