@@ -31,8 +31,10 @@ pub(crate) fn install(opt_in: bool) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     if INSTALLED.with(Cell::get) { return; }
     let app = NSApplication::sharedApplication(mtm);
-    let default = !CHECKED.with(|c| c.replace(true)) && default_macos::is_winit_default(&app);
+    let winit = default_macos::is_winit_default(&app);
+    let default = !CHECKED.with(|c| c.replace(true)) && winit;
     if !opt_in && !default { return; }
+    if winit { default_macos::name_app_menu(&app); }
     INSTALLED.with(|i| i.set(true));
     default_macos::add_standard(&app);
     hook_view_class();

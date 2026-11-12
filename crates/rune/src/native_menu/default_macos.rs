@@ -54,9 +54,6 @@ unsafe fn add_app_items(app: &NSApplication, menu: &NSMenu) {
     // SAFETY: as `ensure`.
     unsafe {
         let mtm = MainThreadMarker::from(app);
-        let process = NSProcessInfo::processInfo().processName().to_string();
-        let (display, bundle) = (info_string("CFBundleDisplayName"), info_string("CFBundleName"));
-        let name = super::standard::app_name(display.as_deref(), bundle.as_deref(), &process);
         let services = NSMenu::new(mtm);
         let services_item = item(mtm, "Services", None, "");
         services_item.setSubmenu(Some(&services));
@@ -64,16 +61,40 @@ unsafe fn add_app_items(app: &NSApplication, menu: &NSMenu) {
         hide_others.setKeyEquivalentModifierMask(NSEventModifierFlags::NSEventModifierFlagOption
             | NSEventModifierFlags::NSEventModifierFlagCommand);
         for entry in [
-            item(mtm, &format!("About {name}"), Some(sel!(orderFrontStandardAboutPanel:)), ""),
+            item(mtm, "", Some(sel!(orderFrontStandardAboutPanel:)), ""),
             NSMenuItem::separatorItem(mtm),
             services_item,
-            item(mtm, &format!("Hide {name}"), Some(sel!(hide:)), "h"),
+            item(mtm, "", Some(sel!(hide:)), "h"),
             hide_others,
             item(mtm, "Show All", Some(sel!(unhideAllApplications:)), ""),
             NSMenuItem::separatorItem(mtm),
-            item(mtm, &format!("Quit {name}"), Some(sel!(terminate:)), "q"),
+            item(mtm, "", Some(sel!(terminate:)), "q"),
         ] { menu.addItem(&entry); }
+        name_items(menu);
         app.setServicesMenu(Some(&services));
+    }
+}
+
+/// winit's default app menu names About, Hide and Quit after the process; AppKit apps name
+/// them after the app.
+pub(crate) fn name_app_menu(app: &NSApplication) {
+    // SAFETY: main thread; reading and retitling retained menu items.
+    unsafe {
+        let Some(root) = app.mainMenu() else { return };
+        if let Some(menu) = (root.numberOfItems() > 0).then(|| root.itemAtIndex(0)).flatten().and_then(|i| i.submenu()) { name_items(&menu); }
+    }
+}
+
+fn name_items(menu: &NSMenu) {
+    let (display, bundle) = (info_string("CFBundleDisplayName"), info_string("CFBundleName"));
+    // SAFETY: main thread (the menu is main-thread only); retitling retained items.
+    unsafe {
+        let process = NSProcessInfo::processInfo().processName().to_string();
+        let name = super::standard::app_name(display.as_deref(), bundle.as_deref(), &process);
+        for entry in (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)) {
+            let Some(title) = entry.action().and_then(|a| super::standard::app_item_title(a.name(), name)) else { continue };
+            entry.setTitle(&NSString::from_str(&title));
+        }
     }
 }
 

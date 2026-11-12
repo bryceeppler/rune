@@ -62,6 +62,17 @@ pub(crate) fn app_name<'a>(display: Option<&'a str>, bundle: Option<&'a str>, pr
     [display, bundle].into_iter().flatten().find(|name| !name.trim().is_empty()).unwrap_or(process)
 }
 
+/// The title of an app menu item AppKit apps name after the app, by its action.
+pub(crate) fn app_item_title(action: &str, name: &str) -> Option<String> {
+    let verb = match action {
+        "orderFrontStandardAboutPanel:" => "About",
+        "hide:" => "Hide",
+        "terminate:" => "Quit",
+        _ => return None,
+    };
+    Some(format!("{verb} {name}"))
+}
+
 pub(crate) fn by_action(action: &str) -> Option<&'static Standard> {
     ITEMS.iter().find(|i| i.action == action)
 }
