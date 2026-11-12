@@ -122,9 +122,7 @@ impl Engine {
 
     fn unregister(&mut self, id: ShortcutId) -> Result<(), ShortcutError> {
         if !self.registrations.contains_key(&id) { return Err(ShortcutError::UnknownId); }
-        if let Some(native) = self.native.as_mut()
-            && let Err(error) = native.unregister(id)
-            && !self.statuses.revoked(id) { return Err(error); }
+        if let Some(native) = self.native.as_mut() { native.unregister(id)?; }
         self.registrations.remove(&id);
         NATIVE.lock().unwrap().retain(|(native, ..)| *native != id);
         // Drop the connection/listener when the last registration goes away.
@@ -326,16 +324,14 @@ mod tests {
     use crate::{App, AppSpec, el};
     #[test]
     fn a_chord_the_desktop_revoked_registers_again_and_its_old_registration_still_releases() {
-        struct Portal { closed: ShortcutId }
+        struct Portal;
         impl Backend for Portal {
             fn register(&mut self, _: ShortcutId, _: &Shortcut) -> Result<(), ShortcutError> { Ok(()) }
-            fn unregister(&mut self, id: ShortcutId) -> Result<(), ShortcutError> {
-                if id == self.closed { Err(ShortcutError::Backend("the session is closed".into())) } else { Ok(()) }
-            }
+            fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Ok(()) }
         }
         let (revoked, again, third) = (ShortcutId(9001), ShortcutId(9002), ShortcutId(9003));
         let statuses = Arc::<Statuses>::default();
-        let mut engine = Engine { title: "portal", headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: statuses.clone(), native: Some(Box::new(Portal { closed: revoked })), registrations: HashMap::new() };
+        let mut engine = Engine { title: "portal", headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: statuses.clone(), native: Some(Box::new(Portal)), registrations: HashMap::new() };
         let chord: Shortcut = "ctrl+alt+shift+f19".parse().unwrap();
         assert_eq!(engine.register(revoked, chord.clone()), Ok(()));
         assert_eq!(engine.register(again, chord.clone()), Err(ShortcutError::Conflict), "a delivered chord is held");

@@ -1,0 +1,1 @@
+- Shortcuts: on Wayland, `AppHandle::unregister_shortcut` on a revoked registration now returns the error the portal's Close gave, as it does for a registration still bound, and keeps the registration so the app can release it again; a registration whose session the portal itself closed still releases at once.

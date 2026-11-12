@@ -75,7 +75,9 @@ impl Sessions {
     }
 
     fn closed(&mut self, session: &str) -> Vec<ShortcutId> {
-        self.heard().filter(|(_, held)| held.as_str() == session).map(|(id, _)| id).collect()
+        let revoked = self.heard().filter(|(_, held)| held.as_str() == session).map(|(id, _)| id).collect();
+        self.0.retain(|_, held| held.session.as_str() != session);
+        revoked
     }
 
     fn session(&self, id: ShortcutId) -> Option<&OwnedObjectPath> {
@@ -191,7 +193,7 @@ impl Native {
                             Some(Command::Unregister(id, reply)) => {
                                 let result = match sessions.session(id) {
                                     Some(session) => close(&conn, session).await,
-                                    None => Err(ShortcutError::UnknownId),
+                                    None => Ok(()),
                                 };
                                 if result.is_ok() { sessions.released(id); }
                                 let _ = reply.send(result);
