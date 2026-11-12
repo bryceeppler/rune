@@ -257,7 +257,6 @@ fn monospace_tabs_after_any_line_break_stop_where_one_layout_stops() {
     assert!(differ.is_empty(), "tabs that stop apart from one layout's: {differ:?}");
 }
 
-/// Quoted list items draw the bar of the quote they continue, as one bar down every line.
 #[test]
 fn quoted_hanging_paragraphs_draw_one_bar_with_the_quote_they_follow() {
     let bar = crate::color::hex("#e6339a").unwrap();
@@ -282,7 +281,6 @@ fn quoted_hanging_paragraphs_draw_one_bar_with_the_quote_they_follow() {
     assert!(unquoted.len() == 1 && unquoted[0] < 1.5 * line, "items outside a quote draw no bar: {unquoted:?}");
 }
 
-/// A quote holding bullets, numbered and checklist items draws one bar down all of them.
 #[test]
 fn a_quote_holding_every_list_kind_draws_one_bar_down_all_of_them() {
     let bar = crate::color::hex("#e6339a").unwrap();
