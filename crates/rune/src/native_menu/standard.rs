@@ -138,6 +138,24 @@ mod tests {
     }
 
     #[test]
+    fn the_app_menu_names_the_bundle_before_the_process() {
+        assert_eq!(app_name(Some("Nokto"), Some("Nokto"), "nokto"), "Nokto");
+        assert_eq!(app_name(None, Some("Nokto"), "nokto"), "Nokto");
+        assert_eq!(app_name(Some(" "), Some(""), "nokto"), "nokto");
+        assert_eq!(app_name(None, None, "nokto"), "nokto", "an unbundled binary keeps its process name");
+    }
+
+    #[test]
+    fn appkit_answers_zoom_and_bring_all_to_front_in_the_window_menu() {
+        let plan: Vec<_> = APPKIT_ITEMS.iter().map(|i| (i.menu, i.title, i.action, i.after, i.separator_before)).collect();
+        assert_eq!(plan, [
+            ("Window", "Zoom", "performZoom:", Some("performMiniaturize:"), false),
+            ("Window", "Bring All to Front", "arrangeInFront:", None, true),
+        ]);
+        assert!(APPKIT_ITEMS.iter().all(|i| by_action(i.action).is_none()), "no Rune key routing");
+    }
+
+    #[test]
     fn key_codes_are_the_ansi_keys_of_the_letters() {
         // kVK_ANSI_*: what the physical keys of these letters report on a US layout.
         let codes: Vec<_> = ITEMS.iter().map(|i| (i.key, i.key_code)).collect();

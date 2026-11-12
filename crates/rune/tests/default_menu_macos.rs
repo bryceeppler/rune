@@ -93,14 +93,19 @@ fn main() {
             (s("Paste"), Some(s("paste:")), s("v"), command, true),
             (s("Select All"), Some(s("selectAll:")), s("a"), command, true),
         ]);
-        assert_eq!(plan(&root.itemAtIndex(2).unwrap().submenu().unwrap()), [
+        let window_menu = root.itemAtIndex(2).unwrap().submenu().unwrap();
+        assert_eq!(plan(&window_menu), [
             (s("Minimize"), Some(s("performMiniaturize:")), s("m"), command, true),
+            (s("Zoom"), Some(s("performZoom:")), s(""), command, true),
             (s("Close"), Some(s("performClose:")), s("w"), command, true),
+            (s("-"), None, s(""), command, true),
+            (s("Bring All to Front"), Some(s("arrangeInFront:")), s(""), command, true),
         ]);
+        assert!(app.windowsMenu().is_some_and(|m| std::ptr::eq(&*m, &*window_menu)), "AppKit lists the windows in it");
         assert_eq!(root.itemAtIndex(0).unwrap().submenu().unwrap().numberOfItems(), 8, "the app menu is untouched");
         default_macos::add_standard(&app);
         assert_eq!(tops(&root).len(), 3, "adding twice changes nothing");
-        assert_eq!(root.itemAtIndex(2).unwrap().submenu().unwrap().numberOfItems(), 2);
+        assert_eq!(root.itemAtIndex(2).unwrap().submenu().unwrap().numberOfItems(), 5);
 
         // An app's custom menus take the Mac order around the standard ones, and an item of
         // its own with a standard equivalent takes it from the standard item, set before or after.
@@ -110,8 +115,9 @@ fn main() {
         };
         let (file_top, file) = default_macos::add_top(mtm, &root, "File");
         let (view_top, _) = default_macos::add_top(mtm, &root, "View");
-        let (help_top, _) = default_macos::add_top(mtm, &root, "Help");
+        let (help_top, help) = default_macos::add_top(mtm, &root, "Help");
         assert_eq!(&tops(&root)[1..], ["File", "Edit", "View", "Window", "Help"]);
+        assert!(app.helpMenu().is_some_and(|m| std::ptr::eq(&*m, &*help)), "AppKit adds its search field to an app's Help menu");
         let close_tab = NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str("Close Tab"),
             Some(sel!(runeMenuAction:)), &NSString::from_str("w"));
         default_macos::adding(&app, || file.addItem(&close_tab));
@@ -126,6 +132,7 @@ fn main() {
         file.removeItem(&close_tab);
         file.removeItem(&paste_plain);
         for top in [&file_top, &view_top, &help_top] { default_macos::remove_top_if_empty(&root, top); }
+        assert!(app.helpMenu().is_none(), "a removed Help menu is no longer the app's");
         default_macos::sync_standard(&app);
         assert_eq!(&tops(&root)[1..], ["Edit", "Window"]);
         assert_eq!(key_of(&root, "Window", "Close"), "w", "Close gets ⌘W back");
@@ -145,7 +152,9 @@ fn main() {
         default_macos::remove_top_if_empty(&root, &window_top);
         default_macos::sync_standard(&app);
         assert_eq!(&tops(&root)[1..], ["Edit", "Window"], "the shared menu stays for the standard items");
-        assert_eq!(plan(&window).into_iter().map(|e| (e.0, e.2)).collect::<Vec<_>>(), [(s("Minimize"), s("m")), (s("Close"), s("w"))]);
+        assert_eq!(plan(&window).into_iter().map(|e| (e.0, e.2)).collect::<Vec<_>>(),
+            [(s("Minimize"), s("m")), (s("Zoom"), s("")), (s("Close"), s("w")), (s("-"), s("")), (s("Bring All to Front"), s(""))]);
+        assert!(app.windowsMenu().is_some_and(|m| std::ptr::eq(&*m, &*window)), "an app's own Window menu lists the windows");
 
         // An app's own Edit menu keeps its items; only missing actions join it.
         app.setMainMenu(None);
@@ -182,5 +191,5 @@ fn main() {
         assert_eq!(app.activationPolicy(), NSApplicationActivationPolicy::Accessory);
         app.setMainMenu(None);
     }
-    println!("PASS: default titles/selectors/keys, Services, idempotence, custom and empty menus preserved; standard Edit/Window items, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
+    println!("PASS: default titles/selectors/keys, Services, idempotence, custom and empty menus preserved; standard Edit/Window items with Zoom, Bring All to Front and the window list, the Help menu, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
 }
