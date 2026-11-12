@@ -4,17 +4,20 @@ use swash::text::{BidiClass, Codepoint as _};
 
 use super::*;
 
-/// The direction a text with pill `labels` reads in: that of its first strong character outside
-/// every label and every isolate, else left to right (rules P2 and P3). A chip draws in place of
-/// its label like an inline object, which the bidirectional algorithm counts as neutral, and an
-/// isolate runs to its matching PDI or the paragraph's end. Without labels, [`BaseDirection::Auto`]
-/// leaves it to Parley.
 pub(super) fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>]) -> BaseDirection {
     if labels.is_empty() {
         return BaseDirection::Auto;
     }
+    strong_direction(text, labels).unwrap_or(BaseDirection::Ltr)
+}
+
+/// The direction of a text's first strong character outside every pill label and every
+/// isolate (rule P2), or `None` when it has none. A chip draws in place of its label like an
+/// inline object, which the bidirectional algorithm counts as neutral, and an isolate runs to
+/// its matching PDI or the paragraph's end.
+pub(crate) fn strong_direction(text: &str, labels: &[std::ops::Range<usize>]) -> Option<BaseDirection> {
     let mut isolates = 0usize;
-    let strong = text.char_indices().find_map(|(at, c)| {
+    text.char_indices().find_map(|(at, c)| {
         let direction = match c.bidi_class() {
             BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => {
                 isolates += 1;
@@ -33,8 +36,7 @@ pub(super) fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>
             _ => return None,
         };
         (isolates == 0 && !labels.iter().any(|r| r.contains(&at))).then_some(direction)
-    });
-    strong.unwrap_or(BaseDirection::Ltr)
+    })
 }
 
 /// Whether a pill's `label` starts a right-to-left text laid out `direction`. Parley gives an

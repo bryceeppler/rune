@@ -12,6 +12,53 @@ struct Marker {
     number: u32,
 }
 
+struct QuoteRun {
+    top: f32,
+    bot: f32,
+    rtl: bool,
+}
+
+fn quote_sides(spec: &TextSpec, layout: &TextLayout) -> Vec<bool> {
+    let mut reads = Vec::new();
+    let mut starts_paragraph = true;
+    for line in layout.lines() {
+        if starts_paragraph {
+            reads.push(line.is_rtl());
+        }
+        starts_paragraph = line.break_reason() == parley::BreakReason::Explicit;
+    }
+    let mut at = 0;
+    let decided: Vec<Option<bool>> = spec
+        .content
+        .split('\n')
+        .zip(reads)
+        .map(|(text, rtl)| {
+            let range = at..at + text.len();
+            at = range.end + 1;
+            let first = spec.pills.partition_point(|p| (p.start as usize) < range.start);
+            let labels: Vec<_> = spec.pills[first..]
+                .iter()
+                .take_while(|p| (p.start as usize) < range.end)
+                .map(|p| p.start as usize - range.start..(p.end as usize).min(range.end) - range.start)
+                .collect();
+            crate::text::strong_direction(text, &labels).map(|_| rtl)
+        })
+        .collect();
+    let quoted = |i: usize| spec.blocks.get(i).is_some_and(|b| b.quoted());
+    let mut sides = vec![false; decided.len()];
+    let mut start = 0;
+    while start < decided.len() {
+        let end = (start..decided.len()).find(|&i| !quoted(i)).unwrap_or(decided.len());
+        let mut side = decided[start..end].iter().flatten().next().copied().unwrap_or(false);
+        for (drawn, read) in sides[start..end].iter_mut().zip(&decided[start..end]) {
+            side = read.unwrap_or(side);
+            *drawn = side;
+        }
+        start = end + 1;
+    }
+    sides
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_block_decorations(
     instances: &mut Vec<Instance>,
@@ -40,7 +87,8 @@ pub(super) fn emit_block_decorations(
     let mut first_line_of_para = true;
     let mut list_counts = [0u32; (MAX_LIST_LEVEL as usize) + 1];
     let mut code_run: Option<(f32, f32)> = None;
-    let mut quote_run: Option<(f32, f32)> = None;
+    let mut quote_run: Option<QuoteRun> = None;
+    let quote_sides = if spec.blocks.iter().any(|b| b.quoted()) { quote_sides(spec, layout) } else { Vec::new() };
     let mut markers: Vec<Marker> = Vec::new();
 
     let flush_code = |instances: &mut Vec<Instance>, run: &mut Option<(f32, f32)>| {
@@ -55,10 +103,16 @@ pub(super) fn emit_block_decorations(
             ));
         }
     };
-    let flush_quote = |instances: &mut Vec<Instance>, run: &mut Option<(f32, f32)>| {
-        if let Some((top, bot)) = run.take() {
+    let flush_quote = |instances: &mut Vec<Instance>, run: &mut Option<QuoteRun>| {
+        if let Some(QuoteRun { top, bot, rtl }) = run.take() {
             let bar_w = if tk == 1.0 { (3.0 * s).round().max(2.0) } else { (3.0 * s * tk).max(2.0 * tk) };
-            let bar_x = if tk == 1.0 { (origin[0] + 2.0 * s).round() } else { origin[0] + 2.0 * s * tk } + glide[0];
+            let inset = 2.0 * s * tk;
+            let bar_x = match (rtl, tk == 1.0) {
+                (false, true) => (origin[0] + inset).round(),
+                (false, false) => origin[0] + inset,
+                (true, true) => (x1 - inset).round() - bar_w,
+                (true, false) => x1 - inset - bar_w,
+            } + glide[0];
             let inset_y = if tk == 1.0 { (2.0 * s).round() } else { 2.0 * s * tk };
             instances.push(rect_inst(
                 [bar_x, top + inset_y + glide[1], bar_w, (bot - top - 2.0 * inset_y).max(4.0 * s * tk)],
@@ -97,9 +151,13 @@ pub(super) fn emit_block_decorations(
             }
         } else if blk.quoted() {
             flush_code(instances, &mut code_run);
+            let side = quote_sides.get(para_idx).copied().unwrap_or_else(|| line.is_rtl());
             match &mut quote_run {
-                Some((_, b)) => *b = bot,
-                None => quote_run = Some((top, bot)),
+                Some(run) if run.rtl == side => run.bot = bot,
+                _ => {
+                    flush_quote(instances, &mut quote_run);
+                    quote_run = Some(QuoteRun { top, bot, rtl: side });
+                }
             }
         } else {
             flush_code(instances, &mut code_run);
@@ -151,7 +209,7 @@ pub(super) fn emit_block_decorations(
         let bot = top + line_h_default;
         let baseline = top + spec.style.size * 0.8 * s * tk;
         if blk.quoted() {
-            quote_run = Some((top, bot));
+            quote_run = Some(QuoteRun { top, bot, rtl: false });
         }
         match blk {
             Block::Code => code_run = Some((top, bot)),
