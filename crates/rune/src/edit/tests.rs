@@ -704,18 +704,18 @@ fn unicode_emoji_cjk_and_combining_marks_across_boundaries() {
 #[test]
 fn block_attributes_lists_quotes_code_and_keys() {
     let mut e = TextEdit::new("first").rich();
-    e.set_block(Block::Bullet(0));
-    assert_eq!(e.current_block(), Block::Bullet(0));
+    e.set_block(Block::Bullet { level: 0, quote: false });
+    assert_eq!(e.current_block(), Block::Bullet { level: 0, quote: false });
 
-    // Return at end of non-empty list item creates a new Bullet(0) item.
+    // Return at end of non-empty list item creates a new level 0 bullet item.
     e.set(crate::Caret::at(5), false);
     assert!(!e.key(&k(Key::Enter), None).submit);
     assert_eq!(e.text, "first\n");
-    assert_eq!(e.blocks(), &[Block::Bullet(0), Block::Bullet(0)]);
+    assert_eq!(e.blocks(), &[Block::Bullet { level: 0, quote: false }, Block::Bullet { level: 0, quote: false }]);
 
-    // Tab indents the second list item to Bullet(1).
+    // Tab indents the second list item to a level 1 bullet.
     e.key(&k(Key::Tab), None);
-    assert_eq!(e.blocks(), &[Block::Bullet(0), Block::Bullet(1)]);
+    assert_eq!(e.blocks(), &[Block::Bullet { level: 0, quote: false }, Block::Bullet { level: 1, quote: false }]);
     e.key(&k(Key::Text("nested".into())), None);
 
     // Shift+Return inserts a soft break inside the same list item.
@@ -723,14 +723,14 @@ fn block_attributes_lists_quotes_code_and_keys() {
     e.key(&shift_enter, None);
     e.key(&k(Key::Text("cont".into())), None);
     assert_eq!(e.soft_breaks(), &[2]);
-    assert_eq!(e.blocks(), &[Block::Bullet(0), Block::Bullet(1), Block::Bullet(1)]);
+    assert_eq!(e.blocks(), &[Block::Bullet { level: 0, quote: false }, Block::Bullet { level: 1, quote: false }, Block::Bullet { level: 1, quote: false }]);
 
-    // Return at end of "cont" creates a new empty Bullet(1) item on line 3.
+    // Return at end of "cont" creates a new empty level 1 bullet item on line 3.
     e.key(&k(Key::Enter), None);
     assert_eq!(e.blocks().len(), 4);
-    assert_eq!(e.current_block(), Block::Bullet(1));
+    assert_eq!(e.current_block(), Block::Bullet { level: 1, quote: false });
 
-    // Return on the empty Bullet(1) item ends the list item (converts to Paragraph) without adding a newline.
+    // Return on the empty level 1 bullet item ends the list item (converts to Paragraph) without adding a newline.
     let len_before = e.text.len();
     e.key(&k(Key::Enter), None);
     assert_eq!(e.text.len(), len_before);
@@ -826,9 +826,9 @@ fn html_import_export_and_paste_safe_subset() {
         e.blocks(),
         &[
             Block::Paragraph,
-            Block::Bullet(0),
-            Block::Bullet(1),
-            Block::Bullet(1),
+            Block::Bullet { level: 0, quote: false },
+            Block::Bullet { level: 1, quote: false },
+            Block::Bullet { level: 1, quote: false },
             Block::Numbered(0),
             Block::Numbered(0),
             Block::Quote,
@@ -958,12 +958,12 @@ fn runtime_routes_mark_shortcuts_list_tabs_and_renders_decorations() {
     rt.frame(0.0);
     assert!(rt.state.edit.focused);
     assert!(!rt.state.other.focused);
-    assert_eq!(rt.state.edit.blocks()[0], Block::Bullet(1));
+    assert_eq!(rt.state.edit.blocks()[0], Block::Bullet { level: 1, quote: false });
 
-    // Shift+Tab outdents the list item back to Bullet(0).
+    // Shift+Tab outdents the list item back to a level 0 bullet.
     rt.key(KeyEvent { key: Key::Tab, mods: Mods { shift: true, ..Mods::default() } });
     rt.frame(0.0);
-    assert_eq!(rt.state.edit.blocks()[0], Block::Bullet(0));
+    assert_eq!(rt.state.edit.blocks()[0], Block::Bullet { level: 0, quote: false });
 }
 
 fn cmd(c: char) -> KeyEvent {

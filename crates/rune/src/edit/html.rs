@@ -256,7 +256,7 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
         } else if in_li > 0 && let Some(&kind) = list_stack.last() {
             let level = (list_stack.len() - 1).min(MAX_LIST_LEVEL as usize) as u8;
             match kind {
-                ListKind::Bullet => Block::Bullet(level),
+                ListKind::Bullet => Block::Bullet { level, quote: false },
                 ListKind::Numbered => Block::Numbered(level),
             }
         } else if in_quote > 0 {
@@ -816,13 +816,13 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
                 out.push_str("</code></pre>");
             }
-            Block::Bullet(_) | Block::Numbered(_) => {
+            Block::Bullet { .. } | Block::Numbered(_) => {
                 // Group consecutive list items and emit properly nested `<ul>` / `<ol>`
                 let mut open_lists: Vec<ListKind> = Vec::new();
                 while idx < paras.len() && paras[idx].2.is_list() {
                     let (_, ref r, blk, _) = paras[idx];
                     let (kind, level) = match blk {
-                        Block::Bullet(l) => (ListKind::Bullet, l as usize),
+                        Block::Bullet { level, .. } => (ListKind::Bullet, level as usize),
                         Block::Numbered(l) => (ListKind::Numbered, l as usize),
                         _ => unreachable!(),
                     };

@@ -202,7 +202,7 @@ impl TextEdit {
                                     self.insert_newline(Block::Code, false);
                                 }
                             }
-                            Block::Bullet(_) | Block::Numbered(_) => {
+                            Block::Bullet { .. } | Block::Numbered(_) => {
                                 // Return in an empty list item ends the list; otherwise continues it.
                                 if a == b && line_range.is_empty() {
                                     self.set_block(Block::Paragraph);
@@ -248,7 +248,7 @@ impl TextEdit {
                     let is_soft = self.soft_breaks.binary_search(&(line_idx as u32)).is_ok();
                     if !m.cmd && !word && a == line_range.start && !is_soft && !matches!(blk, Block::Paragraph | Block::Hanging { .. }) {
                         match blk {
-                            Block::Bullet(lvl) | Block::Numbered(lvl) => {
+                            Block::Bullet { level: lvl, .. } | Block::Numbered(lvl) => {
                                 if lvl > 0 {
                                     self.set_block(blk.with_level(lvl - 1));
                                 } else {

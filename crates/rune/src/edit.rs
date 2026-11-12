@@ -225,8 +225,8 @@ impl TextEdit {
 
     /// Keep only these kinds of paragraph block, as [`allow_marks`](Self::allow_marks) does for
     /// marks: `toggle_block` and `set_block` ignore the rest and pasted ones become paragraphs.
-    /// [`Block::Paragraph`] is always allowed, and list levels don't matter (`Block::Bullet(0)`
-    /// allows every bullet).
+    /// [`Block::Paragraph`] is always allowed, and list levels and quotes don't matter
+    /// (`Block::Bullet { level: 0, quote: false }` allows every bullet).
     pub fn allow_blocks(mut self, blocks: impl IntoIterator<Item = Block>) -> Self {
         self.allowed_blocks = Some(blocks.into_iter().fold(Block::Paragraph.kind_bit(), |bits, b| bits | b.kind_bit()));
         self.sync_invariants();
@@ -343,7 +343,7 @@ impl TextEdit {
     ///
     /// ```ignore
     /// // "one" then "two" on a new line of the same bullet.
-    /// TextEdit::from_parts("one\ntwo", vec![], vec![Block::Bullet(0); 2]).with_soft_breaks(vec![1])
+    /// TextEdit::from_parts("one\ntwo", vec![], vec![Block::Bullet { level: 0, quote: false }; 2]).with_soft_breaks(vec![1])
     /// ```
     pub fn with_soft_breaks(mut self, lines: Vec<u32>) -> Self {
         self.set_soft_breaks(lines);

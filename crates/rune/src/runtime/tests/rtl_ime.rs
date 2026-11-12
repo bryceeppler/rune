@@ -21,7 +21,7 @@ fn field(text: &str, caret: usize, width: f32) -> Runtime<TextEdit> {
 /// accent, leaves the accent straight after a hard break in right-to-left text.
 #[test]
 fn review4_rtl_ime_repro() {
-    let blocks = vec![Block::Code, Block::Quote, Block::Bullet(0), Block::Quote, Block::Bullet(2), Block::Bullet(2), Block::Quote, Block::Code, Block::Bullet(2), Block::Bullet(0), Block::Paragraph];
+    let blocks = vec![Block::Code, Block::Quote, Block::Bullet { level: 0, quote: false }, Block::Quote, Block::Bullet { level: 2, quote: false }, Block::Bullet { level: 2, quote: false }, Block::Quote, Block::Code, Block::Bullet { level: 2, quote: false }, Block::Bullet { level: 0, quote: false }, Block::Paragraph];
     let text = "a\nword\u{2028}e\u{301}\u{2028}漢שלום\rbb\u{2028}\r\n\u{2029}e\u{301} ";
     let mut e = TextEdit::from_parts(text, vec![MarkRange::new(0..1, Mark::Code), MarkRange::new(5..26, Mark::Bold)], blocks);
     e.focused = true;

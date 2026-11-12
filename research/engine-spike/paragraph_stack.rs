@@ -53,7 +53,7 @@ fn cases() -> Vec<Case> {
         case("arabic then digits", "مرحبا بالعالم 2024", body),
         case("mixed fonts", "Mixed 中文字符和日本語のテキスト with emoji 🎉🚀 and math 𝑥² ∑ beside Latin words that wrap", body),
         case("mono tabs", "fn main() {\n\tlet x = 1;\t// a comment that runs long enough to wrap\n}", TextStyle::new(13.0, 400.0).family(Family::Mono)),
-        Case { blocks: vec![Block::Paragraph, Block::Bullet(0), Block::Quote, Block::Code], ..case("blocks", paragraphs, body) },
+        Case { blocks: vec![Block::Paragraph, Block::Bullet { level: 0, quote: false }, Block::Quote, Block::Code], ..case("blocks", paragraphs, body) },
         Case { pills, ..case("pills", pill_text, TextStyle::new(14.0, 400.0)) },
     ]
 }

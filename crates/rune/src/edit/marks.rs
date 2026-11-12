@@ -483,7 +483,7 @@ impl TextEdit {
             for i in first..=last {
                 if let Some(slot) = self.blocks.get_mut(i) {
                     *slot = match (slot.list_level(), block) {
-                        (Some(lvl), Block::Bullet(0)) => Block::Bullet(lvl),
+                        (Some(lvl), Block::Bullet { level: 0, quote }) => Block::Bullet { level: lvl, quote },
                         (Some(lvl), Block::Numbered(0)) => Block::Numbered(lvl),
                         _ => block,
                     };

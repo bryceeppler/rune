@@ -56,9 +56,9 @@ fn dots(rt: &Runtime<TextEdit>) -> Vec<(f32, f32)> {
 
 #[test]
 fn a_right_to_left_bullet_indents_and_draws_its_dot_on_the_right_as_a_left_to_right_one_does_on_the_left() {
-    let (mut ltr, at) = note("hello world", Block::Bullet(0));
+    let (mut ltr, at) = note("hello world", Block::Bullet { level: 0, quote: false });
     let (mut ltr_plain, _) = note("hello world", Block::Paragraph);
-    let (mut rtl, _) = note("שלום עולם", Block::Bullet(0));
+    let (mut rtl, _) = note("שלום עולם", Block::Bullet { level: 0, quote: false });
     let (mut rtl_plain, _) = note("שלום עולם", Block::Paragraph);
     let (left, right) = (caret_at(&mut ltr_plain, at).0, caret_at(&mut rtl_plain, at).0);
     let (ltr_start, rtl_start) = (caret_at(&mut ltr, at).0, caret_at(&mut rtl, at).0);
@@ -72,10 +72,10 @@ fn a_right_to_left_bullet_indents_and_draws_its_dot_on_the_right_as_a_left_to_ri
 
 #[test]
 fn nested_right_to_left_bullets_step_in_from_the_right() {
-    let (mut one, at) = note("שלום עולם", Block::Bullet(0));
-    let (mut two, _) = note("שלום עולם", Block::Bullet(1));
-    let (mut ltr_one, _) = note("hello world", Block::Bullet(0));
-    let (mut ltr_two, _) = note("hello world", Block::Bullet(1));
+    let (mut one, at) = note("שלום עולם", Block::Bullet { level: 0, quote: false });
+    let (mut two, _) = note("שלום עולם", Block::Bullet { level: 1, quote: false });
+    let (mut ltr_one, _) = note("hello world", Block::Bullet { level: 0, quote: false });
+    let (mut ltr_two, _) = note("hello world", Block::Bullet { level: 1, quote: false });
     let step = caret_at(&mut one, at).0 - caret_at(&mut two, at).0;
     assert!(step > 10.0, "the nested item starts further left: {step}");
     assert_eq!(step, caret_at(&mut ltr_two, at).0 - caret_at(&mut ltr_one, at).0, "by the same step a left-to-right one moves right");
@@ -100,7 +100,7 @@ fn a_click_beside_a_right_to_left_line_lands_at_the_end_it_is_nearest() {
     let para = "שלום עולם";
     let (mut plain, at) = note(para, Block::Paragraph);
     let (right, _) = caret_at(&mut plain, at);
-    for block in [Block::Bullet(0), Block::Paragraph] {
+    for block in [Block::Bullet { level: 0, quote: false }, Block::Paragraph] {
         let (mut rt, _) = note(para, block);
         let (end, _) = caret_at(&mut rt, at + para.len());
         let (_, y) = caret_at(&mut rt, at);
@@ -118,7 +118,7 @@ fn a_click_beside_a_right_to_left_line_lands_at_the_end_it_is_nearest() {
 #[test]
 fn arrows_cross_a_right_to_left_items_edges_as_they_draw() {
     let para = "שלום עולם";
-    let (mut rt, at) = note(para, Block::Bullet(0));
+    let (mut rt, at) = note(para, Block::Bullet { level: 0, quote: false });
     put_caret(&mut rt, at);
     let (_, start_x, y) = caret(&rt);
     press(&mut rt, Key::Left);

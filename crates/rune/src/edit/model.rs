@@ -98,8 +98,9 @@ impl MarkRange {
 pub enum Block {
     #[default]
     Paragraph,
-    /// Bullet list item (`•`, `◦`, `▪`) at nesting level `0..=MAX_LIST_LEVEL`.
-    Bullet(u8),
+    /// Bullet list item (`•`, `◦`, `▪`) at nesting `level` `0..=MAX_LIST_LEVEL`. Inside a
+    /// `quote` it draws the quote's bar and its levels step in from the quote's indent.
+    Bullet { level: u8, quote: bool },
     /// Numbered list item (`1.`, `2.`, …) at nesting level `0..=MAX_LIST_LEVEL`.
     Numbered(u8),
     /// Indented quote paragraph with a vertical left bar.
@@ -115,12 +116,12 @@ pub enum Block {
 
 impl Block {
     pub fn is_list(self) -> bool {
-        matches!(self, Block::Bullet(_) | Block::Numbered(_))
+        matches!(self, Block::Bullet { .. } | Block::Numbered(_))
     }
 
     pub fn list_level(self) -> Option<u8> {
         match self {
-            Block::Bullet(l) | Block::Numbered(l) => Some(l),
+            Block::Bullet { level: l, .. } | Block::Numbered(l) => Some(l),
             _ => None,
         }
     }
@@ -128,24 +129,24 @@ impl Block {
     pub fn with_level(self, level: u8) -> Self {
         let l = level.min(MAX_LIST_LEVEL);
         match self {
-            Block::Bullet(_) => Block::Bullet(l),
+            Block::Bullet { quote, .. } => Block::Bullet { level: l, quote },
             Block::Numbered(_) => Block::Numbered(l),
             other => other,
         }
     }
 
-    /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
     /// Whether this paragraph draws the quote's bar: a [`Block::Quote`], or a
-    /// [`Block::Hanging`] inside a quote.
+    /// [`Block::Bullet`] or [`Block::Hanging`] inside a quote.
     pub fn quoted(self) -> bool {
-        matches!(self, Block::Quote | Block::Hanging { quote: true, .. })
+        matches!(self, Block::Quote | Block::Bullet { quote: true, .. } | Block::Hanging { quote: true, .. })
     }
 
+    /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
     pub fn same_kind(self, other: Block) -> bool {
         matches!(
             (self, other),
             (Block::Paragraph, Block::Paragraph)
-                | (Block::Bullet(_), Block::Bullet(_))
+                | (Block::Bullet { .. }, Block::Bullet { .. })
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
@@ -157,24 +158,26 @@ impl Block {
     pub(super) fn kind_bit(self) -> u8 {
         1 << match self {
             Block::Paragraph | Block::Hanging { .. } => 0,
-            Block::Bullet(_) => 1,
+            Block::Bullet { .. } => 1,
             Block::Numbered(_) => 2,
             Block::Quote => 3,
             Block::Code => 4,
         }
     }
 
-    /// Left indentation in points (before scale) for this block type.
+    /// Left indentation in points (before scale) for this block type, a quoted list item's
+    /// counted from the quote's indent.
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
+        let quote = (font_size * 1.1).round().max(14.0);
         let unit = (font_size * 1.45).round().max(18.0);
+        let steps = |level: u8| unit * level.min(MAX_LIST_LEVEL) as f32;
+        let in_quote = |quoted: bool| if quoted { quote } else { 0.0 };
         match self {
             Block::Paragraph => 0.0,
-            Block::Hanging { level, quote, .. } => {
-                let quoted = if quote { Block::Quote.indent_pt(font_size) } else { 0.0 };
-                quoted + unit * level.min(MAX_LIST_LEVEL) as f32
-            }
-            Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
-            Block::Quote => (font_size * 1.1).round().max(14.0),
+            Block::Hanging { level, quote: quoted, .. } => in_quote(quoted) + steps(level),
+            Block::Bullet { level, quote: quoted } => in_quote(quoted) + steps(level) + unit,
+            Block::Numbered(level) => steps(level) + unit,
+            Block::Quote => quote,
             Block::Code => (font_size * 0.75).round().max(10.0),
         }
     }

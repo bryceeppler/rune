@@ -32,7 +32,7 @@ fn note(paragraphs: usize, trailing_newline: bool) -> Note {
         let code = text.len() - 6;
         spans.push(Span::new(code, code + 4).mono().bg(Color::WHITE, 2.0));
         let at = text.len();
-        line(&mut text, &format!("- [ ] task {i}"), Block::Bullet(0));
+        line(&mut text, &format!("- [ ] task {i}"), Block::Bullet { level: 0, quote: false });
         pills.push(PillChip { start: at as u32 + 2, end: at as u32 + 5, icon: None, bg: None, fg: None });
         line(&mut text, &format!("> quote {i} lazily"), Block::Quote);
         spans.push(Span::new(text.len() - 7, text.len() - 1).underline(Color::WHITE));
@@ -141,7 +141,7 @@ fn assert_line_for_line(whole: &Layout<Ink>, stacked: &TextLayout, what: &str) {
 /// its own block: a stacked paragraph holding such a break indents the same lines.
 #[test]
 fn every_hard_break_parley_takes_moves_to_the_next_block() {
-    let blocks = vec![Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code, Block::Quote];
+    let blocks = vec![Block::Paragraph, Block::Quote, Block::Bullet { level: 1, quote: false }, Block::Code, Block::Quote];
     for sep in ["\r", "\r\n", "\u{2028}", "\u{2029}"] {
         let n = Note { text: format!("first{sep}second\nthird{sep}fourth{sep}"), spans: Vec::new(), blocks: blocks.clone(), pills: Vec::new() };
         let (whole, stacked) = lay_out(&mut TextSystem::default(), &n, 2.0, Some(400.0));
@@ -186,7 +186,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
         (seed % n.max(1) as u64) as usize
     };
     let tokens = ["word", "ab", " ", "\t", "\t", "e\u{301}", "1", "(", "👍🏽", "\n", "\n", "\r\n", "\r\n", "\r", "\u{2028}", "\u{2029}"];
-    let kinds = [Block::Paragraph, Block::Quote, Block::Bullet(1), Block::Code];
+    let kinds = [Block::Paragraph, Block::Quote, Block::Bullet { level: 1, quote: false }, Block::Code];
     let mut ts = TextSystem::default();
     let (mut text, mut spans, mut blocks) = (String::from("first\tline\nsecond\n"), Vec::<Span>::new(), vec![Block::Paragraph]);
     let mut stacked_steps = 0;

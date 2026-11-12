@@ -115,14 +115,14 @@ fn count_newlines_matches_a_plain_count() {
 #[test]
 fn list_levels_stop_at_max_list_level() {
     let mut e = TextEdit::new("a").rich();
-    e.set_block(Block::Bullet(0));
+    e.set_block(Block::Bullet { level: 0, quote: false });
     for _ in 0..10 { e.key(&k(Key::Tab), None); }
-    assert_eq!(e.blocks(), &[Block::Bullet(MAX_LIST_LEVEL)]);
+    assert_eq!(e.blocks(), &[Block::Bullet { level: MAX_LIST_LEVEL, quote: false }]);
     e.set_block(Block::Numbered(9));
     assert_eq!(e.blocks(), &[Block::Numbered(MAX_LIST_LEVEL)]);
-    assert_eq!(TextEdit::from_parts("a", vec![], vec![Block::Bullet(200)]).blocks(), &[Block::Bullet(MAX_LIST_LEVEL)]);
+    assert_eq!(TextEdit::from_parts("a", vec![], vec![Block::Bullet { level: 200, quote: false }]).blocks(), &[Block::Bullet { level: MAX_LIST_LEVEL, quote: false }]);
     let deep = TextEdit::from_html(&format!("{}a", "<ul><li>".repeat(8)));
-    assert_eq!(deep.blocks().last(), Some(&Block::Bullet(MAX_LIST_LEVEL)));
+    assert_eq!(deep.blocks().last(), Some(&Block::Bullet { level: MAX_LIST_LEVEL, quote: false }));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn paste_html_into_a_code_block_keeps_the_plain_whitespace() {
 
 #[test]
 fn soft_breaks_can_be_set_on_a_rebuilt_draft() {
-    let mut e = TextEdit::from_parts("one\ntwo\nthree", vec![], vec![Block::Bullet(0); 3]).with_soft_breaks(vec![5, 1, 0, 1]);
+    let mut e = TextEdit::from_parts("one\ntwo\nthree", vec![], vec![Block::Bullet { level: 0, quote: false }; 3]).with_soft_breaks(vec![5, 1, 0, 1]);
     assert!(!e.has_history(), "with_soft_breaks on from_parts adds no undo step");
     assert_eq!(e.soft_breaks(), &[1], "line 0, duplicates and lines past the end are dropped");
     assert_eq!(e.to_html().matches("<li>").count(), 2, "\"two\" continues the first bullet");
@@ -167,7 +167,7 @@ fn soft_breaks_can_be_set_on_a_rebuilt_draft() {
 
 #[test]
 fn clear_history_drops_undo_and_redo_while_keeping_formatting_and_selection() {
-    let mut e = TextEdit::from_parts("one\ntwo", vec![MarkRange::new(0..3, Mark::Bold)], vec![Block::Bullet(0); 2])
+    let mut e = TextEdit::from_parts("one\ntwo", vec![MarkRange::new(0..3, Mark::Bold)], vec![Block::Bullet { level: 0, quote: false }; 2])
         .with_soft_breaks(vec![1]);
     e.insert("!");
     e.undo();
@@ -180,7 +180,7 @@ fn clear_history_drops_undo_and_redo_while_keeping_formatting_and_selection() {
     e.redo();
     assert_eq!((e.text.as_str(), e.selection().anchor.byte, e.selection().focus.byte), ("one\ntwo!", 1, 4));
     assert_eq!(e.marks(), &[MarkRange::new(0..3, Mark::Bold)]);
-    assert_eq!(e.blocks(), &[Block::Bullet(0); 2]);
+    assert_eq!(e.blocks(), &[Block::Bullet { level: 0, quote: false }; 2]);
     assert_eq!(e.soft_breaks(), &[1]);
 }
 
@@ -273,10 +273,10 @@ fn down_or_right_at_the_end_of_a_trailing_code_block_or_quote_adds_a_paragraph()
 fn a_field_keeps_only_the_marks_and_blocks_it_allows() {
     let mut e = TextEdit::from_parts("ab", vec![MarkRange { start: 0, end: 1, mark: Mark::Underline }], vec![Block::Paragraph])
         .allow_marks([Mark::Bold, Mark::Strike, Mark::Code, Mark::Link(String::new())])
-        .allow_blocks([Block::Bullet(0), Block::Quote]);
+        .allow_blocks([Block::Bullet { level: 0, quote: false }, Block::Quote]);
     assert!(e.marks().is_empty(), "marks it held are dropped");
     assert!(e.allows_mark(&Mark::Link("https://example.com".into())) && !e.allows_mark(&Mark::Italic));
-    assert!(e.allows_block(Block::Bullet(3)) && e.allows_block(Block::Paragraph) && !e.allows_block(Block::Code));
+    assert!(e.allows_block(Block::Bullet { level: 3, quote: false }) && e.allows_block(Block::Paragraph) && !e.allows_block(Block::Code));
     e.set_selection(crate::Selection::bytes(0, 2));
     assert_eq!(e.format_chord(&cmd('u')), None, "⌘U is the app's");
     e.key(&cmd('u'), None);
@@ -289,8 +289,8 @@ fn a_field_keeps_only_the_marks_and_blocks_it_allows() {
     e.toggle_block(Block::Code);
     e.set_block(Block::Numbered(0));
     assert_eq!(e.blocks(), &[Block::Paragraph]);
-    e.toggle_block(Block::Bullet(0));
-    assert_eq!(e.blocks(), &[Block::Bullet(0)]);
+    e.toggle_block(Block::Bullet { level: 0, quote: false });
+    assert_eq!(e.blocks(), &[Block::Bullet { level: 0, quote: false }]);
     e.set_marks(vec![MarkRange { start: 0, end: 2, mark: Mark::Italic }]);
     assert!(e.marks().is_empty(), "set_marks can't add one either");
     e.set_blocks(vec![Block::Code]);
@@ -471,7 +471,7 @@ fn html_from_browsers_notes_slack_and_docs_round_trips() {
         "</body>\n</html>\n",
     ));
     assert_eq!(notes.text, "Bold text\n\nitem one\nitem two");
-    assert_eq!(notes.blocks(), &[Block::Paragraph, Block::Paragraph, Block::Bullet(0), Block::Bullet(0)]);
+    assert_eq!(notes.blocks(), &[Block::Paragraph, Block::Paragraph, Block::Bullet { level: 0, quote: false }, Block::Bullet { level: 0, quote: false }]);
     assert_eq!((marked(&notes, &Mark::Bold), marked(&notes, &Mark::Italic)), (vec!["Bold"], vec!["item two"]));
     round_trip(&notes, "notes");
 
@@ -496,7 +496,7 @@ fn html_from_browsers_notes_slack_and_docs_round_trips() {
         "<span style=\"font-style:italic;\">item</span></p></li></ul></b>",
     ));
     assert_eq!(docs.text, "Bold plain\nitem");
-    assert_eq!(docs.blocks(), &[Block::Paragraph, Block::Bullet(0)]);
+    assert_eq!(docs.blocks(), &[Block::Paragraph, Block::Bullet { level: 0, quote: false }]);
     assert_eq!((marked(&docs, &Mark::Bold), marked(&docs, &Mark::Italic)), (vec!["Bold"], vec!["item"]));
     round_trip(&docs, "google docs");
 
@@ -528,7 +528,7 @@ fn random_edits_keep_ranges_blocks_and_soft_breaks_consistent() {
                 11 => e.toggle_mark([Mark::Code, Mark::Strike, Mark::Link(format!("https://e.x/{}", next(3)))][next(3) as usize].clone()),
                 12 => {
                     let l = next(6) as u8;
-                    e.set_block([Block::Paragraph, Block::Bullet(l), Block::Numbered(l), Block::Quote, Block::Code][next(5) as usize]);
+                    e.set_block([Block::Paragraph, Block::Bullet { level: l, quote: false }, Block::Numbered(l), Block::Quote, Block::Code][next(5) as usize]);
                 }
                 13 => undo(&mut e, next(2) == 0),
                 14 => {

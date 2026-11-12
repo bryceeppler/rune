@@ -216,7 +216,7 @@ fn a_composition_with_line_breaks_takes_one_layouts_blocks() {
     let mut differ = Vec::new();
     for pre in ["a\nb", "a\r\nb", "a\rb", "a\u{2028}b", "\r\n", "\r", "a\r\n\rb"] {
         for at in [0, 2, 5, 9] {
-            let mut edit = TextEdit::from_parts("aa\nbb\nccc", vec![], vec![Block::Quote, Block::Bullet(1), Block::Code]);
+            let mut edit = TextEdit::from_parts("aa\nbb\nccc", vec![], vec![Block::Quote, Block::Bullet { level: 1, quote: false }, Block::Code]);
             edit.focused = true;
             edit.set_caret(crate::Caret::at(at));
             let mut rt = Runtime::new(edit, view, (420.0, 2400.0), Env::new(true, 2.0));
@@ -279,5 +279,38 @@ fn quoted_hanging_paragraphs_draw_one_bar_with_the_quote_they_follow() {
     let quoted = bars(vec![Block::Quote, hanging(0, true), hanging(1, true), Block::Paragraph]);
     assert!(quoted.len() == 1 && quoted[0] > 2.5 * line, "one bar runs down the quote and both quoted items: {quoted:?}");
     let unquoted = bars(vec![Block::Quote, hanging(0, false), hanging(1, false), Block::Paragraph]);
+    assert!(unquoted.len() == 1 && unquoted[0] < 1.5 * line, "items outside a quote draw no bar: {unquoted:?}");
+}
+
+/// A quote holding bullets, numbered and checklist items draws one bar down all of them.
+#[test]
+fn a_quote_holding_every_list_kind_draws_one_bar_down_all_of_them() {
+    let bar = crate::color::hex("#e6339a").unwrap();
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let style = crate::edit::RichStyle { quote_bar: crate::color::hex("#e6339a").unwrap(), ..Default::default() };
+        col().size(420.0, 2400.0).child(text_input(s, STYLE).rich_style(style).key("note").w_full().on_edit(|s: &mut TextEdit| s))
+    }
+    let bars = |quote: bool| {
+        let blocks = vec![
+            Block::Quote,
+            Block::Bullet { level: 0, quote },
+            Block::Hanging { marker: 3, level: 1, quote },
+            Block::Bullet { level: 2, quote },
+            Block::Hanging { marker: 6, level: 0, quote },
+            Block::Paragraph,
+        ];
+        let text = "quote\nbullet\n1. one\nbullet\n- [ ] task\nafter";
+        let mut rt = Runtime::new(TextEdit::from_parts(text, vec![], blocks), view, (420.0, 2400.0), Env::new(true, 2.0));
+        rt.frame(0.0);
+        rt.instances
+            .iter()
+            .filter(|i| i.fill == bar.premul(1.0) || i.fill == bar.premul_srgb(1.0))
+            .map(|i| i.rect[3])
+            .collect::<Vec<f32>>()
+    };
+    let line = STYLE.line_px() * 2.0;
+    let quoted = bars(true);
+    assert!(quoted.len() == 1 && quoted[0] > 4.5 * line, "one bar runs down the quote and every quoted item: {quoted:?}");
+    let unquoted = bars(false);
     assert!(unquoted.len() == 1 && unquoted[0] < 1.5 * line, "items outside a quote draw no bar: {unquoted:?}");
 }

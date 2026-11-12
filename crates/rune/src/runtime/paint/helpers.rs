@@ -108,7 +108,7 @@ pub(super) fn emit_block_decorations(
 
         if first_line_of_para {
             match blk {
-                Block::Bullet(lvl) => {
+                Block::Bullet { level: lvl, .. } => {
                     let l = (lvl.min(MAX_LIST_LEVEL)) as usize;
                     for c in &mut list_counts[l + 1..] {
                         *c = 0;
@@ -150,10 +150,12 @@ pub(super) fn emit_block_decorations(
         let top = origin[1];
         let bot = top + line_h_default;
         let baseline = top + spec.style.size * 0.8 * s * tk;
+        if blk.quoted() {
+            quote_run = Some((top, bot));
+        }
         match blk {
             Block::Code => code_run = Some((top, bot)),
-            Block::Quote | Block::Hanging { quote: true, .. } => quote_run = Some((top, bot)),
-            Block::Bullet(_) | Block::Numbered(_) => {
+            Block::Bullet { .. } | Block::Numbered(_) => {
                 markers.push(Marker {
                     text_x: origin[0] + (blk.indent_pt(spec.style.size) * s).round() * tk,
                     rtl: false,
@@ -162,7 +164,7 @@ pub(super) fn emit_block_decorations(
                     number: u32::from(matches!(blk, Block::Numbered(_))),
                 });
             }
-            Block::Paragraph | Block::Hanging { quote: false, .. } => {}
+            Block::Paragraph | Block::Hanging { .. } | Block::Quote => {}
         }
     }
 
@@ -174,7 +176,7 @@ pub(super) fn emit_block_decorations(
         let mc = premul(marker_color, o, srgb);
         for Marker { text_x, rtl, baseline: baseline_y, block, number: num } in markers {
             match block {
-                Block::Bullet(lvl) => {
+                Block::Bullet { level: lvl, .. } => {
                     let d = if tk == 1.0 { (4.5 * s).round().max(3.0) } else { (4.5 * s * tk).max(3.0 * tk) };
                     let gap = (7.0 * s).round() * tk;
                     let cx = if rtl { text_x + gap } else { text_x - gap - d };

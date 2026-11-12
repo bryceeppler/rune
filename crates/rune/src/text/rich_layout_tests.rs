@@ -110,9 +110,9 @@ fn a_right_to_left_list_item_indents_from_the_right() {
     use crate::edit::Block;
     let mut ts = TextSystem::default();
     let style = TextStyle::new(14.0, 400.0);
-    let indent = (Block::Bullet(0).indent_pt(14.0) * 2.0).round();
+    let indent = (Block::Bullet { level: 0, quote: false }.indent_pt(14.0) * 2.0).round();
     for (text, rtl) in [("שלום עולם ".repeat(8), true), ("hello world ".repeat(8), false)] {
-        let layout = ts.layout_blocks(text.trim_end(), &[], &[Block::Bullet(0)], &[], style, 2.0, Some(240.0), Alignment::Start);
+        let layout = ts.layout_blocks(text.trim_end(), &[], &[Block::Bullet { level: 0, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start);
         assert!(layout.len() > 1, "{text:?} wraps");
         for line in layout.lines() {
             let m = line.metrics();
@@ -146,7 +146,7 @@ fn a_nested_hanging_paragraph_steps_in_like_a_nested_bullet_and_wraps_under_its_
                 })
                 .collect()
         };
-        let mut bullet = |level| from_start(&ts.layout_blocks(words, &[], &[Block::Bullet(level)], &[], style, 2.0, Some(240.0), Alignment::Start))[0];
+        let mut bullet = |level| from_start(&ts.layout_blocks(words, &[], &[Block::Bullet { level, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start))[0];
         let step = bullet(1) - bullet(0);
         assert!(step > 10.0 && (bullet(2) - bullet(1) - step).abs() < 0.5, "{words:?}: bullets step in evenly, by {step}");
         let item = format!("1. {words}");
@@ -259,6 +259,35 @@ fn a_quoted_hanging_paragraph_steps_in_from_the_quotes_indent_and_wraps_under_it
             assert!(outside.len() > 2 && inside.len() >= outside.len(), "{item:?} at level {level} wraps in and out of a quote: {outside:?} and {inside:?}");
             for (i, (o, q)) in outside.iter().zip(&inside).enumerate() {
                 assert!((q - o - quote).abs() < 0.5, "{item:?} at level {level}: line {i} in a quote starts the quote's {quote} further in: {inside:?} against {outside:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_quoted_bullet_steps_in_from_the_quotes_indent_and_wraps_under_its_text() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    for (words, rtl) in [("hello world ".repeat(8), false), ("שלום עולם ".repeat(8), true)] {
+        let words = words.trim_end();
+        let mut from_start = |block: Block| -> Vec<f32> {
+            let layout = ts.layout_blocks(words, &[], &[block], &[], style, 2.0, Some(240.0), Alignment::Start);
+            layout
+                .lines()
+                .map(|l| {
+                    let m = l.metrics();
+                    if rtl { 240.0 - (m.inline_min_coord + m.offset + m.advance) } else { m.inline_min_coord + m.offset }
+                })
+                .collect()
+        };
+        let quote = from_start(Block::Quote)[0];
+        for level in 0..=2u8 {
+            let outside = from_start(Block::Bullet { level, quote: false });
+            let inside = from_start(Block::Bullet { level, quote: true });
+            assert!(outside.len() > 2 && inside.len() >= outside.len(), "{words:?} at level {level} wraps in and out of a quote: {outside:?} and {inside:?}");
+            for (i, (o, q)) in outside.iter().zip(&inside).enumerate() {
+                assert!((q - o - quote).abs() < 0.5, "{words:?} at level {level}: line {i} in a quote starts the quote's {quote} further in: {inside:?} against {outside:?}");
             }
         }
     }

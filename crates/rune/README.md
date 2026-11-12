@@ -1334,7 +1334,7 @@ newline on `Shift+Return` and pastes plain text. The mark and block methods work
   when the caret moves). In a rich field `⌘B`, `⌘I` and `⌘U` (`Ctrl` on Windows/Linux) toggle
   bold, italic and underline. Query `edit.has_mark(&Mark::Bold)`, `edit.active_marks()` and `edit.active_link()` to
   drive a formatting bar's pressed state.
-- **Paragraph block attributes** (`Block::Paragraph`, `Bullet(level)`, `Numbered(level)`, `Quote`,
+- **Paragraph block attributes** (`Block::Paragraph`, `Bullet { level, quote }`, `Numbered(level)`, `Quote`,
   `Code`): one `Block` per `\n`-delimited paragraph (`edit.blocks()`, `edit.paragraphs()`,
   `edit.active_block()`, `edit.set_block(block)`, `edit.toggle_block(block)`). Bullet and numbered
   list markers (`0..=3` nesting levels), quote bars and code-block backgrounds are drawn as
@@ -1397,7 +1397,7 @@ newline on `Shift+Return` and pastes plain text. The mark and block methods work
   (or `set_soft_breaks`) and dropping undo/redo stacks with `edit.clear_history()`. Accessibility
   roles (`textbox`) and plain-text values are unchanged.
 - **Allowed formatting**: `.allow_marks([Mark::Bold, Mark::Italic, ..])` and
-  `.allow_blocks([Block::Bullet(0), ..])` keep a field to what its app can store (Markdown has no
+  `.allow_blocks([Block::Bullet { level: 0, quote: false }, ..])` keep a field to what its app can store (Markdown has no
   underline, say). The field never holds the rest: its shortcut (`⌘U`) goes on to the app's key
   handlers, `toggle_mark`, `set_mark`, `toggle_block` and `set_block` skip it, paste drops it
   (a pasted disallowed block becomes a paragraph), and marks or blocks the field already had

@@ -146,8 +146,8 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
         }))
         .child(bar_btn(&k, "mention", "@", false, |s| mention(&mut s.edit)))
         .child(el().w(4.0))
-        .child(bar_btn(&k, "bullet", "• List", matches!(blk, Block::Bullet(_)), |s| {
-            s.edit.toggle_block(Block::Bullet(0));
+        .child(bar_btn(&k, "bullet", "• List", matches!(blk, Block::Bullet { .. }), |s| {
+            s.edit.toggle_block(Block::Bullet { level: 0, quote: false });
         }))
         .child(bar_btn(&k, "numbered", "1. List", matches!(blk, Block::Numbered(_)), |s| {
             s.edit.toggle_block(Block::Numbered(0));
