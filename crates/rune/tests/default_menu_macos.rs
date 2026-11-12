@@ -11,6 +11,9 @@ mod standard;
 fn main() {}
 
 #[cfg(target_os = "macos")]
+const NAMED_BUNDLE_PROBE: &str = "RUNE_DEFAULT_MENU_NAMED_BUNDLE_PROBE";
+
+#[cfg(target_os = "macos")]
 fn main() {
     use objc2::{sel, rc::Retained};
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEventModifierFlags as Flags, NSMenu, NSMenuItem};
@@ -18,6 +21,10 @@ fn main() {
     let mtm = MainThreadMarker::new().unwrap();
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    if std::env::var_os(NAMED_BUNDLE_PROBE).is_some() {
+        for title in named_winit_menu(&app, mtm) { println!("{title}"); }
+        return;
+    }
     // SAFETY: This dedicated main-thread process owns every menu. It never opens a
     // window, activates, or dispatches any menu selector.
     unsafe {
@@ -69,20 +76,7 @@ fn main() {
         assert!(std::ptr::eq(&*app.servicesMenu().unwrap(), &*services));
         assert!(!default_macos::is_winit_default(&app), "an app-owned menu bar gets no standard items");
 
-        app.setMainMenu(None);
-        let winit_root = NSMenu::new(mtm);
-        let winit_top = NSMenuItem::new(mtm);
-        let winit_menu = NSMenu::new(mtm);
-        for (title, selector) in [("About winit", sel!(orderFrontStandardAboutPanel:)), ("Hide winit", sel!(hide:)),
-            ("Hide Others", sel!(hideOtherApplications:)), ("Quit winit", sel!(terminate:))] {
-            winit_menu.addItem(&NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(title), Some(selector), &NSString::from_str("")));
-        }
-        winit_top.setSubmenu(Some(&winit_menu));
-        winit_root.addItem(&winit_top);
-        app.setMainMenu(Some(&winit_root));
-        default_macos::name_app_menu(&app);
-        let named: Vec<_> = (0..winit_menu.numberOfItems()).map(|i| winit_menu.itemAtIndex(i).unwrap().title().to_string()).collect();
-        assert_eq!(named, [format!("About {name}"), format!("Hide {name}"), "Hide Others".into(), format!("Quit {name}")]);
+        assert_eq!(named_winit_menu(&app, mtm), [format!("About {name}"), format!("Hide {name}"), "Hide Others".into(), format!("Quit {name}")]);
 
         // A regular app's default menu bar takes the standard Edit and Window items.
         app.setMainMenu(None);
@@ -206,5 +200,51 @@ fn main() {
         assert_eq!(app.activationPolicy(), NSApplicationActivationPolicy::Accessory);
         app.setMainMenu(None);
     }
-    println!("PASS: default titles/selectors/keys, winit's app menu named after the app, Services, idempotence, custom and empty menus preserved; standard Edit/Window items with Zoom, Bring All to Front and the window list, the Help menu, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
+    a_bundle_names_the_app_menu_by_its_display_name_over_its_name();
+    println!("PASS: default titles/selectors/keys, winit's app menu named after the app and a bundle's display name before its name, Services, idempotence, custom and empty menus preserved; standard Edit/Window items with Zoom, Bring All to Front and the window list, the Help menu, nil targets, Mac menu order, custom equivalents win, shared menus kept, no Quit until promoted");
+}
+
+#[cfg(target_os = "macos")]
+fn named_winit_menu(app: &objc2_app_kit::NSApplication, mtm: objc2_foundation::MainThreadMarker) -> Vec<String> {
+    use objc2::sel;
+    use objc2_app_kit::{NSMenu, NSMenuItem};
+    use objc2_foundation::NSString;
+    // SAFETY: main thread; this process owns every menu and never dispatches their selectors.
+    unsafe {
+        app.setMainMenu(None);
+        let root = NSMenu::new(mtm);
+        let top = NSMenuItem::new(mtm);
+        let menu = NSMenu::new(mtm);
+        for (title, selector) in [("About winit", sel!(orderFrontStandardAboutPanel:)), ("Hide winit", sel!(hide:)),
+            ("Hide Others", sel!(hideOtherApplications:)), ("Quit winit", sel!(terminate:))] {
+            menu.addItem(&NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), &NSString::from_str(title), Some(selector), &NSString::from_str("")));
+        }
+        top.setSubmenu(Some(&menu));
+        root.addItem(&top);
+        app.setMainMenu(Some(&root));
+        default_macos::name_app_menu(app);
+        (0..menu.numberOfItems()).map(|i| menu.itemAtIndex(i).unwrap().title().to_string()).collect()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn a_bundle_names_the_app_menu_by_its_display_name_over_its_name() {
+    let dir = std::env::temp_dir().join(format!("rune-default-menu-{}", std::process::id()));
+    let contents = dir.join("Named.app/Contents");
+    std::fs::create_dir_all(contents.join("MacOS")).unwrap();
+    let executable = contents.join("MacOS/default_menu_macos");
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    std::fs::write(contents.join("Info.plist"), concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>"#,
+        "<key>CFBundleIdentifier</key><string>dev.rune.default-menu-names</string>",
+        "<key>CFBundleExecutable</key><string>default_menu_macos</string>",
+        "<key>CFBundlePackageType</key><string>APPL</string>",
+        "<key>CFBundleDisplayName</key><string>Display Name</string>",
+        "<key>CFBundleName</key><string>Bundle Name</string></dict></plist>",
+    )).unwrap();
+    let probe = std::process::Command::new(&executable).env(NAMED_BUNDLE_PROBE, "1").output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(probe.status.success(), "{}", String::from_utf8_lossy(&probe.stderr));
+    assert_eq!(String::from_utf8(probe.stdout).unwrap().lines().collect::<Vec<_>>(),
+        ["About Display Name", "Hide Display Name", "Hide Others", "Quit Display Name"]);
 }
