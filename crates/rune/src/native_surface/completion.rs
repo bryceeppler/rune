@@ -185,7 +185,9 @@ impl Completions {
     fn drain(&self) {
         let device = self.device.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(device) = device.filter(|_| self.state().in_flight > 0) {
-            device.poll(wgpu::PollType::wait_indefinitely()).ok();
+            // wgpu 30 panics from a waiting poll on a device error instead of returning it, and a
+            // panic out of a drop that runs during unwinding aborts the process.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(wgpu::PollType::wait_indefinitely())));
         }
     }
 }
