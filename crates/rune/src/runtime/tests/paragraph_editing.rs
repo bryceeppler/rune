@@ -256,3 +256,28 @@ fn monospace_tabs_after_any_line_break_stop_where_one_layout_stops() {
     }
     assert!(differ.is_empty(), "tabs that stop apart from one layout's: {differ:?}");
 }
+
+/// Quoted list items draw the bar of the quote they continue, as one bar down every line.
+#[test]
+fn quoted_hanging_paragraphs_draw_one_bar_with_the_quote_they_follow() {
+    let bar = crate::color::hex("#e6339a").unwrap();
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let style = crate::edit::RichStyle { quote_bar: crate::color::hex("#e6339a").unwrap(), ..Default::default() };
+        col().size(420.0, 2400.0).child(text_input(s, STYLE).rich_style(style).key("note").w_full().on_edit(|s: &mut TextEdit| s))
+    }
+    let bars = |blocks: Vec<Block>| {
+        let mut rt = Runtime::new(TextEdit::from_parts("quote\n1. one\n1. two\nafter", vec![], blocks), view, (420.0, 2400.0), Env::new(true, 2.0));
+        rt.frame(0.0);
+        rt.instances
+            .iter()
+            .filter(|i| i.fill == bar.premul(1.0) || i.fill == bar.premul_srgb(1.0))
+            .map(|i| i.rect[3])
+            .collect::<Vec<f32>>()
+    };
+    let hanging = |level, quote| Block::Hanging { marker: 3, level, quote };
+    let line = STYLE.line_px() * 2.0;
+    let quoted = bars(vec![Block::Quote, hanging(0, true), hanging(1, true), Block::Paragraph]);
+    assert!(quoted.len() == 1 && quoted[0] > 2.5 * line, "one bar runs down the quote and both quoted items: {quoted:?}");
+    let unquoted = bars(vec![Block::Quote, hanging(0, false), hanging(1, false), Block::Paragraph]);
+    assert!(unquoted.len() == 1 && unquoted[0] < 1.5 * line, "items outside a quote draw no bar: {unquoted:?}");
+}

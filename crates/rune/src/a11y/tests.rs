@@ -293,7 +293,7 @@ fn a_reader_moving_onto_a_line_that_holds_only_a_checkbox_lands_on_that_line() {
         MarkRange::new(0..6, Mark::Pill("oat".into())),
         MarkRange::new(15..21, Mark::Pill("eggs".into())),
     ], Vec::new());
-    edit.set_blocks(vec![Block::Hanging { marker: 6, level: 0 }, Block::Hanging { marker: 6, level: 1 }]);
+    edit.set_blocks(vec![Block::Hanging { marker: 6, level: 0, quote: false }, Block::Hanging { marker: 6, level: 1, quote: false }]);
     edit.focused = true;
     let narrow = |s: &Field, _: &mut Cx<Field>| {
         col().child(text_input(&s.edit, crate::TextStyle::new(15.5, 400.0)).key("note").w(20.0)

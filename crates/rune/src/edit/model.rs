@@ -108,8 +108,9 @@ pub enum Block {
     Code,
     /// A paragraph that starts with a marker of its own, `marker` bytes long, such as a
     /// Markdown list item's `- [ ] `, at list nesting `level` `0..=MAX_LIST_LEVEL`: its wrapped
-    /// lines start under the text after the marker. It edits as a [`Block::Paragraph`].
-    Hanging { marker: u16, level: u8 },
+    /// lines start under the text after the marker. Inside a `quote` it draws the quote's bar
+    /// and its levels step in from the quote's indent. It edits as a [`Block::Paragraph`].
+    Hanging { marker: u16, level: u8, quote: bool },
 }
 
 impl Block {
@@ -134,6 +135,12 @@ impl Block {
     }
 
     /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
+    /// Whether this paragraph draws the quote's bar: a [`Block::Quote`], or a
+    /// [`Block::Hanging`] inside a quote.
+    pub fn quoted(self) -> bool {
+        matches!(self, Block::Quote | Block::Hanging { quote: true, .. })
+    }
+
     pub fn same_kind(self, other: Block) -> bool {
         matches!(
             (self, other),
@@ -162,7 +169,10 @@ impl Block {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
             Block::Paragraph => 0.0,
-            Block::Hanging { level, .. } => unit * level.min(MAX_LIST_LEVEL) as f32,
+            Block::Hanging { level, quote, .. } => {
+                let quoted = if quote { Block::Quote.indent_pt(font_size) } else { 0.0 };
+                quoted + unit * level.min(MAX_LIST_LEVEL) as f32
+            }
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),

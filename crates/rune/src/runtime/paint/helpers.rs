@@ -95,7 +95,7 @@ pub(super) fn emit_block_decorations(
                 Some((_, b)) => *b = bot,
                 None => code_run = Some((top, bot)),
             }
-        } else if blk == Block::Quote {
+        } else if blk.quoted() {
             flush_code(instances, &mut code_run);
             match &mut quote_run {
                 Some((_, b)) => *b = bot,
@@ -152,7 +152,7 @@ pub(super) fn emit_block_decorations(
         let baseline = top + spec.style.size * 0.8 * s * tk;
         match blk {
             Block::Code => code_run = Some((top, bot)),
-            Block::Quote => quote_run = Some((top, bot)),
+            Block::Quote | Block::Hanging { quote: true, .. } => quote_run = Some((top, bot)),
             Block::Bullet(_) | Block::Numbered(_) => {
                 markers.push(Marker {
                     text_x: origin[0] + (blk.indent_pt(spec.style.size) * s).round() * tk,
@@ -162,7 +162,7 @@ pub(super) fn emit_block_decorations(
                     number: u32::from(matches!(blk, Block::Numbered(_))),
                 });
             }
-            Block::Paragraph | Block::Hanging { .. } => {}
+            Block::Paragraph | Block::Hanging { quote: false, .. } => {}
         }
     }
 

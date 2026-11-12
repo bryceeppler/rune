@@ -52,7 +52,7 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
     let item = format!("- [ ] {WORDS}");
     let text = format!("Title\n{item}");
     let marker = text.find("a plain").unwrap();
-    let blocks = [Block::Paragraph, Block::Hanging { marker: 6, level: 0 }];
+    let blocks = [Block::Paragraph, Block::Hanging { marker: 6, level: 0, quote: false }];
     let plain = ts.layout_blocks(&text, &[], &[Block::Paragraph; 2], &[], style, 2.0, Some(240.0), Alignment::Start);
     let marker_x = parley::Cluster::from_byte_index(&plain, marker).and_then(|c| c.visual_offset()).unwrap();
     let hung = ts.layout_blocks(&text, &[], &blocks, &[], style, 2.0, Some(240.0), Alignment::Start);
@@ -66,7 +66,7 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
     }
 
     let word = format!("- [ ] {}", TOKEN.repeat(2));
-    let alone = ts.layout_blocks(&word, &[], &[Block::Hanging { marker: 6, level: 0 }], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let alone = ts.layout_blocks(&word, &[], &[Block::Hanging { marker: 6, level: 0, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start);
     assert_eq!(alone.get(0).unwrap().text_range(), 0..6, "a word wider than the line leaves the marker alone on the first line");
     let short = ts.layout_blocks("- [ ] x", &[], &[Block::Paragraph], &[], style, 2.0, Some(240.0), Alignment::Start);
     let x = parley::Cluster::from_byte_index(&short, 6).and_then(|c| c.visual_offset()).unwrap();
@@ -74,7 +74,7 @@ fn a_hanging_paragraph_wraps_under_the_text_after_its_marker() {
     assert!(starts.iter().all(|&s| s == x), "the word starts under where text follows the marker, at {x}: {starts:?}");
 
     let wide = format!("{}x", "-".repeat(80));
-    let layout = ts.layout_blocks(&wide, &[], &[Block::Hanging { marker: 81, level: 0 }], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let layout = ts.layout_blocks(&wide, &[], &[Block::Hanging { marker: 81, level: 0, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start);
     assert!(layout.len() > 1, "{wide:?} wraps");
     assert!(layout.lines().all(|l| l.metrics().inline_min_coord == 0.0), "{wide:?} wraps at the margin");
 }
@@ -95,7 +95,7 @@ fn a_right_to_left_hanging_paragraph_wraps_under_the_text_after_its_marker_from_
     let text = parley::Cluster::from_byte_index(&plain, 6).unwrap();
     let marker = 240.0 - (text.visual_offset().unwrap() + text.advance());
     assert!(marker > 10.0, "the marker takes room on the right: {marker}");
-    let hung = ts.layout_blocks(&item, &[], &[Block::Hanging { marker: 6, level: 0 }], &[], style, 2.0, Some(240.0), Alignment::Start);
+    let hung = ts.layout_blocks(&item, &[], &[Block::Hanging { marker: 6, level: 0, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start);
     let edges = right_edges(&hung);
     assert!(edges.len() > 2, "the item wraps");
     assert!((edges[0] - 240.0).abs() < 0.5, "the marker starts the first line at the right margin: {edges:?}");
@@ -154,7 +154,7 @@ fn a_nested_hanging_paragraph_steps_in_like_a_nested_bullet_and_wraps_under_its_
         let text = parley::Cluster::from_byte_index(&plain, 3).unwrap();
         let marker = if rtl { 240.0 - (text.visual_offset().unwrap() + text.advance()) } else { text.visual_offset().unwrap() };
         for level in 0..=2u8 {
-            let layout = ts.layout_blocks(&item, &[], &[Block::Hanging { marker: 3, level }], &[], style, 2.0, Some(240.0), Alignment::Start);
+            let layout = ts.layout_blocks(&item, &[], &[Block::Hanging { marker: 3, level, quote: false }], &[], style, 2.0, Some(240.0), Alignment::Start);
             let starts = from_start(&layout);
             let indent = step * f32::from(level);
             assert!(starts.len() > 2, "{item:?} at level {level} wraps");
@@ -182,7 +182,7 @@ fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_a
         ("- [x] \u{2067}שלום", &pill[..], false),
         ("שלום - [x] \u{2066}English", &[PillChip { start: 9, end: 15, icon: None, bg: None, fg: None }][..], true),
     ] {
-        let layout = ts.layout_blocks_inner(text, &[], &[crate::edit::Block::Hanging { marker: 6, level: 0 }], pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
+        let layout = ts.layout_blocks_inner(text, &[], &[crate::edit::Block::Hanging { marker: 6, level: 0, quote: false }], pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
         assert_eq!(layout.is_rtl(), rtl, "{text:?} with {} pills", pills.len());
     }
 }
@@ -198,7 +198,7 @@ fn a_pill_starting_a_right_to_left_paragraph_draws_its_chip_and_icon_on_the_righ
     for (text, rtl) in [("- [ ] שלום עולם", true), ("- [ ] hello world", false)] {
         let pills = [PillChip { start: 0, end: 6, icon, bg: None, fg: None }];
         let hidden = [Span::new(0, 6).size(0.01)];
-        let laid = ts.layout_blocks_inner(text, &hidden, &[Block::Hanging { marker: 6, level: 0 }], &pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
+        let laid = ts.layout_blocks_inner(text, &hidden, &[Block::Hanging { marker: 6, level: 0, quote: false }], &pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
         let word = parley::Cluster::from_byte_index(&laid, 6).unwrap();
         let (word_x0, word_x1) = (word.visual_offset().unwrap(), word.visual_offset().unwrap() + word.advance());
         let layout = TextLayout::from(laid.clone());
@@ -227,9 +227,39 @@ fn a_hanging_task_line_measured_at_no_width_lays_out_every_character() {
     let pills = [PillChip { start: 0, end: 6, icon: None, bg: None, fg: None }];
     let style = TextStyle::new(15.5, 400.0);
     for scale in [1.0, 2.0] {
-        let layout = ts.layout_blocks_inner(text, &[], &[Block::Hanging { marker: 6, level: 0 }], &pills, style, scale, Some(0.0), Alignment::Start, Wrapping::Anywhere, false);
+        let layout = ts.layout_blocks_inner(text, &[], &[Block::Hanging { marker: 6, level: 0, quote: false }], &pills, style, scale, Some(0.0), Alignment::Start, Wrapping::Anywhere, false);
         let laid: usize = layout.lines().map(|line| line.text_range()).filter(|r| r.start <= r.end).map(|r| r.len()).sum();
         assert_eq!(laid, text.len(), "every character is on a line at scale {scale}");
     }
 }
 
+
+#[test]
+fn a_quoted_hanging_paragraph_steps_in_from_the_quotes_indent_and_wraps_under_its_text() {
+    use crate::edit::Block;
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    for (words, rtl) in [("hello world ".repeat(8), false), ("שלום עולם ".repeat(8), true)] {
+        let item = format!("1. {}", words.trim_end());
+        let mut from_start = |block: Block| -> Vec<f32> {
+            let layout = ts.layout_blocks(&item, &[], &[block], &[], style, 2.0, Some(240.0), Alignment::Start);
+            layout
+                .lines()
+                .map(|l| {
+                    let m = l.metrics();
+                    if rtl { 240.0 - (m.inline_min_coord + m.offset + m.advance) } else { m.inline_min_coord + m.offset }
+                })
+                .collect()
+        };
+        let quote = from_start(Block::Quote)[0];
+        assert!(quote > 10.0, "{item:?}: a quote starts in from the side it reads from, by {quote}");
+        for level in 0..=2u8 {
+            let outside = from_start(Block::Hanging { marker: 3, level, quote: false });
+            let inside = from_start(Block::Hanging { marker: 3, level, quote: true });
+            assert!(outside.len() > 2 && inside.len() >= outside.len(), "{item:?} at level {level} wraps in and out of a quote: {outside:?} and {inside:?}");
+            for (i, (o, q)) in outside.iter().zip(&inside).enumerate() {
+                assert!((q - o - quote).abs() < 0.5, "{item:?} at level {level}: line {i} in a quote starts the quote's {quote} further in: {inside:?} against {outside:?}");
+            }
+        }
+    }
+}
