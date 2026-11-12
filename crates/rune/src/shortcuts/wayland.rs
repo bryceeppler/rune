@@ -291,6 +291,14 @@ mod tests {
         assert_eq!(delivered, [tries[3]], "the portal sends one press to every session bound to the trigger");
     }
     #[test]
+    fn a_session_the_portal_closed_has_nothing_left_to_close() {
+        let id = ShortcutId(5);
+        let mut sessions = Sessions::default();
+        sessions.bound(id, "ctrl+alt+n".parse().unwrap(), session_of(id));
+        assert_eq!(sessions.closed(session_of(id).as_str()), [id], "the portal closing it revokes it");
+        assert_eq!(sessions.session(id), None, "releasing it sends no Close that could only fail");
+    }
+    #[test]
     fn missing_portal_is_unsupported() {
         let fdo = |e| zbus::Error::FDO(Box::new(e));
         assert_eq!(dbus_error(fdo(fdo::Error::ServiceUnknown("portal".into()))), ShortcutError::Unsupported);

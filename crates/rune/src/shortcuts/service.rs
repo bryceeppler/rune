@@ -346,6 +346,21 @@ mod tests {
         assert_eq!(engine.register(third, chord), Err(ShortcutError::Conflict), "the new registration holds it");
     }
     #[test]
+    fn releasing_a_revoked_registration_reports_the_portals_close_error() {
+        struct Portal;
+        impl Backend for Portal {
+            fn register(&mut self, _: ShortcutId, _: &Shortcut) -> Result<(), ShortcutError> { Ok(()) }
+            fn unregister(&mut self, _: ShortcutId) -> Result<(), ShortcutError> { Err(ShortcutError::Backend("portal request timed out".into())) }
+        }
+        let id = ShortcutId(9101);
+        let statuses = Arc::<Statuses>::default();
+        let mut engine = Engine { title: "portal", headless: false, wayland: false, sink: Arc::new(|_, _| {}), statuses: statuses.clone(), native: Some(Box::new(Portal)), registrations: HashMap::new() };
+        engine.register(id, "ctrl+alt+shift+f18".parse().unwrap()).unwrap();
+        statuses.report(id, ShortcutStatus::Revoked);
+        assert_eq!(engine.unregister(id), Err(ShortcutError::Backend("portal request timed out".into())), "Close failing reaches the app as it does before a revocation");
+        assert!(engine.registrations.contains_key(&id), "the app can release it again");
+    }
+    #[test]
     fn mock_backend_errors_are_not_confused_with_conflicts() {
         struct Mock(ShortcutError);
         impl Backend for Mock {
