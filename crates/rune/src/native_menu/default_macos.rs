@@ -3,7 +3,7 @@
 //! installation order composes.
 use std::{cell::RefCell, collections::HashSet};
 use super::standard::Equivalent;
-use objc2::{rc::Retained, runtime::Sel, sel};
+use objc2::{class, msg_send_id, rc::Retained, runtime::{NSObject, NSObjectProtocol, Sel}, sel, ClassType};
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSProcessInfo, NSString};
 
@@ -54,7 +54,9 @@ unsafe fn add_app_items(app: &NSApplication, menu: &NSMenu) {
     // SAFETY: as `ensure`.
     unsafe {
         let mtm = MainThreadMarker::from(app);
-        let name = NSProcessInfo::processInfo().processName().to_string();
+        let process = NSProcessInfo::processInfo().processName().to_string();
+        let (display, bundle) = (info_string("CFBundleDisplayName"), info_string("CFBundleName"));
+        let name = super::standard::app_name(display.as_deref(), bundle.as_deref(), &process);
         let services = NSMenu::new(mtm);
         let services_item = item(mtm, "Services", None, "");
         services_item.setSubmenu(Some(&services));
@@ -72,6 +74,17 @@ unsafe fn add_app_items(app: &NSApplication, menu: &NSMenu) {
             item(mtm, &format!("Quit {name}"), Some(sel!(terminate:)), "q"),
         ] { menu.addItem(&entry); }
         app.setServicesMenu(Some(&services));
+    }
+}
+
+/// A string from the main bundle's Info.plist.
+fn info_string(key: &str) -> Option<String> {
+    // SAFETY: NSBundle reads on the main thread; a value that is not a string is skipped.
+    unsafe {
+        let bundle: Option<Retained<NSObject>> = msg_send_id![class!(NSBundle), mainBundle];
+        let value: Option<Retained<NSObject>> = msg_send_id![&*bundle?, objectForInfoDictionaryKey: &*NSString::from_str(key)];
+        let value = value.filter(|v| v.isKindOfClass(NSString::class()))?;
+        Some(Retained::cast::<NSString>(value).to_string())
     }
 }
 
@@ -110,6 +123,21 @@ pub(crate) fn add_standard(app: &NSApplication) {
             entry.setKeyEquivalentModifierMask(flags);
             entry.setTag(STANDARD);
             menu.addItem(&entry);
+        }
+        for appkit in &super::standard::APPKIT_ITEMS {
+            let menu = top(mtm, &root, appkit.menu);
+            let action = Sel::register(appkit.action);
+            let items: Vec<_> = (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)).collect();
+            if items.iter().any(|i| i.action() == Some(action)) { continue; }
+            let after = appkit.after.map(Sel::register).and_then(|after| items.iter().position(|i| i.action() == Some(after)));
+            let entry = item(mtm, appkit.title, Some(action), "");
+            match after {
+                Some(at) => menu.insertItem_atIndex(&entry, at as isize + 1),
+                None => {
+                    if appkit.separator_before && menu.numberOfItems() > 0 { menu.addItem(&NSMenuItem::separatorItem(mtm)); }
+                    menu.addItem(&entry);
+                }
+            }
         }
     }
     sync_standard(app);
@@ -178,6 +206,12 @@ pub(crate) fn add_top(mtm: MainThreadMarker, root: &NSMenu, title: &str) -> (Ret
         entry.setTitle(&NSString::from_str(title));
         entry.setSubmenu(Some(&menu));
         root.insertItem_atIndex(&entry, super::standard::top_index(title, &tops) as isize);
+        let app = NSApplication::sharedApplication(mtm);
+        match title {
+            "Window" => app.setWindowsMenu(Some(&menu)),
+            "Help" => app.setHelpMenu(Some(&menu)),
+            _ => {}
+        }
         (entry, menu)
     }
 }
@@ -187,7 +221,13 @@ pub(crate) fn add_top(mtm: MainThreadMarker, root: &NSMenu, title: &str) -> (Ret
 pub(crate) fn remove_top_if_empty(root: &NSMenu, top: &NSMenuItem) {
     // SAFETY: main thread; both are retained.
     unsafe {
-        if top.submenu().is_none_or(|m| m.numberOfItems() == 0) && root.indexOfItem(top) >= 0 { root.removeItem(top); }
+        let menu = top.submenu();
+        if menu.as_ref().is_some_and(|m| m.numberOfItems() > 0) || root.indexOfItem(top) < 0 { return; }
+        root.removeItem(top);
+        let Some(menu) = menu else { return };
+        let app = NSApplication::sharedApplication(MainThreadMarker::from(root));
+        if app.helpMenu().is_some_and(|m| std::ptr::eq(&*m, &*menu)) { app.setHelpMenu(None); }
+        if app.windowsMenu().is_some_and(|m| std::ptr::eq(&*m, &*menu)) { app.setWindowsMenu(None); }
     }
 }
 

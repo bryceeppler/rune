@@ -39,6 +39,29 @@ pub(crate) const ITEMS: [Standard; 8] = [
     item(Role::Close, "Window", "Close", "performClose:", 'w', 0x0d),
 ];
 
+/// A Window item AppKit answers itself, through the key window or the app, so it needs no
+/// key routing through Rune's view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AppKitItem {
+    pub menu: &'static str,
+    pub title: &'static str,
+    pub action: &'static str,
+    /// Goes right after the item with this action when the menu has it, else at the end.
+    pub after: Option<&'static str>,
+    pub separator_before: bool,
+}
+
+pub(crate) const APPKIT_ITEMS: [AppKitItem; 2] = [
+    AppKitItem { menu: "Window", title: "Zoom", action: "performZoom:", after: Some("performMiniaturize:"), separator_before: false },
+    AppKitItem { menu: "Window", title: "Bring All to Front", action: "arrangeInFront:", after: None, separator_before: true },
+];
+
+/// The name the app menu's items carry: the bundle's display name, else its name, else the
+/// process name, which is all an unbundled binary has.
+pub(crate) fn app_name<'a>(display: Option<&'a str>, bundle: Option<&'a str>, process: &'a str) -> &'a str {
+    [display, bundle].into_iter().flatten().find(|name| !name.trim().is_empty()).unwrap_or(process)
+}
+
 pub(crate) fn by_action(action: &str) -> Option<&'static Standard> {
     ITEMS.iter().find(|i| i.action == action)
 }
