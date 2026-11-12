@@ -61,7 +61,7 @@ pub use paragraphs::TextLayout;
 mod pill_chips;
 mod rich_layout;
 mod run;
-pub(crate) use pill_chips::{pill_chip_rects, pill_chips};
+pub(crate) use pill_chips::{pill_chip_rects, pill_chips, strong_direction};
 mod svg_path;
 mod tabs;
 mod trak;
