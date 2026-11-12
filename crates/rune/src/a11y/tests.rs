@@ -287,6 +287,42 @@ fn text_fields_expose_lines_caret_and_selection() {
 }
 
 #[test]
+fn a_reader_moving_onto_a_line_that_holds_only_a_checkbox_lands_on_that_line() {
+    use crate::{Block, Mark, MarkRange};
+    let mut edit = TextEdit::from_parts("- [ ] Oat milk\n- [ ] Eggs and bread", vec![
+        MarkRange::new(0..6, Mark::Pill("oat".into())),
+        MarkRange::new(15..21, Mark::Pill("eggs".into())),
+    ], Vec::new());
+    edit.set_blocks(vec![Block::Hanging { marker: 6, level: 0 }, Block::Hanging { marker: 6, level: 1 }]);
+    edit.focused = true;
+    let narrow = |s: &Field, _: &mut Cx<Field>| {
+        col().child(text_input(&s.edit, crate::TextStyle::new(15.5, 400.0)).key("note").w(20.0)
+            .pill_style(|_| crate::PillStyle::default()).on_edit(|s: &mut Field| &mut s.edit))
+    };
+    let mut rt = Runtime::new(Field { edit }, narrow, (400.0, 400.0), Env::new(true, 2.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_tree();
+    let note = tree.nodes.iter().find(|(_, n)| n.author_id() == Some("note")).unwrap().0;
+    let runs: Vec<_> = tree.nodes.iter().filter(|(_, n)| n.role() == Role::TextRun)
+        .map(|(id, n)| (*id, n.value().unwrap_or_default().len())).collect();
+    let mut before = 0;
+    let mut empty = 0;
+    for (run, len) in runs {
+        if len == 0 {
+            empty += 1;
+            let at = accesskit::TextPosition { node: run, character_index: 0 };
+            let request = ActionRequest { action: Ak::SetTextSelection, target_tree: TreeId::ROOT, target_node: note,
+                data: Some(ActionData::SetTextSelection(accesskit::TextSelection { anchor: at, focus: at })) };
+            assert!(rt.a11y_action(&request));
+            rt.frame(0.0);
+            assert_eq!(rt.state.edit.range(), (before, before), "the caret lands where the checkbox-only line sits");
+        }
+        before += len;
+    }
+    assert!(empty > 0, "a checkbox wider than the field leaves a line holding only it");
+}
+
+#[test]
 fn secure_fields_never_expose_their_text() {
     let edit = TextEdit::new("hunter2").secure();
     let mut rt = Runtime::new(Field { edit }, |s: &Field, _: &mut Cx<Field>| {
