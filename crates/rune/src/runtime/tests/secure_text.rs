@@ -803,3 +803,36 @@ fn hidden_multiline_pristine_composes_with_runtime_and_app_on_change() {
     rt.frame(0.0);
     assert_eq!(rt.state.secret.text, "n");
 }
+
+#[test]
+fn ctrl_k_empties_a_pristine_hidden_field_only_where_it_is_a_text_binding() {
+    use crate::{text_input, Key, KeyEvent, Mods, TextEdit, TextStyle};
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        col().size(240.0, 120.0)
+            .child(text_input(s, TextStyle::new(14.0, 400.0)).secure().key("secret").w(200.0).on_edit(|s: &mut TextEdit| s))
+    }
+    let macos = cfg!(target_os = "macos");
+    let ctrl_k = if macos {
+        KeyEvent { key: Key::Text("k".into()), mods: Mods { ctrl: true, ..Mods::default() } }
+    } else {
+        KeyEvent { key: Key::Command('k'), mods: Mods { cmd: true, ctrl: true, ..Mods::default() } }
+    };
+    let saved = "fictional-key\nline-two";
+    let mut edit = TextEdit::new(saved);
+    edit.focused = true;
+    let mut rt = Runtime::new(edit, view, (240.0, 120.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.key(ctrl_k.clone());
+    rt.frame(0.0);
+    if macos {
+        assert_eq!(rt.state.text, "", "AppKit's Ctrl-K empties a pristine hidden field, as its first deletion");
+    } else {
+        assert_eq!(rt.state.text, saved, "Ctrl+K is no text binding off macOS");
+        assert!(rt.state.is_pristine());
+    }
+    rt.paste("edited-key\nline-two");
+    rt.frame(0.0);
+    rt.key(ctrl_k);
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "edited-key\nline-two", "an edited hidden field keeps its caret at the end, where Ctrl-K has nothing after it");
+}

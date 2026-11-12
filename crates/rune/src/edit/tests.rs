@@ -218,13 +218,13 @@ fn hidden_multiline_pristine_replace_and_delete() {
     assert_eq!(e.text, "new-key\nline-2\nline-3");
 
     // 3. Deletions while pristine empty the whole value, then subsequent typing starts fresh.
+    let kill = cfg!(target_os = "macos").then(|| KeyEvent { key: Key::Text("k".into()), mods: Mods { ctrl: true, ..Mods::default() } });
     for del in [
         k(Key::Backspace),
         k(Key::Delete),
         KeyEvent { key: Key::Backspace, mods: Mods { cmd: true, ..Mods::default() } },
         KeyEvent { key: Key::Backspace, mods: Mods { alt: true, ..Mods::default() } },
-        KeyEvent { key: Key::Text("k".into()), mods: Mods { ctrl: true, ..Mods::default() } },
-    ] {
+    ].into_iter().chain(kill) {
         let mut e = TextEdit::new("existing-fictional-key\nline-two").secure();
         e.set_single_line(false);
         e.set_caret(crate::Caret::at(4));
