@@ -173,8 +173,9 @@ mod tests {
 
     #[test]
     fn the_app_menu_names_the_bundle_before_the_process() {
-        assert_eq!(app_name(Some("Nokto"), Some("Nokto"), "nokto"), "Nokto");
-        assert_eq!(app_name(None, Some("Nokto"), "nokto"), "Nokto");
+        assert_eq!(app_name(Some("Display"), Some("Bundle"), "process"), "Display");
+        assert_eq!(app_name(None, Some("Bundle"), "process"), "Bundle");
+        assert_eq!(app_name(Some(" "), Some("Bundle"), "process"), "Bundle", "a blank display name falls back");
         assert_eq!(app_name(Some(" "), Some(""), "nokto"), "nokto");
         assert_eq!(app_name(None, None, "nokto"), "nokto", "an unbundled binary keeps its process name");
     }

@@ -69,8 +69,6 @@ fn main() {
         assert!(std::ptr::eq(&*app.servicesMenu().unwrap(), &*services));
         assert!(!default_macos::is_winit_default(&app), "an app-owned menu bar gets no standard items");
 
-        // winit's default app menu, named after the process, takes the app's name; its other
-        // items keep theirs.
         app.setMainMenu(None);
         let winit_root = NSMenu::new(mtm);
         let winit_top = NSMenuItem::new(mtm);
