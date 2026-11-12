@@ -1,6 +1,7 @@
 //! Line breaking with paragraph indents, line caps and pills kept with their labels.
 
 use super::*;
+use std::ops::Range;
 
 /// Breaks `layout` into lines, each paragraph indented by its block from the side it reads from.
 /// A pill's chip that would end a line apart from its label, or run past the line's end, moves
@@ -44,11 +45,9 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
     let mut widths = vec![0.0; blocks.len()];
     let mut first_line = true;
     let mut para_idx = 0usize;
-    for line in layout.lines() {
-        let range = line.text_range();
-        // An emergency line that holds nothing, as a pill wider than the whole width leaves,
-        // spans no text, and Parley gives it an inverted range.
-        let holds_text = range.start <= range.end;
+    for (index, line) in layout.lines().enumerate() {
+        let range = line_bytes(layout, index);
+        let holds_text = !range.is_empty();
         if first_line
             && holds_text
             && let Some(&crate::edit::Block::Hanging { marker, .. }) = blocks.get(para_idx)
@@ -63,6 +62,17 @@ fn hang_widths(layout: &Layout<Ink>, blocks: &[crate::edit::Block]) -> Vec<f32> 
         }
     }
     widths
+}
+
+/// Line `index`'s bytes in `layout`. Parley gives a line that holds only an inline box, such as
+/// a pill wider than the whole width leaves, `usize::MAX..0`; it holds none, where the line
+/// before it ended.
+pub(super) fn line_bytes(layout: &Layout<Ink>, index: usize) -> Range<usize> {
+    let held = |i: usize| layout.get(i).map(|line| line.text_range()).filter(|r| r.start <= r.end);
+    held(index).unwrap_or_else(|| {
+        let at = (0..index).rev().find_map(held).map_or(0, |r| r.end);
+        at..at
+    })
 }
 
 /// How far from the start of `line` the text from byte `at` on starts, its left edge in a

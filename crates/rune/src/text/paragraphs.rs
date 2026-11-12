@@ -37,6 +37,7 @@ use parley::layout::Affinity;
 use super::*;
 use super::cursor::{cursor_from_point_in, drawn, line_for_offset, plain, step_on_line};
 use super::layout_cache::fresh;
+use super::line_break::line_bytes;
 
 /// A text's lines: one Parley layout, or one per hard paragraph stacked top to bottom.
 #[derive(Clone)]
@@ -273,6 +274,7 @@ impl<'a> Piece<'a> {
 #[derive(Clone)]
 pub(crate) struct TextLine<'a> {
     line: parley::Line<'a, Ink>,
+    bytes: Range<usize>,
     start: usize,
     y: f32,
     inline_max: Option<f32>,
@@ -293,13 +295,9 @@ impl<'a> TextLine<'a> {
         m
     }
 
-    /// Its bytes in the text; for a line holding only an inline box, Parley's `usize::MAX..0`.
+    /// Its bytes in the text: none for a line holding only an inline box, where the line before it ended.
     pub(crate) fn text_range(&self) -> Range<usize> {
-        let r = self.line.text_range();
-        if r.start > r.end {
-            return r;
-        }
-        r.start + self.start..r.end + self.start
+        self.bytes.start + self.start..self.bytes.end + self.start
     }
 
     pub(crate) fn break_reason(&self) -> parley::BreakReason { self.line.break_reason() }
@@ -391,7 +389,7 @@ impl TextLayout {
 
     pub(crate) fn lines(&self) -> impl DoubleEndedIterator<Item = TextLine<'_>> + '_ {
         let inline_max = self.unwrapped_width();
-        self.pieces().flat_map(move |p| (0..p.lines).filter_map(move |i| Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max, rtl: p.layout.is_rtl() })))
+        self.pieces().flat_map(move |p| (0..p.lines).filter_map(move |i| Some(TextLine { line: p.layout.get(i)?, bytes: line_bytes(p.layout, i), start: p.start, y: p.y, inline_max, rtl: p.layout.is_rtl() })))
     }
 
     fn unwrapped_width(&self) -> Option<f32> {
@@ -403,11 +401,11 @@ impl TextLayout {
 
     pub(crate) fn line(&self, index: usize) -> Option<TextLine<'_>> {
         match &self.0 {
-            Laid::Whole(l) => Some(TextLine { line: l.get(index)?, start: 0, y: 0.0, inline_max: None, rtl: l.is_rtl() }),
+            Laid::Whole(l) => Some(TextLine { line: l.get(index)?, bytes: line_bytes(l, index), start: 0, y: 0.0, inline_max: None, rtl: l.is_rtl() }),
             Laid::Stacked(s) => {
                 let p = s.para_of_line(index);
                 let i = index.checked_sub(p.line).filter(|&i| i < p.lines)?;
-                Some(TextLine { line: p.layout.get(i)?, start: p.start, y: p.y, inline_max: s.unwrapped_width, rtl: p.layout.is_rtl() })
+                Some(TextLine { line: p.layout.get(i)?, bytes: line_bytes(&p.layout, i), start: p.start, y: p.y, inline_max: s.unwrapped_width, rtl: p.layout.is_rtl() })
             }
         }
     }
