@@ -136,6 +136,18 @@ impl<S: 'static> Runtime<S> {
         self.ime_in(session, ev);
     }
 
+    /// Brings `document` to the focused field as the platform's text input client reports it.
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) fn sync_text_input(&self, document: &mut Option<crate::platform::text_input::Document>) {
+        *document = None;
+    }
+
+    /// The input method's next event replaces `replacement` in the focused field.
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) fn ime_replace_from_platform(&mut self, replacement: crate::platform::text_input::Replacement) {
+        let _ = replacement;
+    }
+
     /// The event loop is about to wait. macOS and Windows answer a reset while it runs, so
     /// their answer has arrived by the second wait after it, `Disabled` or not.
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]

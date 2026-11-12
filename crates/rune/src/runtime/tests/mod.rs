@@ -13,6 +13,7 @@ mod glyph_replay;
 mod group_opacity;
 mod id_pruning;
 mod ime_focus;
+mod ime_replace;
 mod input_clipboard;
 mod modal_keys;
 mod pill_press;

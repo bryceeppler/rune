@@ -21,6 +21,8 @@ pub(crate) mod quit;
 pub(crate) mod ready_signal;
 pub(crate) mod reopen;
 pub(crate) mod scroll_bars;
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) mod text_input;
 pub(crate) mod title_bar;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
