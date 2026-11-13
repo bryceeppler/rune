@@ -139,8 +139,6 @@ pub(crate) trait AnyHost {
     fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { None }
     /// Forgets the quit: a late answer changes nothing.
     fn withdraw_quit(&mut self) {}
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-    fn typed(&mut self, _text: String) {}
 }
 
 /// Builds every host, attaching its shortcut and menu guards, before any resumes: a window's
@@ -965,7 +963,7 @@ impl<S: 'static> Host<S> {
         #[cfg(target_os = "windows")]
         cloak.extend(Instant::now() + win::READY_FALLBACK);
         #[cfg(target_os = "windows")]
-        let native = Native { cloak, title_bar: None };
+        let native = Native { cloak };
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let native = Native::default();
         self.win = Some(Win {

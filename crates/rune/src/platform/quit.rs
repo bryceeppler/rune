@@ -215,11 +215,8 @@ mod win {
         unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, 0) };
     }
 
-    /// Makes a close message to winit's hidden event window ask the app to quit. That window
-    /// carries every wake an `EventLoopProxy` sends, quits included, and its window procedure
-    /// lets `DefWindowProc` destroy it on `WM_CLOSE`, which `taskkill` without `/F` sends to
-    /// every top-level window and `Process.CloseMainWindow()` sends to it while the app's own
-    /// windows are minimized. Call on the event loop's thread once winit has built the loop.
+    // winit's hidden event window carries every `EventLoopProxy` wake, quits included, and lets
+    // `DefWindowProc` destroy it on `WM_CLOSE`.
     pub(crate) fn keep_event_window() {
         // SAFETY: `event_window` only reads the window it is handed.
         unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(event_window), 0) };

@@ -1,7 +1,5 @@
-//! Windows draws a window's title bar from the system's light or dark setting, not the window's.
-//! Rune paints it in the colour the window shows behind its content, dark where white text
-//! reads better on that colour. winit sets the system's mode again on every `WM_SETTINGCHANGE`,
-//! so the window's own mode goes back on after each one.
+//! Windows draws a title bar from the system's light or dark setting, and winit sets that
+//! setting again on every `WM_SETTINGCHANGE`.
 
 use crate::Color;
 
@@ -27,6 +25,8 @@ pub(crate) use win::show;
 
 #[cfg(target_os = "windows")]
 mod win {
+    use std::cell::RefCell;
+
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::Graphics::Dwm::{DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
@@ -37,12 +37,21 @@ mod win {
     const SUBCLASS: usize = 0x5449_544c;
     const DARK: usize = 1 << 24;
 
+    thread_local! {
+        static SHOWN: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+    }
+
     // comctl32 without a version 6 manifest exports no `GetWindowSubclass` by name, so the
     // subclass keeps the bar in its own data, which setting the subclass again replaces.
     pub(crate) fn show(window: &winit::window::Window, bar: TitleBar) {
         let Some(hwnd) = crate::platform::win32::hwnd(window) else { return };
         let [r, g, b] = bar.caption;
         let kept = usize::from(r) | usize::from(g) << 8 | usize::from(b) << 16 | if bar.dark { DARK } else { 0 };
+        let changed = SHOWN.with_borrow_mut(|shown| match shown.iter_mut().find(|(window, _)| *window == hwnd as usize) {
+            Some((_, was)) => std::mem::replace(was, kept) != kept,
+            None => { shown.push((hwnd as usize, kept)); true }
+        });
+        if !changed { return; }
         // SAFETY: the subclass's data is a plain value, and the subclass is removed at WM_NCDESTROY.
         unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, kept) };
         apply(hwnd, kept);
@@ -59,8 +68,11 @@ mod win {
     }
 
     unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, kept: usize) -> LRESULT {
-        // SAFETY: removes this subclass from the window it was set on.
-        if message == WM_NCDESTROY { unsafe { RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS) }; }
+        if message == WM_NCDESTROY {
+            // SAFETY: removes this subclass from the window it was set on.
+            unsafe { RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS) };
+            SHOWN.with_borrow_mut(|shown| shown.retain(|(window, _)| *window != hwnd as usize));
+        }
         // SAFETY: forwards to the next window procedure.
         let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
         if matches!(message, WM_SETTINGCHANGE | WM_THEMECHANGED) { apply(hwnd, kept); }

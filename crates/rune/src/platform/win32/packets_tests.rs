@@ -1,25 +1,42 @@
-use super::Packets;
+use super::Typing;
 
-fn typed(units: impl IntoIterator<Item = u16>) -> Vec<String> {
-    let mut packets = Packets::default();
-    units.into_iter().map(|unit| packets.unit(unit)).collect()
+fn typed(steps: &[(usize, u16)]) -> Vec<(usize, String)> {
+    let mut typing = Typing::default();
+    steps.iter().flat_map(|&(window, unit)| { typing.unit(window, unit); typing.take() }).collect()
 }
+
+fn text(window: usize, text: &str) -> (usize, String) { (window, text.to_owned()) }
+
+const HIGH: u16 = 0xd83d;
+const LOW: u16 = 0xde00;
 
 #[test]
 fn each_unit_of_the_basic_plane_types_itself() {
-    assert_eq!(typed("aé€".encode_utf16()), ["a", "é", "€"]);
+    assert_eq!(typed(&[(1, u16::from(b'a')), (1, 0xe9), (1, 0x20ac)]), [text(1, "a"), text(1, "é"), text(1, "€")]);
 }
 
 #[test]
 fn a_surrogate_pair_types_its_character_once_both_halves_arrive() {
-    assert_eq!(typed("😀x🎉".encode_utf16()), ["", "😀", "x", "", "🎉"]);
+    assert_eq!(typed(&[(1, HIGH), (1, LOW), (1, u16::from(b'x'))]), [text(1, "😀"), text(1, "x")]);
 }
 
 #[test]
-fn a_half_without_its_partner_types_a_replacement_character() {
-    let (high, low) = (0xd83d, 0xde00);
-    assert_eq!(typed([high, u16::from(b'a')]), ["", "\u{fffd}a"]);
-    assert_eq!(typed([low, high, high, low]), ["\u{fffd}", "", "\u{fffd}", "😀"]);
+fn a_half_without_its_partner_types_a_replacement_character_in_its_own_window() {
+    assert_eq!(typed(&[(1, HIGH), (1, u16::from(b'a'))]), [text(1, "\u{fffd}a")]);
+    assert_eq!(typed(&[(1, LOW), (1, HIGH), (1, HIGH), (1, LOW)]), [text(1, "\u{fffd}"), text(1, "\u{fffd}"), text(1, "😀")]);
+    assert_eq!(typed(&[(1, HIGH), (2, LOW)]), [text(1, "\u{fffd}"), text(2, "\u{fffd}")]);
+}
+
+#[test]
+fn ending_a_window_types_only_its_own_waiting_half() {
+    let mut typing = Typing::default();
+    typing.unit(1, HIGH);
+    typing.end_in(2);
+    assert_eq!(typing.take(), []);
+    typing.end_in(1);
+    assert_eq!(typing.take(), [text(1, "\u{fffd}")]);
+    typing.end_in(1);
+    assert_eq!(typing.take(), []);
 }
 
 mod hook {
@@ -51,8 +68,10 @@ mod hook {
     }
 
     impl Drop for Window {
-        // SAFETY: the window this test created.
-        fn drop(&mut self) { unsafe { DestroyWindow(self.0) }; }
+        fn drop(&mut self) {
+            // SAFETY: the window this test created.
+            unsafe { DestroyWindow(self.0) };
+        }
     }
 
     fn message(hwnd: usize, message: u32, wparam: usize, lparam: isize) -> MSG {
@@ -87,8 +106,7 @@ mod hook {
         seen.take()
     }
 
-    const HIGH: u16 = 0xd83d;
-    const LOW: u16 = 0xde00;
+    use super::{HIGH, LOW};
 
     #[test]
     fn a_half_pair_split_across_two_windows_types_a_replacement_in_each() {

@@ -48,15 +48,13 @@ impl<T: 'static> AnyHost for Overlay<T> {
     }
 
     fn owns(&self, id: WindowId) -> bool {
-        let window = match self.live.as_ref().map(|l| &l.backing).or(self.parked.as_ref()) {
-            Some(Backing::Window(w)) => Some(w),
-            _ => None,
-        };
-        window.is_some_and(|w| w.id() == id)
+        self.window_id() == Some(id)
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         if !matches!(event, WindowEvent::RedrawRequested) { self.meter.waited(); }
+        #[cfg(target_os = "windows")]
+        self.typed(_id, matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested | WindowEvent::Destroyed));
         #[cfg(target_os = "macos")]
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(_))
             && let Some(live) = &mut self.live && let Some(pacing) = &mut live.pacing {
@@ -160,6 +158,8 @@ impl<T: 'static> AnyHost for Overlay<T> {
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) -> bool {
         #[cfg(target_os = "macos")]
         self.fn_key();
+        #[cfg(target_os = "windows")]
+        if let Some(id) = self.window_id() { self.typed(id, false); }
         // A window switched the font families (`Tx::set_font_families`).
         self.dirty |= self.rt.follow_font_families();
         // A fading-out overlay takes no input; it only draws its exit.
@@ -210,12 +210,6 @@ impl<T: 'static> AnyHost for Overlay<T> {
     }
 
     fn cancel_menus(&mut self) { self.popup.cancel(&mut self.rt); }
-
-    fn typed(&mut self, text: String) {
-        if self.options.keys != KeyPolicy::OnDemand { return; }
-        self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });
-        self.dirty = true;
-    }
 }
 
 impl<T: 'static> Overlay<T> {
@@ -262,5 +256,22 @@ impl<T: 'static> PendingOverlay for Overlay<T> {
         }
         // Requests made before the loop existed.
         wake();
+    }
+}
+
+impl<T: 'static> Overlay<T> {
+    fn window_id(&self) -> Option<WindowId> {
+        match self.live.as_ref().map(|l| &l.backing).or(self.parked.as_ref()) {
+            Some(Backing::Window(w)) => Some(w.id()),
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn typed(&mut self, id: WindowId, ending: bool) {
+        let Some(key) = crate::platform::win32::packets::arrived(id, ending) else { return };
+        if self.options.keys != KeyPolicy::OnDemand { return; }
+        self.rt.key(key);
+        self.dirty = true;
     }
 }

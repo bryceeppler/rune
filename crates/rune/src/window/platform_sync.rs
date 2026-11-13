@@ -20,10 +20,7 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     clipboard.flush(rt);
     if let Some(a) = rt.ime_area { set_ime_area(l, a); }
     #[cfg(target_os = "windows")]
-    if let Some(bar) = rt.window_fill().map(crate::platform::title_bar::TitleBar::of).filter(|bar| l.native.title_bar != Some(*bar)) {
-        crate::platform::title_bar::show(&l.window, bar);
-        l.native.title_bar = Some(bar);
-    }
+    if let Some(fill) = rt.window_fill() { crate::platform::title_bar::show(&l.window, crate::platform::title_bar::TitleBar::of(fill)); }
 }
 
 /// Turns the window's input method off, discarding the composition the runtime finished, then

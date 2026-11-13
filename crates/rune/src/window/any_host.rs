@@ -33,12 +33,6 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
 
-    fn typed(&mut self, text: String) {
-        let Some(l) = &self.win else { return };
-        self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });
-        l.window.request_redraw();
-    }
-
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.win.as_ref().filter(|w| w.visible);
         let minimized = shown.is_some_and(|w| w.window.is_minimized() == Some(true));
@@ -172,6 +166,8 @@ impl<S: 'static> AnyHost for Host<S> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) -> bool {
         #[cfg(target_os = "macos")]
         self.fn_key();
+        #[cfg(target_os = "windows")]
+        if let Some(id) = self.win.as_ref().map(|l| l.window.id()) { self.typed(id, false); }
         self.flush_files(event_loop);
         if let Some(l) = &mut self.win { super::platform_sync::poll_ime(l, &mut self.rt); }
         // Another window switched the font families (`Tx::set_font_families`).
@@ -200,7 +196,18 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if !matches!(event, WindowEvent::RedrawRequested) { self.meter.waited(); }
+        #[cfg(target_os = "windows")]
+        self.typed(id, matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested | WindowEvent::Destroyed));
         self.handle_window_event(event_loop, id, event);
         self.publish();
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl<S: 'static> Host<S> {
+    fn typed(&mut self, id: WindowId, ending: bool) {
+        let Some(key) = crate::platform::win32::packets::arrived(id, ending) else { return };
+        self.rt.key(key);
+        if let Some(l) = &self.win { l.window.request_redraw(); }
     }
 }
