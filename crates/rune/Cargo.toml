@@ -252,6 +252,10 @@ name = "unicode_input_windows"
 harness = false
 
 [[test]]
+name = "title_bar_windows"
+harness = false
+
+[[test]]
 name = "secondary_window"
 harness = false
 
