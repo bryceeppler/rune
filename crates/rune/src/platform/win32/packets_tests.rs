@@ -64,6 +64,7 @@ mod hook {
     impl Window {
         fn new() -> Window {
             let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            // SAFETY: the class name is NUL-terminated and outlives the call, and `Drop` destroys the window.
             let hwnd = unsafe { CreateWindowExW(0, class.as_ptr(), std::ptr::null(), 0, 0, 0, 0, 0, HWND_MESSAGE, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
             assert!(!hwnd.is_null(), "a message-only window");
             Window(hwnd)
@@ -72,6 +73,7 @@ mod hook {
 
     impl Drop for Window {
         fn drop(&mut self) {
+            // SAFETY: this thread created the window, and drop destroys it once.
             unsafe { DestroyWindow(self.0) };
         }
     }
@@ -81,7 +83,9 @@ mod hook {
     }
 
     fn drain(hwnd: usize) {
+        // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
         let mut left: MSG = unsafe { std::mem::zeroed() };
+        // SAFETY: `left` is a valid `MSG` to fill, and the window belongs to this thread.
         while unsafe { PeekMessageW(&mut left, hwnd as HWND, 0, 0, PM_REMOVE) } != 0 {}
     }
 
@@ -93,6 +97,7 @@ mod hook {
         for step in steps {
             match *step {
                 Step::Packet(hwnd, unit, repeat) => {
+                    // SAFETY: PostMessageW copies its arguments, and the window belongs to this thread.
                     unsafe { PostMessageW(hwnd as HWND, WM_CHAR, unit as usize, repeat) };
                     send(message(hwnd, WM_KEYDOWN, VK_PACKET as usize, 1));
                     send(message(hwnd, WM_KEYUP, VK_PACKET as usize, 0xc000_0001_u32 as isize));
@@ -175,6 +180,7 @@ mod hook {
         let window = Window::new();
         let w = window.0 as usize;
         let mut hook = super::super::hook(super::super::arrive);
+        // SAFETY: PostMessageW copies its arguments, and the window belongs to this thread.
         unsafe { PostMessageW(window.0, WM_CHAR, usize::from(b'a'), 1) };
         let packet = message(w, WM_KEYDOWN, VK_PACKET as usize, 1);
         assert!(hook((&raw const packet).cast()), "the hook takes the packet");

@@ -69,10 +69,13 @@ fn ends_typing(message: u32) -> bool {
 
 pub(crate) fn hook(mut typed: impl FnMut(HWND, String) + 'static) -> impl FnMut(*const c_void) -> bool + 'static {
     move |msg| {
+        // SAFETY: winit hands the hook a pointer to the `MSG` it just took from the queue, valid for this call.
         let msg = unsafe { &*msg.cast::<MSG>() };
         let packet = msg.wParam == VK_PACKET as usize && matches!(msg.message, WM_KEYDOWN | WM_KEYUP);
         if packet && msg.message == WM_KEYDOWN {
+            // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
             let mut posted: MSG = unsafe { std::mem::zeroed() };
+            // SAFETY: `msg` is a key message taken on this thread, and `posted` is a valid `MSG` for PeekMessageW to fill.
             let translated = unsafe {
                 TranslateMessage(msg);
                 PeekMessageW(&mut posted, msg.hwnd, WM_CHAR, WM_CHAR, PM_REMOVE) != 0

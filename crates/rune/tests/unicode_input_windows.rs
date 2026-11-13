@@ -74,8 +74,10 @@ mod win {
 
     fn point_at(hwnd: HWND, side: Side) -> INPUT {
         let mut client = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        // SAFETY: `client` is a valid RECT to fill.
         unsafe { GetClientRect(hwnd, &mut client) };
         let mut at = POINT { x: client.right * if side == Side::Left { 1 } else { 3 } / 4, y: client.bottom * 3 / 4 };
+        // SAFETY: `at` is a valid POINT to convert in place, and the metrics take no pointers.
         let (vx, vy, vw, vh) = unsafe {
             ClientToScreen(hwnd, &mut at);
             (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN))
@@ -88,6 +90,7 @@ mod win {
     unsafe extern "system" fn collect(hwnd: HWND, found: LPARAM) -> i32 {
         let mut pid = 0;
         let mut class = [0u16; 64];
+        // SAFETY: `found` is the `Vec` that `event_window` lends for the enumeration, and the length passed bounds GetClassNameW's write.
         unsafe {
             GetWindowThreadProcessId(hwnd, &mut pid);
             let len = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
@@ -100,6 +103,7 @@ mod win {
 
     fn event_window() -> HWND {
         let mut found = Vec::<usize>::new();
+        // SAFETY: `collect` has the callback's signature and only pushes into `found`, which outlives the call.
         unsafe { EnumWindows(Some(collect), &mut found as *mut Vec<usize> as LPARAM) };
         assert_eq!(found.len(), 1, "winit's one event window");
         found[0] as HWND
@@ -136,8 +140,10 @@ mod win {
                     }).expect("window handle"));
                 });
                 let hwnd = rx.recv_timeout(Duration::from_secs(5)).expect("hwnd") as HWND;
+                // SAFETY: GetForegroundWindow takes no arguments.
                 wait("the window to come to the front", || (unsafe { GetForegroundWindow() } == hwnd).then_some(()));
                 let send = |inputs: Vec<INPUT>| {
+                    // SAFETY: `inputs` holds initialised INPUTs, and its length and element size are the ones passed.
                     let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
                     assert_eq!(sent as usize, inputs.len(), "SendInput took every key");
                 };
@@ -160,10 +166,12 @@ mod win {
                 field(TYPED);
                 send([units(HIGH), vec![point_at(hwnd, Side::Left)]].concat());
                 pointer(Side::Left);
+                // SAFETY: PostMessageW copies its arguments, and the window belongs to this process.
                 unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
                 wait("the close request to see the field", || CLOSING.lock().unwrap().clone());
                 send([unicode("c"), vec![point_at(hwnd, Side::Right)]].concat());
                 pointer(Side::Right);
+                // SAFETY: PostMessageW copies its arguments, and the window belongs to this process.
                 unsafe { PostMessageW(event_window(), WM_CLOSE, 0, 0) };
             });
             if run.is_err() {

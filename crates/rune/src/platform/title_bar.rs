@@ -52,6 +52,7 @@ mod win {
             None => { shown.push((hwnd as usize, kept)); true }
         });
         if !changed { return; }
+        // SAFETY: the subclass data is a packed value, not a pointer, and `subclass` removes itself at WM_NCDESTROY.
         unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, kept) };
         apply(hwnd, kept);
     }
@@ -59,6 +60,7 @@ mod win {
     fn apply(hwnd: HWND, kept: usize) {
         let dark = i32::from(kept & DARK != 0);
         let caption = (kept & 0xff_ffff) as u32;
+        // SAFETY: each attribute is four bytes read from a local that lives through the call.
         unsafe {
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, (&raw const dark).cast(), 4);
             DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR as u32, (&raw const caption).cast(), 4);
@@ -67,9 +69,11 @@ mod win {
 
     unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, kept: usize) -> LRESULT {
         if message == WM_NCDESTROY {
+            // SAFETY: `hwnd` carries this subclass, and nothing calls it after the window is destroyed.
             unsafe { RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS) };
             SHOWN.with_borrow_mut(|shown| shown.retain(|(window, _)| *window != hwnd as usize));
         }
+        // SAFETY: the arguments are the message this subclass procedure was called with, for its own window.
         let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
         if matches!(message, WM_SETTINGCHANGE | WM_THEMECHANGED) { apply(hwnd, kept); }
         result
