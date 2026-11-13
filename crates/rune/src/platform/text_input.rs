@@ -46,6 +46,7 @@ pub(crate) fn digest(text: &str) -> u64 {
 }
 
 impl Document {
+    #[cfg(test)]
     pub(crate) fn new(text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) -> Document {
         let mut document = Document::default();
         document.refresh(text, selection, preedit, &Weak::new());
@@ -189,11 +190,22 @@ pub(crate) struct Geometry {
 
 impl Geometry {
     pub(crate) fn first_rect(&self, document: &Document, wanted: Utf16Range) -> Option<([f32; 4], Utf16Range)> {
-        let caret = self.layout.caret_box(document.selection.start, parley::layout::Affinity::Downstream, 1.0);
+        let (bytes, length) = document.composed_bytes(wanted)?;
+        if length != self.content { return None; }
+        let boxes = self.layout.range_boxes(bytes.start, bytes.end, false);
+        let (rect, covered) = match boxes.first() {
+            Some(&(_, line)) => {
+                let end = self.layout.line(line).map_or(bytes.end, |l| l.text_range().end).clamp(bytes.start, bytes.end);
+                let rect = boxes.iter().filter(|(_, l)| *l == line).map(|(bb, _)| *bb)
+                    .reduce(|a, b| parley::BoundingBox::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1)))?;
+                (rect, bytes.start..end)
+            }
+            None => (self.layout.caret_box(bytes.start, parley::layout::Affinity::Downstream, 1.0), bytes.start..bytes.start),
+        };
         let at = |x: f64, y: f64| [(self.origin[0] + x as f32 * self.scale) / self.pixels, (self.origin[1] + y as f32 * self.scale) / self.pixels];
-        let [x, y] = at(caret.x0, caret.y0);
-        let [x1, y1] = at(caret.x1, caret.y1);
-        Some(([x, y, x1 - x, y1 - y], document.substring(wanted)?.1))
+        let [x, y] = at(rect.x0, rect.y0);
+        let [x1, y1] = at(rect.x1, rect.y1);
+        Some(([x, y, x1 - x, y1 - y], document.composed_units(covered)))
     }
 }
 
@@ -220,7 +232,9 @@ impl Registration {
 }
 
 impl Drop for Registration {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        let _ = CLIENTS.try_with(|c| c.borrow_mut().remove(&self.0));
+    }
 }
 
 pub(crate) fn with_client<R>(key: usize, f: impl FnOnce(&mut Client) -> R) -> Option<R> {
