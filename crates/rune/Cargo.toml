@@ -248,6 +248,10 @@ name = "hidden_window_close_windows"
 harness = false
 
 [[test]]
+name = "unicode_input_windows"
+harness = false
+
+[[test]]
 name = "secondary_window"
 harness = false
 
