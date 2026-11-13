@@ -231,3 +231,19 @@ fn the_first_rect_of_part_of_a_character_covers_the_whole_character() {
     let (accent, covered) = rt.text_input_rect(1..2).expect("the field's geometry");
     assert_eq!((accent, covered), (whole, 0..2));
 }
+
+#[test]
+fn the_first_rect_at_a_caret_clicked_to_the_end_of_a_wrapped_line_stays_on_that_line() {
+    let text = "word ".repeat(60);
+    let mut rt = field(&text, 0..0);
+    rt.pointer_down(399.0, 12.5);
+    rt.pointer_up(399.0, 12.5);
+    rt.frame(0.0);
+    let byte = rt.state.selection().focus.byte;
+    let at = text[..byte].encode_utf16().count();
+    let caret = rt.ime_area.expect("the drawn caret");
+    assert_eq!(caret[1], 0.0, "the click put the caret at the end of the first line");
+    let (rect, covered) = rt.text_input_rect(at..at).expect("the field's geometry");
+    assert_eq!(covered, at..at);
+    assert!((rect[0] - caret[0]).abs() < 0.5 && (rect[1] - caret[1]).abs() < 0.5, "the insertion point is where the caret is drawn: {rect:?} vs {caret:?}");
+}
