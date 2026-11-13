@@ -26,6 +26,8 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn ask_quit(&mut self) -> crate::CloseAnswer {
         if !self.started || self.finished { return crate::CloseAnswer::Proceed; }
+        #[cfg(target_os = "windows")]
+        if let Some(id) = self.win.as_ref().map(|l| l.window.id()) { return crate::platform::win32::packets::ask_quit(&mut self.rt, id); }
         self.rt.request_close(crate::CloseKind::Quit)
     }
 

@@ -46,14 +46,18 @@ mod hook {
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_PACKET, VK_X};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, HWND_MESSAGE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, WM_CHAR, WM_KEYDOWN,
-        WM_KEYUP, WM_LBUTTONDOWN,
+        CreateWindowExW, DestroyWindow, HWND_MESSAGE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, WM_CHAR,
+        WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
     };
+    use winit::window::WindowId;
+
+    use crate::runtime::{Cx, Env, Runtime};
+    use crate::{CloseKind, CloseRequest, Tx};
 
     #[derive(Debug, PartialEq)]
     enum Seen { Typed(usize, String), Passed(u32) }
 
-    enum Step { Packet(usize, u16, isize), Key(usize, u16), Click(usize) }
+    enum Step { Packet(usize, u16, isize), Key(usize, u16), Click(usize), Other(usize, u32) }
 
     struct Window(HWND);
 
@@ -101,6 +105,7 @@ mod hook {
                 }
                 Step::Key(hwnd, vk) => send(message(hwnd, WM_KEYDOWN, vk as usize, 1)),
                 Step::Click(hwnd) => send(message(hwnd, WM_LBUTTONDOWN, 1, 0)),
+                Step::Other(hwnd, other) => send(message(hwnd, other, 0, 0)),
             }
         }
         seen.take()
@@ -143,5 +148,50 @@ mod hook {
         let window = Window::new();
         let w = window.0 as usize;
         assert_eq!(feed(&[Step::Packet(w, u16::from(b'a'), 3)]), [Seen::Typed(w, "aaa".into())]);
+    }
+
+    #[test]
+    fn a_lone_half_before_input_method_messages_types_its_replacement_before_them() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        let ime = [WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION];
+        assert_eq!(
+            feed(&[Step::Packet(w, HIGH, 1), Step::Other(w, ime[0]), Step::Other(w, ime[1]), Step::Other(w, ime[2]), Step::Packet(w, LOW, 1)]),
+            [
+                Seen::Typed(w, "\u{fffd}".into()),
+                Seen::Passed(ime[0]),
+                Seen::Passed(ime[1]),
+                Seen::Passed(ime[2]),
+                Seen::Typed(w, "\u{fffd}".into()),
+            ],
+        );
+    }
+
+    #[derive(Default)]
+    struct Note { text: String, saved: Option<String> }
+
+    fn save(note: &mut Note, request: CloseRequest, _: &mut Tx) {
+        note.saved = Some(note.text.clone());
+        request.proceed();
+    }
+
+    #[test]
+    fn a_window_asked_to_quit_right_after_a_packet_saves_the_packets_text() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        let mut hook = super::super::hook(super::super::arrive);
+        // SAFETY: posts to a window of this test, as TranslateMessage posts a packet's character.
+        unsafe { PostMessageW(window.0, WM_CHAR, usize::from(b'a'), 1) };
+        let packet = message(w, WM_KEYDOWN, VK_PACKET as usize, 1);
+        assert!(hook((&raw const packet).cast()), "the hook takes the packet");
+        drain(w);
+        let mut rt = Runtime::new(Note::default(), |_: &Note, _: &mut Cx<Note>| crate::el::el(), (100.0, 100.0), Env::default());
+        rt.on_close_request(save);
+        rt.on_key = Some(|note, key, _| { if let crate::Key::Text(text) = &key.key { note.text.push_str(text) } true });
+        rt.frame(0.0);
+        super::super::ask_quit(&mut rt, WindowId::from(w as u64));
+        rt.frame(1.0);
+        assert_eq!(rt.state.saved.as_deref(), Some("a"), "the quit's save holds the text typed before it");
+        rt.withdraw_close(CloseKind::Quit);
     }
 }

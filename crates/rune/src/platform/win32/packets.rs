@@ -90,6 +90,10 @@ pub(crate) fn hook(mut typed: impl FnMut(HWND, String) + 'static) -> impl FnMut(
     }
 }
 
+pub(crate) fn ask_quit<S: 'static>(rt: &mut crate::runtime::Runtime<S>, _window: WindowId) -> crate::CloseAnswer {
+    rt.request_close(crate::CloseKind::Quit)
+}
+
 pub(crate) fn arrive(window: HWND, text: String) {
     ARRIVED.with_borrow_mut(|arrived| arrived.push((window as usize, text)));
 }
