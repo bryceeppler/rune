@@ -139,6 +139,8 @@ pub(crate) trait AnyHost {
     fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { None }
     /// Forgets the quit: a late answer changes nothing.
     fn withdraw_quit(&mut self) {}
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn typed(&mut self, _text: String) {}
 }
 
 /// Builds every host, attaching its shortcut and menu guards, before any resumes: a window's

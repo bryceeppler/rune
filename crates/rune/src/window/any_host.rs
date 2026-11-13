@@ -11,16 +11,12 @@ impl<S: 'static> AnyHost for Host<S> {
     fn terminate(&mut self) {
         // Once: a window that already closed ran its hook then.
         if self.finished || !self.closes() { return; }
-        #[cfg(target_os = "windows")]
-        self.take_typed(true);
         self.finished = true;
         // Input still queued reaches the app before its last save.
         if self.rt.has_pending_input() { self.rt.hidden_timer_frame(); }
         self.close_hook();
         self.popup.cancel(&mut self.rt);
         self.file_dialog.cancel(&mut self.rt);
-        #[cfg(target_os = "windows")]
-        if let Some(w) = &self.win { crate::platform::win32::packets::retire(w.window.id()); }
     }
 
     fn cancel_menus(&mut self) {
@@ -30,18 +26,18 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn ask_quit(&mut self) -> crate::CloseAnswer {
         if !self.started || self.finished { return crate::CloseAnswer::Proceed; }
-        #[cfg(target_os = "windows")]
-        if let Some(id) = self.win.as_ref().map(|l| l.window.id()) {
-            let answer = crate::platform::win32::packets::ask_quit(&mut self.rt, id);
-            if answer == crate::CloseAnswer::Pending && let Some(l) = &self.win { l.window.request_redraw(); }
-            return answer;
-        }
         self.rt.request_close(crate::CloseKind::Quit)
     }
 
-    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { self.settle_close(crate::CloseKind::Quit) }
+    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { self.rt.settle_close(crate::CloseKind::Quit) }
 
     fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
+
+    fn typed(&mut self, text: String) {
+        let Some(l) = &self.win else { return };
+        self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });
+        l.window.request_redraw();
+    }
 
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.win.as_ref().filter(|w| w.visible);
@@ -57,8 +53,6 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn reopen_hook(&mut self, event_loop: &ActiveEventLoop, has_visible_windows: bool) -> bool {
         let Some(f) = self.on_reopen.filter(|_| self.started && !self.finished) else { return false };
-        #[cfg(target_os = "windows")]
-        self.take_typed(false);
         // As an update, so its frame, wakes, window requests and quit go as an update's do.
         let handled = Arc::new(AtomicBool::new(false));
         let answer = handled.clone();
@@ -70,8 +64,6 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn apply_pending(&mut self, event_loop: &ActiveEventLoop) {
         if !self.started || self.finished || !self.shared.window_pending() { return; }
-        #[cfg(target_os = "windows")]
-        self.take_typed(false);
         self.drain(event_loop, false);
         self.publish();
     }
@@ -180,8 +172,6 @@ impl<S: 'static> AnyHost for Host<S> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) -> bool {
         #[cfg(target_os = "macos")]
         self.fn_key();
-        #[cfg(target_os = "windows")]
-        self.take_typed(false);
         self.flush_files(event_loop);
         if let Some(l) = &mut self.win { super::platform_sync::poll_ime(l, &mut self.rt); }
         // Another window switched the font families (`Tx::set_font_families`).
@@ -204,44 +194,13 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WakeEvent) {
         self.meter.waited();
-        #[cfg(target_os = "windows")]
-        self.take_typed(false);
         self.handle_user_event(event_loop, event);
         self.publish();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if !matches!(event, WindowEvent::RedrawRequested) { self.meter.waited(); }
-        #[cfg(target_os = "windows")]
-        self.typed(id, matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested | WindowEvent::Destroyed | WindowEvent::Ime(_)));
         self.handle_window_event(event_loop, id, event);
         self.publish();
     }
-}
-
-#[cfg(target_os = "windows")]
-impl<S: 'static> Host<S> {
-    fn typed(&mut self, id: WindowId, ending: bool) {
-        let Some(key) = crate::platform::win32::packets::arrived(id, ending) else { return };
-        self.rt.key(key);
-        if let Some(l) = &self.win { l.window.request_redraw(); }
-    }
-
-    pub(super) fn settle_close(&mut self, kind: crate::CloseKind) -> Option<crate::CloseAnswer> {
-        self.take_typed(false);
-        let answer = self.rt.settle_close(kind);
-        let waits = self.win.as_ref().is_some_and(|l| crate::platform::win32::packets::waiting(l.window.id()));
-        if answer != Some(crate::CloseAnswer::Proceed) || !waits { return answer; }
-        self.take_typed(true);
-        self.rt.settle_close(kind)
-    }
-
-    fn take_typed(&mut self, ending: bool) {
-        if let Some(id) = self.win.as_ref().map(|l| l.window.id()) { self.typed(id, ending); }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-impl<S: 'static> Host<S> {
-    pub(super) fn settle_close(&mut self, kind: crate::CloseKind) -> Option<crate::CloseAnswer> { self.rt.settle_close(kind) }
 }
