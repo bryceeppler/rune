@@ -37,15 +37,18 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub fn clear_color(&self) -> [f32; 4] {
-        if self.transparent { return [0.0; 4]; }
-        self.nodes.get(self.app_root()).map_or([0.0, 0.0, 0.0, 1.0], |n| {
-            let c = self.color(n.id, P_FILL, n.vis.fill);
-            if self.srgb_blend {
-                [srgb_encode(c.r), srgb_encode(c.g), srgb_encode(c.b), 1.0]
-            } else {
-                [c.r, c.g, c.b, 1.0]
-            }
-        })
+        let Some(c) = self.window_fill() else { return [0.0; 4] };
+        if self.srgb_blend {
+            [srgb_encode(c.r), srgb_encode(c.g), srgb_encode(c.b), 1.0]
+        } else {
+            [c.r, c.g, c.b, 1.0]
+        }
+    }
+
+    pub(crate) fn window_fill(&self) -> Option<Color> {
+        if self.transparent { return None; }
+        let fill = self.nodes.get(self.app_root()).map_or(Color::default(), |n| self.color(n.id, P_FILL, n.vis.fill));
+        Some(Color { a: 1.0, ..fill })
     }
 }
 

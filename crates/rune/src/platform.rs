@@ -21,6 +21,7 @@ pub(crate) mod quit;
 pub(crate) mod ready_signal;
 pub(crate) mod reopen;
 pub(crate) mod scroll_bars;
+pub(crate) mod title_bar;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 #[cfg(target_os = "windows")]

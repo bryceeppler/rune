@@ -970,7 +970,7 @@ impl<S: 'static> Host<S> {
         #[cfg(target_os = "windows")]
         cloak.extend(Instant::now() + win::READY_FALLBACK);
         #[cfg(target_os = "windows")]
-        let native = Native { cloak };
+        let native = Native { cloak, title_bar: None };
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let native = Native::default();
         self.win = Some(Win {
