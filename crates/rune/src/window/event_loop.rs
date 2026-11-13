@@ -98,6 +98,7 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
             Some(Err(_)) => super::quitting::session_later(step),
             None => crate::platform::quit::SessionReply::Ends,
         });
+        crate::platform::quit::keep_event_window();
     }
     crate::open_url::incoming::prepare();
     let result = event_loop.run_app(&mut Handler(windows));
