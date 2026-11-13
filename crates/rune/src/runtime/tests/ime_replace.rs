@@ -75,3 +75,34 @@ fn a_secret_field_shows_the_input_method_nothing() {
     rt.frame(0.0);
     assert_eq!(rt.state.text, "hunter2");
 }
+
+#[test]
+fn reconverting_a_word_and_undoing_once_brings_the_original_word_back() {
+    let mut rt = field("今日は晴れ", 6..6);
+    let replacing = document(&rt).and_then(|d| d.replacement(0..2, true)).expect("the word before the caret");
+    rt.ime_replace_from_platform(replacing);
+    rt.ime(Ime::Preedit("きょう".into(), None));
+    rt.frame(0.0);
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("京".into()));
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "京は晴れ");
+    rt.update(|edit, _| edit.undo());
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "今日は晴れ", "one undo takes the whole reconversion back");
+}
+
+#[test]
+fn a_range_read_from_one_field_model_never_edits_another() {
+    let mut rt = field("say omw", 7..7);
+    let replacing = document(&rt).and_then(|d| d.replacement(4..7, true)).expect("the shortcut");
+    rt.update(|edit, _| {
+        *edit = TextEdit::new("new omw");
+        edit.focused = true;
+        edit.set_selection(crate::Selection::bytes(7, 7));
+    });
+    rt.frame(0.0);
+    rt.ime_replace_from_platform(replacing);
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "new omw");
+}
