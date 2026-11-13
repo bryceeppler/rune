@@ -175,23 +175,73 @@ mod hook {
         request.proceed();
     }
 
+    fn decode(hook: &mut impl FnMut(*const std::ffi::c_void) -> bool, w: usize, unit: u16) {
+        // SAFETY: PostMessageW copies its arguments, and the window belongs to this thread.
+        unsafe { PostMessageW(w as HWND, WM_CHAR, usize::from(unit), 1) };
+        let packet = message(w, WM_KEYDOWN, VK_PACKET as usize, 1);
+        assert!(hook((&raw const packet).cast()), "the hook takes the packet");
+        drain(w);
+    }
+
+    fn saving() -> Runtime<Note> {
+        let mut rt = Runtime::new(Note::default(), |_: &Note, _: &mut Cx<Note>| crate::el::el(), (100.0, 100.0), Env::default());
+        rt.on_close_request(save);
+        rt.on_key = Some(|note, key, _| { if let crate::Key::Text(text) = &key.key { note.text.push_str(text) } true });
+        rt.frame(0.0);
+        rt
+    }
+
     #[test]
     fn a_window_asked_to_quit_right_after_a_packet_saves_the_packets_text() {
         let window = Window::new();
         let w = window.0 as usize;
         let mut hook = super::super::hook(super::super::arrive);
-        // SAFETY: PostMessageW copies its arguments, and the window belongs to this thread.
-        unsafe { PostMessageW(window.0, WM_CHAR, usize::from(b'a'), 1) };
-        let packet = message(w, WM_KEYDOWN, VK_PACKET as usize, 1);
-        assert!(hook((&raw const packet).cast()), "the hook takes the packet");
-        drain(w);
-        let mut rt = Runtime::new(Note::default(), |_: &Note, _: &mut Cx<Note>| crate::el::el(), (100.0, 100.0), Env::default());
-        rt.on_close_request(save);
-        rt.on_key = Some(|note, key, _| { if let crate::Key::Text(text) = &key.key { note.text.push_str(text) } true });
-        rt.frame(0.0);
+        decode(&mut hook, w, u16::from(b'a'));
+        let mut rt = saving();
         super::super::ask_quit(&mut rt, WindowId::from(w as u64));
         rt.frame(1.0);
         assert_eq!(rt.state.saved.as_deref(), Some("a"), "the quit's save holds the text typed before it");
         rt.withdraw_close(CloseKind::Quit);
+    }
+
+    #[test]
+    fn a_quit_asked_while_a_half_waits_saves_its_replacement() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        let mut hook = super::super::hook(super::super::arrive);
+        decode(&mut hook, w, HIGH);
+        let mut rt = saving();
+        super::super::ask_quit(&mut rt, WindowId::from(w as u64));
+        rt.frame(1.0);
+        assert_eq!(rt.state.saved.as_deref(), Some("\u{fffd}"), "the quit's save holds the half, ended");
+        rt.withdraw_close(CloseKind::Quit);
+    }
+
+    #[test]
+    fn a_window_closed_while_a_half_waits_saves_its_replacement() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        let mut hook = super::super::hook(super::super::arrive);
+        decode(&mut hook, w, HIGH);
+        let mut rt = saving();
+        super::super::close_window(&mut rt, WindowId::from(w as u64));
+        rt.frame(1.0);
+        assert_eq!(rt.state.saved.as_deref(), Some("\u{fffd}"), "the close's save holds the half, ended");
+    }
+
+    #[test]
+    fn a_low_half_sent_to_a_closed_windows_handle_pairs_with_nothing() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        let id = WindowId::from(w as u64);
+        let mut hook = super::super::hook(super::super::arrive);
+        decode(&mut hook, w, HIGH);
+        let mut rt = saving();
+        super::super::close_window(&mut rt, id);
+        rt.frame(1.0);
+        super::super::retire(id);
+        while super::super::arrived(id, false).is_some() {}
+        decode(&mut hook, w, LOW);
+        assert_eq!(super::super::arrived(id, false).map(|key| key.key.clone()), Some(crate::Key::Text("\u{fffd}".into())));
     }
 }

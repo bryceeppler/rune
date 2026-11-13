@@ -223,7 +223,14 @@ impl<S: 'static> Host<S> {
     /// Closes the window once `App::on_close_request` allows it, now or when it answers.
     pub(super) fn close(&mut self, event_loop: &ActiveEventLoop) {
         if !self.closes() { self.close_now(event_loop); return; }
-        match self.rt.request_close(CloseKind::Window) {
+        #[cfg(target_os = "windows")]
+        let answer = match self.win.as_ref().map(|l| l.window.id()) {
+            Some(id) => crate::platform::win32::packets::close_window(&mut self.rt, id),
+            None => self.rt.request_close(CloseKind::Window),
+        };
+        #[cfg(not(target_os = "windows"))]
+        let answer = self.rt.request_close(CloseKind::Window);
+        match answer {
             CloseAnswer::Proceed => self.close_now(event_loop),
             CloseAnswer::Pending | CloseAnswer::Cancel => if let Some(w) = self.win.as_ref().filter(|w| w.visible && self.rt.stale()) {
                 w.window.request_redraw();
@@ -257,6 +264,8 @@ impl<S: 'static> Host<S> {
             self.files = FileDrop::default();
             if let Some(w) = &mut self.win { w.apply_cursor(&self.rt, false); w.hide(); }
             self.finished = true;
+            #[cfg(target_os = "windows")]
+            if let Some(w) = &self.win { crate::platform::win32::packets::retire(w.window.id()); }
             return;
         }
         self.hide(event_loop);

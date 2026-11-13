@@ -97,6 +97,12 @@ pub(crate) fn ask_quit<S: 'static>(rt: &mut crate::runtime::Runtime<S>, window: 
     rt.request_close(crate::CloseKind::Quit)
 }
 
+pub(crate) fn close_window<S: 'static>(rt: &mut crate::runtime::Runtime<S>, _window: WindowId) -> crate::CloseAnswer {
+    rt.request_close(crate::CloseKind::Window)
+}
+
+pub(crate) fn retire(_window: WindowId) {}
+
 pub(crate) fn arrive(window: HWND, text: String) {
     ARRIVED.with_borrow_mut(|arrived| arrived.push((window as usize, text)));
 }

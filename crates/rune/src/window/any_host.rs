@@ -19,6 +19,8 @@ impl<S: 'static> AnyHost for Host<S> {
         self.close_hook();
         self.popup.cancel(&mut self.rt);
         self.file_dialog.cancel(&mut self.rt);
+        #[cfg(target_os = "windows")]
+        if let Some(w) = &self.win { crate::platform::win32::packets::retire(w.window.id()); }
     }
 
     fn cancel_menus(&mut self) {
