@@ -39,11 +39,7 @@ impl<S: 'static> AnyHost for Host<S> {
         self.rt.request_close(crate::CloseKind::Quit)
     }
 
-    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> {
-        #[cfg(target_os = "windows")]
-        self.take_typed(false);
-        self.rt.settle_close(crate::CloseKind::Quit)
-    }
+    fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { self.settle_close(crate::CloseKind::Quit) }
 
     fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
 
@@ -231,7 +227,21 @@ impl<S: 'static> Host<S> {
         if let Some(l) = &self.win { l.window.request_redraw(); }
     }
 
+    pub(super) fn settle_close(&mut self, kind: crate::CloseKind) -> Option<crate::CloseAnswer> {
+        self.take_typed(false);
+        let answer = self.rt.settle_close(kind);
+        let waits = self.win.as_ref().is_some_and(|l| crate::platform::win32::packets::waiting(l.window.id()));
+        if answer != Some(crate::CloseAnswer::Proceed) || !waits { return answer; }
+        self.take_typed(true);
+        self.rt.settle_close(kind)
+    }
+
     fn take_typed(&mut self, ending: bool) {
         if let Some(id) = self.win.as_ref().map(|l| l.window.id()) { self.typed(id, ending); }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl<S: 'static> Host<S> {
+    pub(super) fn settle_close(&mut self, kind: crate::CloseKind) -> Option<crate::CloseAnswer> { self.rt.settle_close(kind) }
 }

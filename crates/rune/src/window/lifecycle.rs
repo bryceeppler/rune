@@ -185,7 +185,7 @@ impl<S: 'static> Host<S> {
     /// for, if the window is still there to open it over.
     pub(super) fn shell(&mut self, event_loop: &ActiveEventLoop) {
         self.show_title();
-        if self.rt.settle_close(CloseKind::Window) == Some(CloseAnswer::Proceed) { self.close_now(event_loop); }
+        if self.settle_close(CloseKind::Window) == Some(CloseAnswer::Proceed) { self.close_now(event_loop); }
         for _ in 0..8 {
             let minimize = std::mem::take(&mut self.rt.minimize_request);
             match self.rt.shell_request.take() {

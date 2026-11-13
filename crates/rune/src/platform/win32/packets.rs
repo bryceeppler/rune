@@ -47,10 +47,17 @@ impl Typing {
     }
 
     pub(crate) fn end_in(&mut self, window: usize) {
-        if self.high.is_some_and(|(pending, _)| pending == window) { self.end(); }
+        if self.waits_in(window) { self.end(); }
     }
 
     pub(crate) fn take(&mut self) -> Vec<(usize, String)> { std::mem::take(&mut self.typed) }
+
+    pub(crate) fn waits_in(&self, window: usize) -> bool { self.high.is_some_and(|(pending, _)| pending == window) }
+
+    pub(crate) fn forget(&mut self, window: usize) {
+        if self.waits_in(window) { self.high = None; }
+        self.typed.retain(|(into, _)| *into != window);
+    }
 
     fn type_into(&mut self, window: usize, text: &str) {
         match self.typed.last_mut() {
@@ -93,15 +100,24 @@ pub(crate) fn hook(mut typed: impl FnMut(HWND, String) + 'static) -> impl FnMut(
 }
 
 pub(crate) fn ask_quit<S: 'static>(rt: &mut crate::runtime::Runtime<S>, window: WindowId) -> crate::CloseAnswer {
-    if let Some(key) = arrived(window, false) { rt.key(key); }
+    if let Some(key) = arrived(window, true) { rt.key(key); }
     rt.request_close(crate::CloseKind::Quit)
 }
 
-pub(crate) fn close_window<S: 'static>(rt: &mut crate::runtime::Runtime<S>, _window: WindowId) -> crate::CloseAnswer {
+pub(crate) fn close_window<S: 'static>(rt: &mut crate::runtime::Runtime<S>, window: WindowId) -> crate::CloseAnswer {
+    if let Some(key) = arrived(window, true) { rt.key(key); }
     rt.request_close(crate::CloseKind::Window)
 }
 
-pub(crate) fn retire(_window: WindowId) {}
+pub(crate) fn waiting(window: WindowId) -> bool {
+    TYPING.with_borrow(|typing| typing.waits_in(u64::from(window) as usize))
+}
+
+pub(crate) fn retire(window: WindowId) {
+    let window = u64::from(window) as usize;
+    TYPING.with_borrow_mut(|typing| typing.forget(window));
+    ARRIVED.with_borrow_mut(|arrived| arrived.retain(|(into, _)| *into != window));
+}
 
 pub(crate) fn arrive(window: HWND, text: String) {
     ARRIVED.with_borrow_mut(|arrived| arrived.push((window as usize, text)));
