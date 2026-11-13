@@ -43,7 +43,6 @@ pub(crate) struct AppIme<S> {
     /// Models of removed fields whose finished composition commits once the view shows them
     /// again: only that view can reach them.
     unplaced: Vec<Weak<()>>,
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub(crate) geometry: Option<crate::platform::text_input::Geometry>,
 }
 
@@ -65,7 +64,6 @@ impl<S> AppIme<S> {
     }
 }
 
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 pub(crate) fn geometry(n: &Node, origin: [f32; 2], scale: f32, s: f32) -> Option<crate::platform::text_input::Geometry> {
     Some(crate::platform::text_input::Geometry {
         path: n.path.clone(),
@@ -150,7 +148,6 @@ impl<S: 'static> Runtime<S> {
         self.ime_in(session, ev);
     }
 
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub(crate) fn sync_text_input(&self, client: &mut crate::platform::text_input::Client) {
         let focused = self.focused.as_deref();
         let Some(edit) = self.focused_input().map(|i| &i.edit).filter(|e| !e.is_secure()) else {
@@ -169,7 +166,17 @@ impl<S: 'static> Runtime<S> {
         client.geometry?.first_rect(client.document.as_ref()?, wanted)
     }
 
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    /// The input method's next composition stands in for `range` of the focused field's text,
+    /// counted in UTF-16 units, as a macOS input method names a `replacementRange` to reconvert.
+    /// Whether the field had that range to give.
+    pub fn ime_replacing(&mut self, range: std::ops::Range<usize>) -> bool {
+        let mut client = crate::platform::text_input::Client::default();
+        self.sync_text_input(&mut client);
+        let Some(replacement) = client.document.and_then(|d| d.replacement(range)) else { return false };
+        self.ime_replace_from_platform(replacement);
+        true
+    }
+
     pub(crate) fn ime_replace_from_platform(&mut self, replacement: crate::platform::text_input::Replacement) {
         let ime = &self.app_ime;
         let session = ime.answering.and(ime.reset_ended).unwrap_or(ime.session);

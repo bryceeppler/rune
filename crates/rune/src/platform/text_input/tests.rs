@@ -72,3 +72,20 @@ fn a_window_s_client_lives_only_as_long_as_its_registration() {
     drop(registration);
     assert!(with_client(key, |_| ()).is_none(), "closing the window forgets its text");
 }
+
+#[test]
+fn a_reconversion_from_a_caret_keeps_the_caret_and_gives_it_back_when_cancelled() {
+    let text = "今日は晴れ";
+    let mut doc = Document::new(text, 6..6, None);
+    let replacing = doc.replacement(0..2).expect("the word before the caret");
+    doc.mark("きょう", 3..3, Some(&replacing));
+    assert_eq!((doc.marked_range(), doc.selected_range()), (Some(0..3), Some(3..3)));
+    assert_eq!(doc.substring(0..9), Some(("きょうは晴れ".to_owned(), 0..6)));
+    doc.mark("京", 1..1, None);
+    assert_eq!((doc.marked_range(), doc.substring(0..9)), (Some(0..1), Some(("京は晴れ".to_owned(), 0..4))));
+    let mut cancelled = doc.clone();
+    cancelled.unmark();
+    assert_eq!((cancelled.selected_range(), cancelled.substring(0..9)), (Some(2..2), Some((text.to_owned(), 0..5))));
+    doc.insert("京", None);
+    assert_eq!((doc.substring(0..9), doc.selected_range()), (Some(("京は晴れ".to_owned(), 0..4)), Some(1..1)));
+}

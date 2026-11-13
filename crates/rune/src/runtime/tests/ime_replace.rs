@@ -66,7 +66,7 @@ fn a_range_whose_text_changed_since_the_input_method_read_it_is_left_alone() {
     rt.ime(Ime::Preedit(String::new(), None));
     rt.ime(Ime::Commit("x".into()));
     rt.frame(0.0);
-    assert_eq!(rt.state.text, "say omwx");
+    assert_eq!(rt.state.text, "say omw", "the composition that came with the stale range is refused with it");
 }
 
 #[test]
@@ -83,51 +83,6 @@ fn a_secret_field_shows_the_input_method_nothing() {
 }
 
 #[test]
-fn reconverting_a_word_and_undoing_once_brings_the_original_word_back() {
-    let mut rt = field("今日は晴れ", 6..6);
-    let replacing = document(&rt).and_then(|d| d.replacement(0..2)).expect("the word before the caret");
-    rt.ime_replace_from_platform(replacing);
-    rt.ime(Ime::Preedit("きょう".into(), None));
-    rt.frame(0.0);
-    rt.ime(Ime::Preedit(String::new(), None));
-    rt.ime(Ime::Commit("京".into()));
-    rt.frame(0.0);
-    assert_eq!(rt.state.text, "京は晴れ");
-    rt.update(|edit, _| edit.undo());
-    rt.frame(0.0);
-    assert_eq!(rt.state.text, "今日は晴れ", "one undo takes the whole reconversion back");
-}
-
-#[test]
-fn a_range_read_from_one_field_model_never_edits_another() {
-    let mut rt = field("say omw", 7..7);
-    let replacing = document(&rt).and_then(|d| d.replacement(4..7)).expect("the shortcut");
-    rt.update(|edit, _| {
-        *edit = TextEdit::new("new omw");
-        edit.focused = true;
-        edit.set_selection(crate::Selection::bytes(7, 7));
-    });
-    rt.frame(0.0);
-    rt.ime_replace_from_platform(replacing);
-    rt.frame(0.0);
-    assert_eq!(rt.state.text, "new omw");
-}
-
-#[test]
-fn a_range_read_before_the_field_changed_elsewhere_is_left_alone() {
-    let mut rt = field("say omw", 7..7);
-    let replacing = document(&rt).and_then(|d| d.replacement(4..7)).expect("the shortcut");
-    rt.update(|edit, _| edit.text.replace_range(0..3, "omw"));
-    rt.frame(0.0);
-    rt.ime_replace_from_platform(replacing);
-    rt.ime(Ime::Preedit("x".into(), None));
-    rt.ime(Ime::Preedit(String::new(), None));
-    rt.ime(Ime::Commit("x".into()));
-    rt.frame(0.0);
-    assert_eq!(rt.state.text, "omw omwx", "the same bytes hold omw, but the field changed since");
-}
-
-#[test]
 fn the_first_rect_of_a_range_is_its_first_line_and_covers_only_that_line() {
     let mut rt = field("first line\nsecond line", 0..0);
     rt.frame(0.0);
@@ -141,4 +96,127 @@ fn the_first_rect_of_a_range_is_its_first_line_and_covers_only_that_line() {
     let (caret, covered) = rt.text_input_rect(3..3).expect("the field's geometry");
     assert_eq!(covered, 3..3);
     assert!(caret[3] > 0.0);
+}
+
+fn reconverting(text: &str, caret: usize, units: std::ops::Range<usize>, composing: &str, cursor: Option<(usize, usize)>) -> Runtime<TextEdit> {
+    let mut rt = field(text, caret..caret);
+    assert!(rt.ime_replacing(units), "the field has the range to give");
+    rt.ime(Ime::Preedit(composing.into(), cursor));
+    rt.frame(0.0);
+    rt
+}
+
+#[test]
+fn a_reconversion_from_a_caret_composes_in_the_word_s_place_and_leaves_the_caret_alone() {
+    let rt = reconverting("今日は晴れ", 6, 0..2, "きょう", Some((9, 9)));
+    assert_eq!(rt.state.display().0, "きょうは晴れ");
+    assert_eq!(rt.state.selection().range(), 6..6, "the person's caret is not the input method's to move");
+    let document = document(&rt).expect("the field's text");
+    assert_eq!((document.marked_range(), document.selected_range()), (Some(0..3), Some(3..3)));
+    assert_eq!(document.substring(0..9), Some(("きょうは晴れ".to_owned(), 0..6)));
+}
+
+#[test]
+fn cancelling_a_reconversion_gives_back_the_caret_the_person_had() {
+    let mut rt = reconverting("今日は晴れ", 6, 0..2, "きょう", None);
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.frame(0.0);
+    assert_eq!((rt.state.text.as_str(), rt.state.display().0.as_str()), ("今日は晴れ", "今日は晴れ"));
+    assert_eq!(rt.state.selection().range(), 6..6);
+    assert_eq!(document(&rt).and_then(|d| d.selected_range()), Some(2..2));
+    rt.key(crate::KeyEvent { key: crate::Key::Text("x".into()), mods: Default::default() });
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "今日xは晴れ", "the next key types at the caret and keeps the word");
+}
+
+#[test]
+fn a_composition_after_a_cancelled_reconversion_goes_in_at_the_caret() {
+    let mut rt = reconverting("今日は晴れ", 6, 0..2, "きょう", None);
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.frame(0.0);
+    rt.ime(Ime::Preedit("か".into(), None));
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("か".into()));
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "今日かは晴れ");
+}
+
+#[test]
+fn copy_during_a_reconversion_copies_only_what_the_person_selected() {
+    let mut rt = reconverting("今日は晴れ", 6, 0..2, "きょう", Some((0, 9)));
+    let out = rt.state.key(&crate::KeyEvent { key: crate::Key::Command('c'), mods: crate::Mods { cmd: true, ..Default::default() } }, None);
+    assert_eq!(out.copy, None, "a caret has nothing to copy, and the word under the composition is not the person's selection");
+}
+
+#[test]
+fn a_reconversion_from_a_caret_commits_over_its_word_as_one_undo_step() {
+    let mut rt = reconverting("今日は晴れ", 6, 0..2, "きょう", None);
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("京".into()));
+    rt.frame(0.0);
+    assert_eq!((rt.state.text.as_str(), rt.state.selection().range()), ("京は晴れ", 3..3));
+    rt.update(|edit, _| edit.undo());
+    rt.frame(0.0);
+    assert_eq!((rt.state.text.as_str(), rt.state.selection().range()), ("今日は晴れ", 6..6));
+}
+
+#[test]
+fn a_replacement_read_from_another_field_model_writes_nothing_anywhere() {
+    let mut rt = field("say omw", 7..7);
+    let replacing = document(&rt).and_then(|d| d.replacement(4..7)).expect("the shortcut");
+    rt.update(|edit, _| {
+        *edit = TextEdit::new("new omw");
+        edit.focused = true;
+        edit.set_selection(crate::Selection::bytes(7, 7));
+    });
+    rt.frame(0.0);
+    rt.ime_replace_from_platform(replacing);
+    rt.ime(Ime::Preedit("On my way!".into(), None));
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("On my way!".into()));
+    rt.frame(0.0);
+    assert_eq!((rt.state.text.as_str(), rt.state.preedit.as_ref()), ("new omw", None), "the whole replacement is refused, its text too");
+    assert!(rt.ime_reset, "the input method forgets the composition Rune refused");
+}
+
+#[test]
+fn a_replacement_whose_text_changed_writes_nothing_anywhere() {
+    let mut rt = field("say omw", 7..7);
+    let replacing = document(&rt).and_then(|d| d.replacement(4..7)).expect("the shortcut");
+    rt.update(|edit, _| edit.text.replace_range(0..3, "omw"));
+    rt.frame(0.0);
+    rt.ime_replace_from_platform(replacing);
+    rt.ime(Ime::Preedit("On my way!".into(), None));
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("On my way!".into()));
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "omw omw");
+    rt.ime(Ime::Preedit("x".into(), None));
+    rt.ime(Ime::Preedit(String::new(), None));
+    rt.ime(Ime::Commit("x".into()));
+    rt.frame(0.0);
+    assert_eq!(rt.state.text, "omw omwx", "the next composition, in the session after, types at the caret");
+}
+
+#[test]
+fn the_first_rect_refuses_a_layout_of_other_text_of_the_same_length() {
+    let rt = field("WWW rest", 0..3);
+    let mut client = Client::default();
+    rt.sync_text_input(&mut client);
+    let document = client.document.as_mut().expect("the field's text");
+    let replacing = document.replacement(0..3).expect("the selected word");
+    document.mark("iii", 0..3, Some(&replacing));
+    let stale = client.geometry.as_ref().expect("the field's geometry").first_rect(document, 0..3);
+    assert!(stale.is_none(), "the layout shows WWW, not the iii the input method just marked: {stale:?}");
+}
+
+#[test]
+fn the_first_rect_of_an_insertion_point_has_no_width() {
+    let rt = field("hello", 3..3);
+    let (rect, covered) = rt.text_input_rect(3..3).expect("the field's geometry");
+    assert_eq!(covered, 3..3);
+    assert_eq!(rect[2], 0.0, "AppKit asks for a zero-width rectangle at an insertion point");
+    assert!(rect[3] > 0.0);
+    let (word, _) = rt.text_input_rect(0..3).expect("the field's geometry");
+    assert!((rect[0] - (word[0] + word[2])).abs() < 0.5, "at the caret, after hel: {rect:?} {word:?}");
 }
