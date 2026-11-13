@@ -220,3 +220,14 @@ fn the_first_rect_of_an_insertion_point_has_no_width() {
     let (word, _) = rt.text_input_rect(0..3).expect("the field's geometry");
     assert!((rect[0] - (word[0] + word[2])).abs() < 0.5, "at the caret, after hel: {rect:?} {word:?}");
 }
+
+#[test]
+fn the_first_rect_of_part_of_a_character_covers_the_whole_character() {
+    let rt = field("e\u{301}cole", 0..0);
+    let (whole, _) = rt.text_input_rect(0..2).expect("the field's geometry");
+    let (base, covered) = rt.text_input_rect(0..1).expect("the field's geometry");
+    assert_eq!(covered, 0..2, "a range inside e and its combining accent widens to the whole character");
+    assert_eq!(base, whole);
+    let (accent, covered) = rt.text_input_rect(1..2).expect("the field's geometry");
+    assert_eq!((accent, covered), (whole, 0..2));
+}
