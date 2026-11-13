@@ -68,7 +68,7 @@ pub(crate) fn geometry(n: &Node, origin: [f32; 2], scale: f32, s: f32) -> Option
     Some(crate::platform::text_input::Geometry {
         path: n.path.clone(),
         layout: n.text_layout.clone()?,
-        content: n.text.as_ref()?.content.len(),
+        laid: n.text.clone()?,
         origin,
         scale,
         pixels: s,
@@ -154,8 +154,9 @@ impl<S: 'static> Runtime<S> {
             (client.document, client.geometry) = (None, None);
             return;
         };
-        let (text, selection, preedit, model) = (edit.text.as_str(), edit.selection().range(), edit.preedit.as_ref(), edit.identity());
-        client.document.get_or_insert_with(Default::default).refresh(text, selection, preedit, &model);
+        let (a, b) = edit.preedit_range();
+        let preedit = edit.preedit.as_ref().map(|p| (p, a..b));
+        client.document.get_or_insert_with(Default::default).refresh(&edit.text, edit.selection().range(), preedit, &edit.identity());
         client.geometry = self.app_ime.geometry.clone().filter(|g| Some(g.path.as_str()) == focused);
     }
 
@@ -184,14 +185,25 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(super) fn run_ime_replace(&mut self, r: crate::platform::text_input::Replacement, session: u64, one: &mut Tx) -> bool {
-        if session < self.app_ime.session || self.focused_input().is_none_or(|i| i.edit.is_secure()) { return false; }
-        self.with_focused(|e| {
-            let same_field = e.is_model(&r.field.model) && crate::platform::text_input::digest(&e.text) == r.field.text;
-            if same_field && e.preedit.is_none() && e.text.get(r.bytes.clone()) == Some(r.expected.as_str()) {
-                e.set_selection(crate::Selection::bytes(r.bytes.start, r.bytes.end));
-            }
-            EditOutcome::default()
-        }, one)
+        if session < self.app_ime.session { return false; }
+        let stands = self.focused_input().map(|i| &i.edit).is_some_and(|e| {
+            !e.is_secure() && e.preedit.is_none() && e.is_model(&r.field.model)
+                && crate::platform::text_input::digest(&e.text) == r.field.text
+                && e.text.get(r.bytes.clone()) == Some(r.expected.as_str())
+        });
+        if !stands {
+            self.refuse_session();
+            return false;
+        }
+        self.with_focused(|e| { e.reconvert(r.bytes); EditOutcome::default() }, one)
+    }
+
+    fn refuse_session(&mut self) {
+        if self.finish_composition() { return; }
+        let ime = &mut self.app_ime;
+        ime.ending = Some(ime.session);
+        ime.session += 1;
+        self.ime_reset = true;
     }
 
     /// The event loop is about to wait. macOS and Windows answer a reset while it runs, so

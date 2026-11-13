@@ -19,7 +19,7 @@ impl TextEdit {
         let Some((ref p, _)) = self.preedit else {
             return vec![(s as u32, e as u32)];
         };
-        let (a, b) = self.range();
+        let (a, b) = self.preedit_range();
         let del_len = b - a;
         let ins_len = p.len();
         if e <= a {
@@ -126,7 +126,7 @@ impl TextEdit {
         if let Some((ref p, _)) = self.preedit
             && !p.is_empty()
         {
-            let (a, _) = self.range();
+            let (a, _) = self.preedit_range();
             let ps = a as u32;
             let pe = (a + p.len()) as u32;
             for m in self.active_marks().iter().filter(|m| !m.is_pill()) {
@@ -208,7 +208,7 @@ impl TextEdit {
             out.resize(line_count, Block::Paragraph);
             return out;
         }
-        let (a, b) = self.range();
+        let (a, b) = self.preedit_range();
         let line_a = self.line_of_byte(a);
         let line_b = self.line_of_byte(b);
         let mut out = self.blocks.clone();
@@ -236,7 +236,7 @@ impl TextEdit {
         }
         match &self.preedit {
             Some((p, _)) => {
-                let (a, b) = self.range();
+                let (a, b) = self.preedit_range();
                 let mut s = String::with_capacity(self.text.len() + p.len());
                 s.push_str(&self.text[..a]);
                 s.push_str(p);

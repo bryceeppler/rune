@@ -27,7 +27,28 @@ impl Drop for Ime {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Hash)]
+pub(super) struct Reconverting {
+    bytes: (usize, usize),
+    selection: crate::Selection,
+    ended: bool,
+}
+
 impl super::TextEdit {
+    pub(crate) fn reconvert(&mut self, bytes: std::ops::Range<usize>) {
+        self.reconverting = Some(Reconverting { bytes: (bytes.start, bytes.end), selection: self.selection, ended: false });
+    }
+
+    pub(crate) fn preedit_range(&self) -> (usize, usize) {
+        self.reconverting.as_ref()
+            .filter(|r| r.selection == self.selection && r.bytes.0 <= r.bytes.1 && self.text.get(r.bytes.0..r.bytes.1).is_some())
+            .map_or_else(|| self.range(), |r| r.bytes)
+    }
+
+    pub(super) fn follow_preedit(&mut self, preedit: &str) {
+        self.reconverting = self.reconverting.take().filter(|r| !r.ended).map(|r| Reconverting { ended: preedit.is_empty(), ..r });
+    }
+
     /// Which model this is, unchanged by edits, undo history or formatting; clones share it.
     pub(crate) fn identity(&self) -> std::sync::Weak<()> {
         std::sync::Arc::downgrade(&self.identity)

@@ -53,6 +53,7 @@ pub struct TextEdit {
     edit_start: Option<Selection>,
     /// IME composition shown at the caret, with its selected range.
     pub preedit: Option<(String, Option<(usize, usize)>)>,
+    reconverting: Option<ime::Reconverting>,
     pub focused: bool,
     marks: Vec<MarkRange>,
     blocks: Vec<Block>,
@@ -106,6 +107,7 @@ impl std::hash::Hash for TextEdit {
             self.selection.hash(h);
         }
         self.preedit.hash(h);
+        self.reconverting.hash(h);
         self.focused.hash(h);
         self.marks.hash(h);
         if !self.secure {
@@ -156,6 +158,7 @@ impl TextEdit {
             selection: Selection::caret(Caret::at(n)),
             edit_start: None,
             preedit: None,
+            reconverting: None,
             focused: false,
             marks: Vec::new(),
             blocks: vec![Block::Paragraph; line_count],
@@ -414,6 +417,7 @@ impl TextEdit {
 
     pub(crate) fn clear_preedit(&mut self) {
         if let Some((mut text, _)) = self.preedit.take() { text.zeroize(); }
+        self.reconverting = None;
     }
 
     pub(crate) fn clear_pending(&mut self) {
@@ -965,6 +969,7 @@ impl TextEdit {
     }
 
     fn replace(&mut self, (mut a, mut b): (usize, usize), s: &str, typing: bool) {
+        self.reconverting = None;
         if self.is_hidden_multiline() && self.is_pristine() {
             (a, b) = (0, self.text.len());
         }

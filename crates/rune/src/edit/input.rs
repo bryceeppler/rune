@@ -403,12 +403,14 @@ impl TextEdit {
         self.break_history_group();
         match ev {
             Ime::Preedit(s, cur) => {
+                self.follow_preedit(s);
                 self.preedit = if s.is_empty() { None } else { Some((s.clone(), *cur)) };
             }
             Ime::Commit(s) => {
+                let over = self.preedit_range();
                 self.preedit = None;
                 let s = self.sanitize(s);
-                self.insert(&s);
+                self.replace(over, &s, false);
             }
             Ime::Enabled | Ime::Disabled => {}
         }

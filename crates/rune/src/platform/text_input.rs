@@ -24,6 +24,7 @@ pub(crate) struct Document {
 struct Marked {
     text: String,
     selected: Utf16Range,
+    over: Range<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,36 +50,42 @@ impl Document {
     #[cfg(test)]
     pub(crate) fn new(text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) -> Document {
         let mut document = Document::default();
-        document.refresh(text, selection, preedit, &Weak::new());
+        document.refresh(text, selection.clone(), preedit.map(|p| (p, selection)), &Weak::new());
         document
     }
 
-    pub(crate) fn refresh(&mut self, text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>, model: &Weak<()>) {
+    pub(crate) fn refresh(&mut self, text: &str, selection: Range<usize>, preedit: Option<(&(String, Option<(usize, usize)>), Range<usize>)>, model: &Weak<()>) {
         if !self.model.ptr_eq(model) { self.model = model.clone(); }
         if self.text != text {
             self.text.clear();
             self.text.push_str(text);
         }
-        let start = floor(text, selection.start.min(selection.end).min(text.len()));
-        let end = ceil(text, selection.start.max(selection.end).min(text.len()));
-        self.selection = start..end;
-        self.marked = preedit.filter(|(s, _)| !s.is_empty()).map(|(s, cursor)| {
+        self.selection = within(text, selection);
+        self.marked = preedit.filter(|((s, _), _)| !s.is_empty()).map(|((s, cursor), over)| {
             let (a, b) = cursor.unwrap_or((s.len(), s.len()));
-            Marked { text: s.clone(), selected: units(s, floor(s, a.min(s.len())))..units(s, floor(s, b.min(s.len()))) }
+            Marked { text: s.clone(), selected: units(s, floor(s, a.min(s.len())))..units(s, floor(s, b.min(s.len()))), over: within(text, over) }
         });
     }
 
+    fn over(&self) -> Range<usize> {
+        self.marked.as_ref().map_or_else(|| self.selection.clone(), |m| m.over.clone())
+    }
+
     pub(crate) fn selected_range(&self) -> Option<Utf16Range> {
-        let start = units(&self.text, self.selection.start);
         Some(match &self.marked {
-            Some(m) => start + m.selected.start..start + m.selected.end,
-            None => start..units(&self.text, self.selection.end),
+            Some(m) => {
+                let start = units(&self.text, m.over.start);
+                start + m.selected.start..start + m.selected.end
+            }
+            None => units(&self.text, self.selection.start)..units(&self.text, self.selection.end),
         })
     }
 
     pub(crate) fn marked_range(&self) -> Option<Utf16Range> {
-        let start = units(&self.text, self.selection.start);
-        self.marked.as_ref().map(|m| start..start + m.text.encode_utf16().count())
+        self.marked.as_ref().map(|m| {
+            let start = units(&self.text, m.over.start);
+            start..start + m.text.encode_utf16().count()
+        })
     }
 
     pub(crate) fn substring(&self, wanted: Utf16Range) -> Option<(String, Utf16Range)> {
@@ -101,17 +108,18 @@ impl Document {
     }
 
     pub(crate) fn mark(&mut self, string: &str, selected: Utf16Range, replacing: Option<&Replacement>) {
-        if let Some(r) = replacing { self.selection = r.bytes.clone(); }
+        let over = replacing.map_or_else(|| self.over(), |r| within(&self.text, r.bytes.clone()));
         let length = string.encode_utf16().count();
         self.marked = (!string.is_empty()).then(|| Marked {
             text: string.to_owned(),
             selected: selected.start.min(length)..selected.end.min(length).max(selected.start.min(length)),
+            over,
         });
     }
 
     pub(crate) fn insert(&mut self, string: &str, replacing: Option<&Replacement>) {
+        let at = replacing.map_or_else(|| self.over(), |r| r.bytes.clone());
         self.marked = None;
-        let at = replacing.map_or_else(|| self.selection.clone(), |r| r.bytes.clone());
         self.splice(at, string);
     }
 
@@ -126,13 +134,13 @@ impl Document {
         self.selection = a + with.len()..a + with.len();
     }
 
-    fn composed_bytes(&self, wanted: Utf16Range) -> Option<(Range<usize>, usize)> {
+    fn composed_bytes(&self, wanted: Utf16Range, laid: &str) -> Option<Range<usize>> {
         let composed = self.composed();
         let total = composed.encode_utf16().count();
-        if wanted.start > total { return None; }
+        if *composed != *laid || wanted.start > total { return None; }
         let a = byte(&composed, wanted.start, false);
         let b = byte(&composed, wanted.end.min(total).max(wanted.start), true);
-        Some((a..b, composed.len()))
+        Some(a..b)
     }
 
     fn composed_units(&self, bytes: Range<usize>) -> Utf16Range {
@@ -143,13 +151,14 @@ impl Document {
 
     fn composed(&self) -> std::borrow::Cow<'_, str> {
         match &self.marked {
-            Some(m) => {
-                let (a, b) = (self.selection.start, self.selection.end);
-                format!("{}{}{}", &self.text[..a], m.text, &self.text[b..]).into()
-            }
+            Some(m) => format!("{}{}{}", &self.text[..m.over.start], m.text, &self.text[m.over.end..]).into(),
             None => self.text.as_str().into(),
         }
     }
+}
+
+fn within(text: &str, bytes: Range<usize>) -> Range<usize> {
+    floor(text, bytes.start.min(bytes.end).min(text.len()))..ceil(text, bytes.start.max(bytes.end).min(text.len()))
 }
 
 fn units(s: &str, bytes: usize) -> usize {
@@ -182,7 +191,7 @@ fn ceil(s: &str, mut at: usize) -> usize {
 pub(crate) struct Geometry {
     pub path: String,
     pub layout: crate::text::TextLayout,
-    pub content: usize,
+    pub laid: crate::cold::SharedBox<crate::el::TextSpec>,
     pub origin: [f32; 2],
     pub scale: f32,
     pub pixels: f32,
@@ -190,8 +199,7 @@ pub(crate) struct Geometry {
 
 impl Geometry {
     pub(crate) fn first_rect(&self, document: &Document, wanted: Utf16Range) -> Option<([f32; 4], Utf16Range)> {
-        let (bytes, length) = document.composed_bytes(wanted)?;
-        if length != self.content { return None; }
+        let bytes = document.composed_bytes(wanted, &self.laid.content)?;
         let boxes = self.layout.range_boxes(bytes.start, bytes.end, false);
         let (rect, covered) = match boxes.first() {
             Some(&(_, line)) => {
@@ -200,7 +208,7 @@ impl Geometry {
                     .reduce(|a, b| parley::BoundingBox::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1)))?;
                 (rect, bytes.start..end)
             }
-            None => (self.layout.caret_box(bytes.start, parley::layout::Affinity::Downstream, 1.0), bytes.start..bytes.start),
+            None => (self.layout.caret_box(bytes.start, parley::layout::Affinity::Downstream, 0.0), bytes.start..bytes.start),
         };
         let at = |x: f64, y: f64| [(self.origin[0] + x as f32 * self.scale) / self.pixels, (self.origin[1] + y as f32 * self.scale) / self.pixels];
         let [x, y] = at(rect.x0, rect.y0);

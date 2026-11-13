@@ -145,7 +145,7 @@ fn a_composition_after_a_cancelled_reconversion_goes_in_at_the_caret() {
 fn copy_during_a_reconversion_copies_only_what_the_person_selected() {
     let mut rt = reconverting("今日は晴れ", 6, 0..2, "きょう", Some((0, 9)));
     let out = rt.state.key(&crate::KeyEvent { key: crate::Key::Command('c'), mods: crate::Mods { cmd: true, ..Default::default() } }, None);
-    assert_eq!(out.copy, None, "a caret has nothing to copy, and the word under the composition is not the person's selection");
+    assert_eq!(out.copy.as_deref(), Some(""), "the person's caret selects nothing, and the word under the composition is not theirs");
 }
 
 #[test]
