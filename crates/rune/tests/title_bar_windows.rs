@@ -39,7 +39,6 @@ mod win {
     }
 
     fn caption(hwnd: HWND) -> [u8; 3] {
-        // SAFETY: GDI objects this function creates and frees, for a window of this process.
         unsafe {
             let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetWindowRect(hwnd, &mut rect);
@@ -60,7 +59,6 @@ mod win {
 
     fn dark_mode(hwnd: HWND) -> bool {
         let mut dark = 0i32;
-        // SAFETY: the attribute is a BOOL written into `dark`.
         let read = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, (&raw mut dark).cast(), 4) };
         assert!(read >= 0, "reads DWMWA_USE_IMMERSIVE_DARK_MODE");
         dark != 0
@@ -109,7 +107,6 @@ mod win {
                     handle.update(move |s, _| s.fill = fill);
                     shows(fill, "after the switch");
                     let setting: Vec<u16> = "ImmersiveColorSet\0".encode_utf16().collect();
-                    // SAFETY: a window of this process and a NUL-terminated string that outlives the call.
                     unsafe { SendMessageW(hwnd, WM_SETTINGCHANGE, 0, setting.as_ptr() as isize) };
                     shows(fill, "after a settings change");
                 }

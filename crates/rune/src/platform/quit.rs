@@ -218,16 +218,13 @@ mod win {
     // winit's hidden event window carries every `EventLoopProxy` wake, quits included, and lets
     // `DefWindowProc` destroy it on `WM_CLOSE`.
     pub(crate) fn keep_event_window() {
-        // SAFETY: `event_window` only reads the window it is handed.
         unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(event_window), 0) };
     }
 
     unsafe extern "system" fn event_window(hwnd: HWND, _: LPARAM) -> windows_sys::Win32::Foundation::BOOL {
         let mut class = [0u16; 32];
-        // SAFETY: the buffer's length bounds the write.
         let len = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32) };
         if class[..len.max(0) as usize].iter().copied().eq(EVENT_WINDOW_CLASS.encode_utf16()) {
-            // SAFETY: the subclass carries no data and is removed at WM_NCDESTROY.
             unsafe { SetWindowSubclass(hwnd, Some(event_window_closing), SUBCLASS, 0) };
         }
         1
@@ -241,11 +238,9 @@ mod win {
                 crate::window::quitting::request();
                 return 0;
             }
-            // SAFETY: removes this subclass from the window it was set on.
             WM_NCDESTROY => unsafe { RemoveWindowSubclass(hwnd, Some(event_window_closing), SUBCLASS); },
             _ => {}
         }
-        // SAFETY: forwards to the next window procedure.
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     }
 

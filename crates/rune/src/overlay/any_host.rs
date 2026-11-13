@@ -37,6 +37,8 @@ impl<T: 'static> AnyHost for Overlay<T> {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WakeEvent) {
         self.meter.waited();
+        #[cfg(target_os = "windows")]
+        if let Some(id) = self.window_id() { self.typed(id, false); }
         #[cfg(target_os = "macos")]
         if matches!(event, WakeEvent::DisplayTick(_))
             && self.live.as_ref().and_then(|l| l.pacing.as_ref()).is_some_and(|p| p.running()) {
@@ -54,7 +56,7 @@ impl<T: 'static> AnyHost for Overlay<T> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         if !matches!(event, WindowEvent::RedrawRequested) { self.meter.waited(); }
         #[cfg(target_os = "windows")]
-        self.typed(_id, matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested | WindowEvent::Destroyed));
+        self.typed(_id, matches!(event, WindowEvent::Focused(false) | WindowEvent::CloseRequested | WindowEvent::Destroyed | WindowEvent::Ime(_)));
         #[cfg(target_os = "macos")]
         if matches!(event, WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::Occluded(_))
             && let Some(live) = &mut self.live && let Some(pacing) = &mut live.pacing {

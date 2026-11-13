@@ -64,7 +64,6 @@ mod hook {
     impl Window {
         fn new() -> Window {
             let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
-            // SAFETY: a message-only window of a system class, destroyed on drop.
             let hwnd = unsafe { CreateWindowExW(0, class.as_ptr(), std::ptr::null(), 0, 0, 0, 0, 0, HWND_MESSAGE, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
             assert!(!hwnd.is_null(), "a message-only window");
             Window(hwnd)
@@ -73,7 +72,6 @@ mod hook {
 
     impl Drop for Window {
         fn drop(&mut self) {
-            // SAFETY: the window this test created.
             unsafe { DestroyWindow(self.0) };
         }
     }
@@ -83,9 +81,7 @@ mod hook {
     }
 
     fn drain(hwnd: usize) {
-        // SAFETY: an all-zero `MSG` is valid to write into.
         let mut left: MSG = unsafe { std::mem::zeroed() };
-        // SAFETY: removes what is left in this thread's queue for a window of this test.
         while unsafe { PeekMessageW(&mut left, hwnd as HWND, 0, 0, PM_REMOVE) } != 0 {}
     }
 
@@ -97,7 +93,6 @@ mod hook {
         for step in steps {
             match *step {
                 Step::Packet(hwnd, unit, repeat) => {
-                    // SAFETY: posts to a window of this test, as TranslateMessage posts a packet's character.
                     unsafe { PostMessageW(hwnd as HWND, WM_CHAR, unit as usize, repeat) };
                     send(message(hwnd, WM_KEYDOWN, VK_PACKET as usize, 1));
                     send(message(hwnd, WM_KEYUP, VK_PACKET as usize, 0xc000_0001_u32 as isize));
@@ -180,7 +175,6 @@ mod hook {
         let window = Window::new();
         let w = window.0 as usize;
         let mut hook = super::super::hook(super::super::arrive);
-        // SAFETY: posts to a window of this test, as TranslateMessage posts a packet's character.
         unsafe { PostMessageW(window.0, WM_CHAR, usize::from(b'a'), 1) };
         let packet = message(w, WM_KEYDOWN, VK_PACKET as usize, 1);
         assert!(hook((&raw const packet).cast()), "the hook takes the packet");

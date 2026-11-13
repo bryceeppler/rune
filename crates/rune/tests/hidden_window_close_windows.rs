@@ -32,7 +32,6 @@ mod win {
 
     unsafe extern "system" fn collect(hwnd: HWND, found: LPARAM) -> i32 {
         let mut pid = 0;
-        // SAFETY: `found` is the `Vec` `event_windows` passes, alive for the enumeration.
         unsafe {
             GetWindowThreadProcessId(hwnd, &mut pid);
             let mut class = [0u16; 64];
@@ -46,7 +45,6 @@ mod win {
 
     fn event_windows() -> Vec<usize> {
         let mut found = Vec::<usize>::new();
-        // SAFETY: `collect` reads `found` only during the call.
         unsafe { EnumWindows(Some(collect), &mut found as *mut Vec<usize> as LPARAM) };
         found
     }
@@ -82,7 +80,6 @@ mod win {
                 ready_rx.recv_timeout(Duration::from_secs(10)).expect("window ready");
                 let hidden = event_windows();
                 assert_eq!(hidden.len(), 1, "winit's one event window");
-                // SAFETY: a window of this process; posting needs nothing else.
                 assert!(unsafe { PostMessageW(hidden[0] as HWND, WM_CLOSE, 0, 0) } != 0, "WM_CLOSE posted");
                 wait("the close message to ask the app to quit", || (asked() == [CloseKind::Quit]).then_some(()));
                 assert_eq!(event_windows(), hidden, "the event window outlives its close message");

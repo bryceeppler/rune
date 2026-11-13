@@ -8,7 +8,8 @@ use std::ffi::c_void;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_PACKET;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_CHAR, WM_KEYDOWN, WM_KEYFIRST, WM_KEYLAST, WM_KEYUP,
+    MSG, PM_REMOVE, PeekMessageW, TranslateMessage, WM_CHAR, WM_IME_CHAR, WM_IME_COMPOSITION, WM_IME_KEYDOWN,
+    WM_IME_KEYUP, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYFIRST, WM_KEYLAST, WM_KEYUP,
     WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NCMBUTTONDOWN, WM_NCRBUTTONDOWN, WM_NCXBUTTONDOWN,
     WM_RBUTTONDOWN, WM_XBUTTONDOWN,
 };
@@ -62,18 +63,16 @@ impl Typing {
 fn ends_typing(message: u32) -> bool {
     matches!(message, WM_KEYFIRST..=WM_KEYLAST
         | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
-        | WM_NCLBUTTONDOWN | WM_NCRBUTTONDOWN | WM_NCMBUTTONDOWN | WM_NCXBUTTONDOWN)
+        | WM_NCLBUTTONDOWN | WM_NCRBUTTONDOWN | WM_NCMBUTTONDOWN | WM_NCXBUTTONDOWN
+        | WM_IME_STARTCOMPOSITION..=WM_IME_COMPOSITION | WM_IME_CHAR | WM_IME_KEYDOWN | WM_IME_KEYUP)
 }
 
 pub(crate) fn hook(mut typed: impl FnMut(HWND, String) + 'static) -> impl FnMut(*const c_void) -> bool + 'static {
     move |msg| {
-        // SAFETY: winit hands the hook the `MSG` it just took from the queue.
         let msg = unsafe { &*msg.cast::<MSG>() };
         let packet = msg.wParam == VK_PACKET as usize && matches!(msg.message, WM_KEYDOWN | WM_KEYUP);
         if packet && msg.message == WM_KEYDOWN {
-            // SAFETY: an all-zero `MSG` is valid.
             let mut posted: MSG = unsafe { std::mem::zeroed() };
-            // SAFETY: `msg` is a key message of this thread, whose `WM_CHAR` goes to the same window.
             let translated = unsafe {
                 TranslateMessage(msg);
                 PeekMessageW(&mut posted, msg.hwnd, WM_CHAR, WM_CHAR, PM_REMOVE) != 0
@@ -90,7 +89,8 @@ pub(crate) fn hook(mut typed: impl FnMut(HWND, String) + 'static) -> impl FnMut(
     }
 }
 
-pub(crate) fn ask_quit<S: 'static>(rt: &mut crate::runtime::Runtime<S>, _window: WindowId) -> crate::CloseAnswer {
+pub(crate) fn ask_quit<S: 'static>(rt: &mut crate::runtime::Runtime<S>, window: WindowId) -> crate::CloseAnswer {
+    if let Some(key) = arrived(window, false) { rt.key(key); }
     rt.request_close(crate::CloseKind::Quit)
 }
 
