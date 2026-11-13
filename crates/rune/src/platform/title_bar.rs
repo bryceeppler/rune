@@ -27,36 +27,30 @@ pub(crate) use win::show;
 
 #[cfg(target_os = "windows")]
 mod win {
-    use std::cell::Cell;
-
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::Graphics::Dwm::{DWMWA_CAPTION_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
-    use windows_sys::Win32::UI::Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass};
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{WM_NCDESTROY, WM_SETTINGCHANGE, WM_THEMECHANGED};
 
     use super::TitleBar;
 
     const SUBCLASS: usize = 0x5449_544c;
+    const DARK: usize = 1 << 24;
 
+    // comctl32 without a version 6 manifest exports no `GetWindowSubclass` by name, so the
+    // subclass keeps the bar in its own data, which setting the subclass again replaces.
     pub(crate) fn show(window: &winit::window::Window, bar: TitleBar) {
         let Some(hwnd) = crate::platform::win32::hwnd(window) else { return };
-        let mut kept = 0usize;
-        // SAFETY: the subclass's data is the `Cell` boxed here, freed at WM_NCDESTROY.
-        unsafe {
-            if GetWindowSubclass(hwnd, Some(subclass), SUBCLASS, &mut kept) != 0 {
-                (*(kept as *const Cell<TitleBar>)).set(bar);
-            } else {
-                let kept = Box::into_raw(Box::new(Cell::new(bar)));
-                if SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, kept as usize) == 0 { drop(Box::from_raw(kept)); }
-            }
-        }
-        apply(hwnd, bar);
+        let [r, g, b] = bar.caption;
+        let kept = usize::from(r) | usize::from(g) << 8 | usize::from(b) << 16 | if bar.dark { DARK } else { 0 };
+        // SAFETY: the subclass's data is a plain value, and the subclass is removed at WM_NCDESTROY.
+        unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, kept) };
+        apply(hwnd, kept);
     }
 
-    fn apply(hwnd: HWND, bar: TitleBar) {
-        let dark = i32::from(bar.dark);
-        let [r, g, b] = bar.caption;
-        let caption = u32::from(r) | u32::from(g) << 8 | u32::from(b) << 16;
+    fn apply(hwnd: HWND, kept: usize) {
+        let dark = i32::from(kept & DARK != 0);
+        let caption = (kept & 0xff_ffff) as u32;
         // SAFETY: each attribute reads four bytes from a local that outlives the call.
         unsafe {
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, (&raw const dark).cast(), 4);
@@ -65,19 +59,11 @@ mod win {
     }
 
     unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, kept: usize) -> LRESULT {
-        if message == WM_NCDESTROY {
-            // SAFETY: removes this subclass and frees the data `show` boxed for it.
-            unsafe {
-                RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS);
-                drop(Box::from_raw(kept as *mut Cell<TitleBar>));
-            }
-        }
+        // SAFETY: removes this subclass from the window it was set on.
+        if message == WM_NCDESTROY { unsafe { RemoveWindowSubclass(hwnd, Some(subclass), SUBCLASS) }; }
         // SAFETY: forwards to the next window procedure.
         let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
-        if matches!(message, WM_SETTINGCHANGE | WM_THEMECHANGED) {
-            // SAFETY: the data `show` boxed, alive until WM_NCDESTROY.
-            apply(hwnd, unsafe { (*(kept as *const Cell<TitleBar>)).get() });
-        }
+        if matches!(message, WM_SETTINGCHANGE | WM_THEMECHANGED) { apply(hwnd, kept); }
         result
     }
 }
