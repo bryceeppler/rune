@@ -15,6 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 mod cloak;
 mod dpi_drag;
+pub(crate) mod packets;
 mod pointer;
 
 pub(crate) use cloak::Cloak;

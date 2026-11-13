@@ -139,6 +139,8 @@ pub(crate) trait AnyHost {
     fn settle_quit(&mut self) -> Option<crate::CloseAnswer> { None }
     /// Forgets the quit: a late answer changes nothing.
     fn withdraw_quit(&mut self) {}
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn typed(&mut self, _text: String) {}
 }
 
 /// Builds every host, attaching its shortcut and menu guards, before any resumes: a window's
@@ -162,6 +164,11 @@ struct Windows {
     last_main: quitting::LastMain,
 }
 impl Windows {
+    #[cfg(target_os = "windows")]
+    pub(super) fn typed(&mut self, id: WindowId, text: String) {
+        if let Some(host) = self.hosts.iter_mut().flatten().find(|h| h.owns(id)) { host.typed(text); }
+    }
+
     fn cleanup(&mut self, event_loop: &ActiveEventLoop) {
         self.settle_quit(event_loop);
         for host in &mut self.hosts {

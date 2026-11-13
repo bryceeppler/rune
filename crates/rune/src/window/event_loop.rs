@@ -70,6 +70,18 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
     crate::render::probe_gpu();
     #[allow(unused_mut)]
     let mut builder = EventLoop::<WakeEvent>::with_user_event();
+    #[cfg(target_os = "windows")]
+    let typing: Rc<std::cell::OnceCell<std::rc::Weak<RefCell<Windows>>>> = Rc::default();
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let typing = typing.clone();
+        builder.with_msg_hook(crate::platform::win32::packets::hook(move |hwnd, text| {
+            if let Some(Ok(mut windows)) = typing.get().and_then(std::rc::Weak::upgrade).as_deref().map(RefCell::try_borrow_mut) {
+                windows.typed(WindowId::from(hwnd as u64), text);
+            }
+        }));
+    }
     #[cfg(target_os = "macos")]
     if accessory {
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
@@ -92,6 +104,7 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
     let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None, last_main: Default::default() }));
     #[cfg(target_os = "windows")]
     {
+        let _ = typing.set(Rc::downgrade(&windows));
         let windows = Rc::downgrade(&windows);
         crate::platform::quit::on_session(move |step| match windows.upgrade().as_deref().map(RefCell::try_borrow_mut) {
             Some(Ok(mut windows)) => windows.session(step),

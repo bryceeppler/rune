@@ -210,6 +210,12 @@ impl<T: 'static> AnyHost for Overlay<T> {
     }
 
     fn cancel_menus(&mut self) { self.popup.cancel(&mut self.rt); }
+
+    fn typed(&mut self, text: String) {
+        if self.options.keys != KeyPolicy::OnDemand { return; }
+        self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });
+        self.dirty = true;
+    }
 }
 
 impl<T: 'static> Overlay<T> {

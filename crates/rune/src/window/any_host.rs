@@ -33,6 +33,12 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
 
+    fn typed(&mut self, text: String) {
+        let Some(l) = &self.win else { return };
+        self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });
+        l.window.request_redraw();
+    }
+
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.win.as_ref().filter(|w| w.visible);
         let minimized = shown.is_some_and(|w| w.window.is_minimized() == Some(true));
