@@ -21,3 +21,109 @@ fn a_half_without_its_partner_types_a_replacement_character() {
     assert_eq!(typed([high, u16::from(b'a')]), ["", "\u{fffd}a"]);
     assert_eq!(typed([low, high, high, low]), ["\u{fffd}", "", "\u{fffd}", "😀"]);
 }
+
+mod hook {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_PACKET, VK_X};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, HWND_MESSAGE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, WM_CHAR, WM_KEYDOWN,
+        WM_KEYUP, WM_LBUTTONDOWN,
+    };
+
+    #[derive(Debug, PartialEq)]
+    enum Seen { Typed(usize, String), Passed(u32) }
+
+    enum Step { Packet(usize, u16, isize), Key(usize, u16), Click(usize) }
+
+    struct Window(HWND);
+
+    impl Window {
+        fn new() -> Window {
+            let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+            // SAFETY: a message-only window of a system class, destroyed on drop.
+            let hwnd = unsafe { CreateWindowExW(0, class.as_ptr(), std::ptr::null(), 0, 0, 0, 0, 0, HWND_MESSAGE, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+            assert!(!hwnd.is_null(), "a message-only window");
+            Window(hwnd)
+        }
+    }
+
+    impl Drop for Window {
+        // SAFETY: the window this test created.
+        fn drop(&mut self) { unsafe { DestroyWindow(self.0) }; }
+    }
+
+    fn message(hwnd: usize, message: u32, wparam: usize, lparam: isize) -> MSG {
+        MSG { hwnd: hwnd as HWND, message, wParam: wparam, lParam: lparam, time: 0, pt: windows_sys::Win32::Foundation::POINT { x: 0, y: 0 } }
+    }
+
+    fn drain(hwnd: usize) {
+        // SAFETY: an all-zero `MSG` is valid to write into.
+        let mut left: MSG = unsafe { std::mem::zeroed() };
+        // SAFETY: removes what is left in this thread's queue for a window of this test.
+        while unsafe { PeekMessageW(&mut left, hwnd as HWND, 0, 0, PM_REMOVE) } != 0 {}
+    }
+
+    fn feed(steps: &[Step]) -> Vec<Seen> {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let typed = seen.clone();
+        let mut hook = super::super::hook(move |hwnd, text| typed.borrow_mut().push(Seen::Typed(hwnd as usize, text)));
+        let mut send = |msg: MSG| if !hook((&raw const msg).cast()) { seen.borrow_mut().push(Seen::Passed(msg.message)) };
+        for step in steps {
+            match *step {
+                Step::Packet(hwnd, unit, repeat) => {
+                    // SAFETY: posts to a window of this test, as TranslateMessage posts a packet's character.
+                    unsafe { PostMessageW(hwnd as HWND, WM_CHAR, unit as usize, repeat) };
+                    send(message(hwnd, WM_KEYDOWN, VK_PACKET as usize, 1));
+                    send(message(hwnd, WM_KEYUP, VK_PACKET as usize, 0xc000_0001_u32 as isize));
+                    drain(hwnd);
+                }
+                Step::Key(hwnd, vk) => send(message(hwnd, WM_KEYDOWN, vk as usize, 1)),
+                Step::Click(hwnd) => send(message(hwnd, WM_LBUTTONDOWN, 1, 0)),
+            }
+        }
+        seen.take()
+    }
+
+    const HIGH: u16 = 0xd83d;
+    const LOW: u16 = 0xde00;
+
+    #[test]
+    fn a_half_pair_split_across_two_windows_types_a_replacement_in_each() {
+        let (one, two) = (Window::new(), Window::new());
+        let (one, two) = (one.0 as usize, two.0 as usize);
+        assert_eq!(
+            feed(&[Step::Packet(one, HIGH, 1), Step::Packet(two, LOW, 1)]),
+            [Seen::Typed(one, "\u{fffd}".into()), Seen::Typed(two, "\u{fffd}".into())],
+        );
+    }
+
+    #[test]
+    fn a_lone_half_before_an_ordinary_key_types_its_replacement_before_that_key() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        assert_eq!(
+            feed(&[Step::Packet(w, HIGH, 1), Step::Key(w, VK_X), Step::Packet(w, u16::from(b'a'), 1)]),
+            [Seen::Typed(w, "\u{fffd}".into()), Seen::Passed(WM_KEYDOWN), Seen::Typed(w, "a".into())],
+        );
+    }
+
+    #[test]
+    fn a_trailing_lone_half_types_its_replacement_at_the_next_click() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        assert_eq!(
+            feed(&[Step::Packet(w, u16::from(b'a'), 1), Step::Packet(w, HIGH, 1), Step::Click(w)]),
+            [Seen::Typed(w, "a".into()), Seen::Typed(w, "\u{fffd}".into()), Seen::Passed(WM_LBUTTONDOWN)],
+        );
+    }
+
+    #[test]
+    fn a_packet_typed_with_a_repeat_count_types_its_character_that_many_times() {
+        let window = Window::new();
+        let w = window.0 as usize;
+        assert_eq!(feed(&[Step::Packet(w, u16::from(b'a'), 3)]), [Seen::Typed(w, "aaa".into())]);
+    }
+}
