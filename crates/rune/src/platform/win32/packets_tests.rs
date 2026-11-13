@@ -5,7 +5,7 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_PACKET, VK_X};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, HWND_MESSAGE, IsWindow, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SendNotifyMessageW,
-    WM_CLOSE,
+    WM_APP, WM_CLOSE,
     WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
 };
 
@@ -68,10 +68,10 @@ fn queue(steps: &[Step]) {
     }
 }
 
-fn send_close(window: usize) {
+fn send(window: usize, message: u32) {
     std::thread::spawn(move || {
         // SAFETY: SendNotifyMessageW copies its arguments and returns without waiting for the window's thread.
-        assert!(unsafe { SendNotifyMessageW(window as HWND, WM_CLOSE, 0, 0) } != 0, "the close is sent");
+        assert!(unsafe { SendNotifyMessageW(window as HWND, message, 0, 0) } != 0, "the message is sent");
     }).join().expect("the sending thread");
 }
 
@@ -243,7 +243,7 @@ fn a_close_sent_while_the_hook_reads_a_packet_waits_until_the_packet_reaches_its
     let mut packet: MSG = unsafe { std::mem::zeroed() };
     // SAFETY: `packet` is a valid `MSG` to fill, and the window belongs to this thread.
     assert!(unsafe { PeekMessageW(&mut packet, w as HWND, WM_KEYDOWN, WM_KEYDOWN, PM_REMOVE) } != 0);
-    send_close(w);
+    send(w, WM_CLOSE);
     let delivered = Rc::new(RefCell::new(String::new()));
     let into = delivered.clone();
     let mut hook = super::reading(move |hwnd, text| {
@@ -264,7 +264,7 @@ fn a_close_sent_while_a_high_half_looks_for_its_low_half_stays_queued_until_the_
     let mut packet: MSG = unsafe { std::mem::zeroed() };
     // SAFETY: `packet` is a valid `MSG` to fill, and the window belongs to this thread.
     assert!(unsafe { PeekMessageW(&mut packet, w as HWND, WM_KEYDOWN, WM_KEYDOWN, PM_REMOVE) } != 0);
-    send_close(w);
+    send(w, WM_CLOSE);
     let delivered = Rc::new(RefCell::new(String::new()));
     let into = delivered.clone();
     let mut hook = super::reading(move |hwnd, text| {
@@ -291,4 +291,26 @@ fn a_packet_key_posted_without_unicode_input_types_nothing() {
     assert!(unsafe { PeekMessageW(&mut msg, window.0, 0, 0, PM_REMOVE) } != 0);
     assert!(hook((&raw const msg).cast()), "the hook takes the packet key");
     assert!(typed.borrow().is_empty(), "no text for a packet with no Unicode input behind it: {:?}", typed.borrow());
+}
+
+#[test]
+fn a_message_sent_between_finding_the_low_half_and_taking_it_ends_the_pair_without_typing_the_low_half_twice() {
+    let window = Window::new();
+    let w = window.id();
+    queue(&[Step::Packet(w, HIGH), Step::Packet(w, LOW)]);
+    let typed = Rc::new(RefCell::new(String::new()));
+    let into = typed.clone();
+    let sent = std::cell::Cell::new(false);
+    let mut hook = super::reading(move |_, text| into.borrow_mut().push_str(&text), move |key| {
+        let unit = carried(key);
+        if unit == Some(LOW) && !sent.replace(true) { send(w, WM_APP + 1) }
+        unit
+    });
+    // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
+    let mut msg: MSG = unsafe { std::mem::zeroed() };
+    // SAFETY: `msg` is a valid `MSG` to fill with this thread's next queued message.
+    while unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+        hook((&raw const msg).cast());
+    }
+    assert_eq!(*typed.borrow(), "\u{fffd}\u{fffd}", "the sent message ends the pair, and the low half the hook could not take types once, in its own turn");
 }
