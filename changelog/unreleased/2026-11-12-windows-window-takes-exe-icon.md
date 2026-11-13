@@ -1,0 +1,1 @@
+- **Windows: a window shows its exe's icon.** Each window takes the first icon group in the exe's resources, the icon Explorer and the Start menu show, for its title bar and taskbar button. Before, winit gave Windows no icon, so the title bar showed the generic program icon even for an exe with its own.

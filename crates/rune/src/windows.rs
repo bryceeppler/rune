@@ -153,6 +153,8 @@ impl WindowOptions {
         if let Some((w, h)) = self.max_size { attrs = attrs.with_max_inner_size(LogicalSize::new(w, h)); }
         if let Some((x, y)) = self.position { attrs = attrs.with_position(PhysicalPosition::new(x, y)); }
         if let Some((w, h)) = self.physical_size { attrs = attrs.with_inner_size(PhysicalSize::new(w, h)); }
+        #[cfg(target_os = "windows")]
+        let attrs = crate::platform::win32::with_exe_icon(attrs);
         attrs
     }
 }

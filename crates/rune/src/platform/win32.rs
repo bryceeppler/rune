@@ -15,11 +15,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 mod cloak;
 mod dpi_drag;
+mod exe_icon;
 pub(crate) mod packets;
 mod pointer;
 
 pub(crate) use cloak::Cloak;
 pub(crate) use dpi_drag::follow_suggested_rect;
+pub(crate) use exe_icon::with_exe_icon;
 
 pub(crate) fn hwnd(window: &winit::window::Window) -> Option<HWND> {
     let RawWindowHandle::Win32(h) = window.window_handle().ok()?.as_raw() else { return None };
