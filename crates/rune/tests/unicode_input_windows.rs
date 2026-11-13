@@ -3,7 +3,8 @@
 //! emoji as two. It lands in the focused field like typed text, in order with ordinary keys;
 //! half an emoji types U+FFFD before the next ordinary key and before the window closes; and a
 //! quit through winit's hidden event window saves what was typed before it. A pointer move sent
-//! after the keys shows when the window has taken them. Types into the foreground window and
+//! after the keys shows when the window has taken them, so input starts only once the window
+//! shows, no longer cloaked until its first frame, and the pointer lands on it. Types into the foreground window and
 //! moves the pointer over it, so it only runs with RUNE_GUI_TESTS=1 in a desktop session nobody
 //! is using.
 
@@ -19,6 +20,7 @@ mod win {
     use std::sync::{Mutex, OnceLock, mpsc};
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmFlush, DwmGetWindowAttribute};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -26,8 +28,8 @@ mod win {
         MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput, VK_SPACE,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindowThreadProcessId,
-        PostMessageW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_CLOSE,
+        EnumWindows, GA_ROOT, GetAncestor, GetClassNameW, GetClientRect, GetForegroundWindow, GetSystemMetrics,
+        GetWindowThreadProcessId, PostMessageW, WindowFromPoint, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_CLOSE,
     };
 
     #[derive(Clone, Copy, PartialEq, Debug)]
@@ -72,14 +74,30 @@ mod win {
         units.iter().copied().flat_map(|unit| [key(0, unit, KEYEVENTF_UNICODE), key(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]).collect()
     }
 
-    fn point_at(hwnd: HWND, side: Side) -> INPUT {
+    fn screen_point(hwnd: HWND, side: Side) -> POINT {
         let mut client = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         // SAFETY: `client` is a valid RECT to fill.
         unsafe { GetClientRect(hwnd, &mut client) };
         let mut at = POINT { x: client.right * if side == Side::Left { 1 } else { 3 } / 4, y: client.bottom * 3 / 4 };
-        // SAFETY: `at` is a valid POINT to convert in place, and the metrics take no pointers.
+        // SAFETY: `at` is a valid POINT to convert in place.
+        unsafe { ClientToScreen(hwnd, &mut at) };
+        at
+    }
+
+    fn takes_pointer(hwnd: HWND) -> bool {
+        let mut cloaked = 0u32;
+        // SAFETY: DWMWA_CLOAKED writes four bytes into `cloaked`, which outlives the call.
+        let read = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED as u32, (&raw mut cloaked).cast(), 4) };
+        read >= 0 && cloaked == 0 && [Side::Left, Side::Right].into_iter().all(|side| {
+            // SAFETY: WindowFromPoint and GetAncestor read window state and take no pointers.
+            unsafe { GetAncestor(WindowFromPoint(screen_point(hwnd, side)), GA_ROOT) == hwnd }
+        })
+    }
+
+    fn point_at(hwnd: HWND, side: Side) -> INPUT {
+        let at = screen_point(hwnd, side);
+        // SAFETY: GetSystemMetrics takes no pointers and has no preconditions.
         let (vx, vy, vw, vh) = unsafe {
-            ClientToScreen(hwnd, &mut at);
             (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN))
         };
         let (dx, dy) = ((at.x - vx) * 65535 / (vw - 1), (at.y - vy) * 65535 / (vh - 1));
@@ -141,7 +159,9 @@ mod win {
                 });
                 let hwnd = rx.recv_timeout(Duration::from_secs(5)).expect("hwnd") as HWND;
                 // SAFETY: GetForegroundWindow takes no arguments.
-                wait("the window to come to the front", || (unsafe { GetForegroundWindow() } == hwnd).then_some(()));
+                wait("the window to come to the front and take the pointer", || (unsafe { GetForegroundWindow() } == hwnd && takes_pointer(hwnd)).then_some(()));
+                // SAFETY: DwmFlush takes no arguments; it returns once DWM has composed a frame.
+                unsafe { DwmFlush() };
                 let send = |inputs: Vec<INPUT>| {
                     // SAFETY: `inputs` holds initialised INPUTs, and its length and element size are the ones passed.
                     let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
