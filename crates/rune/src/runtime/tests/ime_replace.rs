@@ -247,3 +247,35 @@ fn the_first_rect_at_a_caret_clicked_to_the_end_of_a_wrapped_line_stays_on_that_
     assert_eq!(covered, at..at);
     assert!((rect[0] - caret[0]).abs() < 0.5 && (rect[1] - caret[1]).abs() < 0.5, "the insertion point is where the caret is drawn: {rect:?} vs {caret:?}");
 }
+
+#[test]
+fn the_first_rect_of_a_selection_from_a_right_to_left_line_end_is_that_line_s_break() {
+    let text = "אבג\nمرحبا";
+    let mut rt = field(text, 0..0);
+    rt.pointer_down(372.0, 12.5);
+    rt.frame(0.0);
+    rt.pointer_move(360.0, 37.5);
+    rt.frame(0.0);
+    rt.pointer_up(360.0, 37.5);
+    rt.frame(0.0);
+    let selected = document(&rt).expect("the field's text").selected_range().expect("a selection");
+    assert_eq!(selected, 3..9, "the drag selected the first line's break and the whole second line");
+    let (first_line, _) = rt.text_input_rect(0..4).expect("the field's geometry");
+    let (rect, covered) = rt.text_input_rect(selected).expect("the field's geometry");
+    assert_eq!(covered, 3..4, "the first fragment is the first line's break");
+    assert!((rect[1] - first_line[1]).abs() < 0.5, "on the first line: {rect:?} vs {first_line:?}");
+}
+
+#[test]
+fn the_first_rect_of_any_character_covers_it_even_when_it_draws_nothing() {
+    for text in ["abc\nxyz", "abc\r\nxyz", "\n", "\n\n", "אבג\nمرحبا", "a\u{200b}b", "a\u{200e}b", "a\u{200f}b", "\u{200d}", "\u{feff}"] {
+        let rt = field(text, 0..0);
+        let mut units = 0;
+        for ch in text.chars() {
+            let end = units + ch.len_utf16();
+            let (_, covered) = rt.text_input_rect(units..end).expect("the field's geometry");
+            assert!(covered.start <= units && covered.end >= end, "{text:?} {units}..{end} covered {covered:?}");
+            units = end;
+        }
+    }
+}
