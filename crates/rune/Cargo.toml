@@ -244,6 +244,10 @@ name = "accessibility_windows"
 harness = false
 
 [[test]]
+name = "hidden_window_close_windows"
+harness = false
+
+[[test]]
 name = "secondary_window"
 harness = false
 
