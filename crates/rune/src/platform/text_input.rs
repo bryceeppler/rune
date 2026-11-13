@@ -197,6 +197,7 @@ pub(crate) struct Geometry {
     pub origin: [f32; 2],
     pub scale: f32,
     pub pixels: f32,
+    pub caret: Option<(usize, parley::layout::Affinity)>,
 }
 
 impl Geometry {
@@ -210,7 +211,10 @@ impl Geometry {
                     .reduce(|a, b| parley::BoundingBox::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1)))?;
                 (rect, bytes.start..end)
             }
-            None => (self.layout.caret_box(bytes.start, parley::layout::Affinity::Downstream, 0.0), bytes.start..bytes.start),
+            None => {
+                let affinity = self.caret.filter(|&(at, _)| at == bytes.start).map_or(parley::layout::Affinity::Downstream, |(_, affinity)| affinity);
+                (self.layout.caret_box(bytes.start, affinity, 0.0), bytes.start..bytes.start)
+            }
         };
         let at = |x: f64, y: f64| [(self.origin[0] + x as f32 * self.scale) / self.pixels, (self.origin[1] + y as f32 * self.scale) / self.pixels];
         let [x, y] = at(rect.x0, rect.y0);

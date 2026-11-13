@@ -65,13 +65,16 @@ impl<S> AppIme<S> {
 }
 
 pub(crate) fn geometry(n: &Node, origin: [f32; 2], scale: f32, s: f32) -> Option<crate::platform::text_input::Geometry> {
+    let laid = n.text.clone()?;
+    let caret = n.input.as_ref().map(|input| (crate::runtime::text_layout::caret_index(&input.edit, &laid.content), input.edit.caret_affinity()));
     Some(crate::platform::text_input::Geometry {
         path: n.path.clone(),
         layout: n.text_layout.clone()?,
-        laid: n.text.clone()?,
+        laid,
         origin,
         scale,
         pixels: s,
+        caret,
     })
 }
 
