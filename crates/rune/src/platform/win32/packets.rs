@@ -71,13 +71,12 @@ fn replacements(count: usize) -> String { std::iter::repeat_n(char::REPLACEMENT_
 fn low_after(window: HWND, unit: impl Fn(&MSG) -> Option<u16>) -> Option<(u16, usize)> {
     let mut next = queued()?;
     if is_packet(&next, window, WM_KEYUP) {
-        take(window, WM_KEYUP);
+        if !take(window, WM_KEYUP) { return None; }
         next = queued()?;
     }
     if !is_packet(&next, window, WM_KEYDOWN) { return None; }
     let low = unit(&next).filter(|unit| LOW.contains(unit))?;
-    take(window, WM_KEYDOWN);
-    Some((low, repeat(&next)))
+    take(window, WM_KEYDOWN).then(|| (low, repeat(&next)))
 }
 
 fn is_packet(msg: &MSG, window: HWND, message: u32) -> bool {
@@ -91,11 +90,12 @@ fn queued() -> Option<MSG> {
     (unsafe { PeekMessageW(&mut next, std::ptr::null_mut(), 0, 0, PM_NOREMOVE | QUEUED) } != 0).then_some(next)
 }
 
-fn take(window: HWND, message: u32) {
+fn take(window: HWND, message: u32) -> bool {
     // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
     let mut taken: MSG = unsafe { std::mem::zeroed() };
-    // SAFETY: `taken` is a valid `MSG` to fill, and removes the first queued `message` for `window`, the one just read.
-    unsafe { PeekMessageW(&mut taken, window, message, message, PM_REMOVE | QUEUED) };
+    // SAFETY: `taken` is a valid `MSG` to fill. The call removes at most the first queued `message` for `window`, and
+    // nothing while a sent message is pending; it returns nonzero only when it removed one.
+    unsafe { PeekMessageW(&mut taken, window, message, message, PM_REMOVE | QUEUED) != 0 }
 }
 
 #[cfg(test)]
