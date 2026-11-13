@@ -46,7 +46,6 @@ pub(super) enum Action {
     Gesture(Vec<String>, gesture_dispatch::Gesture),
     /// An input method event and the session it belongs to.
     Ime(Ime, u64),
-    /// The range the input method's next event replaces, in the session it belongs to.
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     ImeReplace(crate::platform::text_input::Replacement, u64),
     /// The window stopped taking keys: the composition finishes after the input before it.

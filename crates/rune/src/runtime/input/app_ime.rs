@@ -136,8 +136,6 @@ impl<S: 'static> Runtime<S> {
         self.ime_in(session, ev);
     }
 
-    /// Brings `document` to the focused field as the platform's text input client reports it;
-    /// none for no field or a secret.
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub(crate) fn sync_text_input(&self, document: &mut Option<crate::platform::text_input::Document>) {
         let Some(edit) = self.focused_input().map(|i| &i.edit).filter(|e| !e.is_secure()) else {
@@ -151,8 +149,6 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
-    /// The input method's next event replaces `replacement` in the focused field (macOS's
-    /// `replacementRange`), in the session that event belongs to.
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub(crate) fn ime_replace_from_platform(&mut self, replacement: crate::platform::text_input::Replacement) {
         let ime = &self.app_ime;
@@ -160,8 +156,6 @@ impl<S: 'static> Runtime<S> {
         self.queue.push(Action::ImeReplace(replacement, session));
     }
 
-    /// Selects the replaced text, and deletes it for a composition that takes its place, if the
-    /// field still holds what the input method saw there.
     pub(super) fn run_ime_replace(&mut self, r: crate::platform::text_input::Replacement, session: u64, one: &mut Tx) -> bool {
         if session < self.app_ime.session || self.focused_input().is_none_or(|i| i.edit.is_secure()) { return false; }
         self.with_focused(|e| {

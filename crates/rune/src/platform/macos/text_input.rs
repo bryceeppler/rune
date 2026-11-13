@@ -1,9 +1,5 @@
-//! The text input client of a window's focused field, on macOS. winit's view reports no
-//! selection and no text and ignores `replacementRange`, so an input method could not read the
-//! text around the caret, reconvert a typed word or replace a range. The content view gets a
-//! per-instance subclass (as `drop::install` makes) that answers from the focused field's
-//! [`Document`], which the host refreshes after each frame and each call here updates at once,
-//! and has the runtime replace the named range before winit reports the event.
+// winit 0.30's view reports no selection and no text to an input method and ignores
+// replacementRange, so its content view gets a subclass that answers for the focused field.
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use objc2::rc::Retained;
@@ -11,7 +7,7 @@ use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
 use objc2::{ClassType, msg_send, sel};
 use objc2_foundation::{NSAttributedString, NSNotFound, NSRange, NSRect, NSString};
 
-use crate::platform::text_input::{Document, Replacement, Units};
+use crate::platform::text_input::{Document, Replacement, Utf16Range};
 
 const PREFIX: &str = "RuneTextInput_";
 
@@ -22,12 +18,10 @@ struct Client {
 }
 
 thread_local! {
-    /// Each content view's client, by the view's address.
     static CLIENTS: RefCell<HashMap<usize, Client>> = RefCell::default();
     static IN_KEY_DOWN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// The content view of `window` answers the text input client for its focused field.
 pub(crate) fn install(window: &winit::window::Window) {
     let Some(view) = super::content_view(window) else { return };
     // SAFETY: main thread (windows are created there), on winit's live content view. Each method
@@ -55,14 +49,12 @@ pub(crate) fn install(window: &winit::window::Window) {
     }
 }
 
-/// Refreshes the client of `window` from its focused field after a frame.
 pub(crate) fn publish<S: 'static>(window: &winit::window::Window, rt: &crate::runtime::Runtime<S>) {
     let Some(view) = super::content_view(window) else { return };
     let key = Retained::as_ptr(&view) as usize;
     CLIENTS.with(|c| rt.sync_text_input(&mut c.borrow_mut().entry(key).or_default().document));
 }
 
-/// The range the input method's last call named for the event winit reports for it.
 pub(crate) fn take_replacement(window: &winit::window::Window) -> Option<Replacement> {
     let view = super::content_view(window)?;
     with(key(&view), |c| c.replacing.take())
@@ -76,7 +68,6 @@ fn with<R>(key: usize, f: impl FnOnce(&mut Client) -> R) -> R {
     CLIENTS.with(|c| f(c.borrow_mut().entry(key).or_default()))
 }
 
-/// The class this module subclassed, whose methods are winit's.
 fn winit_class(view: &AnyObject) -> &'static AnyClass {
     let mut class = view.class();
     while !class.name().starts_with(PREFIX) {
@@ -85,16 +76,14 @@ fn winit_class(view: &AnyObject) -> &'static AnyClass {
     class.superclass().expect("winit's view class")
 }
 
-fn units(r: NSRange) -> Option<Units> {
+fn units(r: NSRange) -> Option<Utf16Range> {
     (r.location != NSNotFound as usize).then(|| r.location..r.location.saturating_add(r.length))
 }
 
-fn ns(r: Units) -> NSRange {
+fn ns(r: Utf16Range) -> NSRange {
     NSRange::new(r.start, r.end - r.start)
 }
 
-/// # Safety
-/// `string` is an `NSString` or an `NSAttributedString`, as AppKit guarantees.
 unsafe fn plain(string: &AnyObject) -> String {
     let attributed: bool = unsafe { msg_send![string, isKindOfClass: NSAttributedString::class()] };
     let text: *const NSString = if attributed { unsafe { msg_send![string, string] } } else { (string as *const AnyObject).cast() };

@@ -1,6 +1,3 @@
-//! An input method that names the range its event replaces (macOS's `replacementRange`):
-//! reconverting a typed word takes it into the composition, and an insert at a range writes over
-//! what the range holds. The platform's text input client reads the field from the runtime.
 use super::*;
 use crate::platform::text_input::{Document, Replacement};
 use crate::{Ime, TextEdit, TextStyle, text_input};

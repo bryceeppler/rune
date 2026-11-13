@@ -1,6 +1,3 @@
-//! The focused text field as macOS's text input client answers for it: the field's text with
-//! the composition in place of its selection, counted in UTF-16 units as `NSRange` counts, and
-//! where a replacement the input method asks for lands in the field's own text.
 
 use std::ops::Range;
 
@@ -8,8 +5,7 @@ use std::ops::Range;
 #[path = "text_input_tests.rs"]
 mod tests;
 
-/// A range of the composed text in UTF-16 units.
-pub(crate) type Units = Range<usize>;
+pub(crate) type Utf16Range = Range<usize>;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Document {
@@ -21,11 +17,9 @@ pub(crate) struct Document {
 #[derive(Clone, Debug, PartialEq)]
 struct Marked {
     text: String,
-    selected: Units,
+    selected: Utf16Range,
 }
 
-/// What the field does before the input method's next event: select `bytes`, which held
-/// `expected` when the input method asked, and delete them when a composition takes their place.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Replacement {
     pub bytes: Range<usize>,
@@ -34,15 +28,12 @@ pub(crate) struct Replacement {
 }
 
 impl Document {
-    /// `selection` and the preedit's cursor are bytes, as the field keeps them.
     pub(crate) fn new(text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) -> Document {
         let mut document = Document::default();
         document.refresh(text, selection, preedit);
         document
     }
 
-    /// Brings the document to the field's text, selection and composition, copying the text
-    /// only when it changed.
     pub(crate) fn refresh(&mut self, text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) {
         if self.text != text {
             self.text.clear();
@@ -57,7 +48,7 @@ impl Document {
         });
     }
 
-    pub(crate) fn selected_range(&self) -> Option<Units> {
+    pub(crate) fn selected_range(&self) -> Option<Utf16Range> {
         let start = units(&self.text, self.selection.start);
         Some(match &self.marked {
             Some(m) => start + m.selected.start..start + m.selected.end,
@@ -65,14 +56,12 @@ impl Document {
         })
     }
 
-    pub(crate) fn marked_range(&self) -> Option<Units> {
+    pub(crate) fn marked_range(&self) -> Option<Utf16Range> {
         let start = units(&self.text, self.selection.start);
         self.marked.as_ref().map(|m| start..start + m.text.encode_utf16().count())
     }
 
-    /// The composed text in `wanted`, cut to the text and widened to whole characters, with the
-    /// range it covers.
-    pub(crate) fn substring(&self, wanted: Units) -> Option<(String, Units)> {
+    pub(crate) fn substring(&self, wanted: Utf16Range) -> Option<(String, Utf16Range)> {
         let composed = self.composed();
         let total = composed.encode_utf16().count();
         if wanted.start > total { return None; }
@@ -81,9 +70,7 @@ impl Document {
         Some((composed[a..b].to_owned(), units(&composed, a)..units(&composed, b)))
     }
 
-    /// Where `wanted` lies in the field's own text. `None` while a composition is open: the
-    /// input method then replaces its own composition, which the field's preedit already does.
-    pub(crate) fn replacement(&self, wanted: Units, delete: bool) -> Option<Replacement> {
+    pub(crate) fn replacement(&self, wanted: Utf16Range, delete: bool) -> Option<Replacement> {
         if self.marked.is_some() { return None; }
         let total = self.text.encode_utf16().count();
         if wanted.start > total { return None; }
@@ -92,9 +79,7 @@ impl Document {
         Some(Replacement { bytes: a..b, expected: self.text[a..b].to_owned(), delete })
     }
 
-    /// The input method set `string` as the composition, in place of `replacing` if it named a
-    /// range, with `selected` its cursor in UTF-16 units.
-    pub(crate) fn mark(&mut self, string: &str, selected: Units, replacing: Option<&Replacement>) {
+    pub(crate) fn mark(&mut self, string: &str, selected: Utf16Range, replacing: Option<&Replacement>) {
         if let Some(r) = replacing { self.splice(r.bytes.clone(), ""); }
         let length = string.encode_utf16().count();
         self.marked = (!string.is_empty()).then(|| Marked {
@@ -103,8 +88,6 @@ impl Document {
         });
     }
 
-    /// The input method inserted `string`: over `replacing` if it named a range, else over the
-    /// composition and the selection it stands in for.
     pub(crate) fn insert(&mut self, string: &str, replacing: Option<&Replacement>) {
         self.marked = None;
         let at = replacing.map_or_else(|| self.selection.clone(), |r| r.bytes.clone());
@@ -137,8 +120,6 @@ fn units(s: &str, bytes: usize) -> usize {
     s[..bytes].encode_utf16().count()
 }
 
-/// The byte at UTF-16 unit `at`; inside a surrogate pair, the character's start, or its end
-/// with `after`.
 fn byte(s: &str, at: usize, after: bool) -> usize {
     let mut counted = 0;
     for (i, c) in s.char_indices() {
