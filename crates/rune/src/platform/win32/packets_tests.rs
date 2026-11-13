@@ -4,7 +4,8 @@ use std::rc::Rc;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_PACKET, VK_X};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, HWND_MESSAGE, MSG, PM_REMOVE, PeekMessageW, PostMessageW, WM_CHAR,
+    CreateWindowExW, DestroyWindow, HWND_MESSAGE, IsWindow, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SendNotifyMessageW,
+    WM_CHAR, WM_CLOSE,
     WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION, WM_IME_STARTCOMPOSITION, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
 };
 
@@ -45,8 +46,7 @@ fn post(window: usize, message: u32, wparam: usize, lparam: isize) {
     assert!(unsafe { PostMessageW(window as HWND, message, wparam, lparam) } != 0, "posted");
 }
 
-// Every step is queued before the loop starts, because the hook reads what is queued behind a packet.
-fn run(steps: &[Step], typed: impl FnMut(HWND, String) + 'static, mut passed: impl FnMut(u32)) {
+fn queue(steps: &[Step]) {
     for step in steps {
         match *step {
             Step::Packet(window, unit) => {
@@ -64,6 +64,18 @@ fn run(steps: &[Step], typed: impl FnMut(HWND, String) + 'static, mut passed: im
             Step::Other(window, message) => post(window, message, 0, 0),
         }
     }
+}
+
+fn send_close(window: usize) {
+    std::thread::spawn(move || {
+        // SAFETY: SendNotifyMessageW copies its arguments and returns without waiting for the window's thread.
+        assert!(unsafe { SendNotifyMessageW(window as HWND, WM_CLOSE, 0, 0) } != 0, "the close is sent");
+    }).join().expect("the sending thread");
+}
+
+// Every step is queued before the loop starts, because the hook reads what is queued behind a packet.
+fn run(steps: &[Step], typed: impl FnMut(HWND, String) + 'static, mut passed: impl FnMut(u32)) {
+    queue(steps);
     let mut hook = super::hook(typed);
     // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -76,7 +88,13 @@ fn run(steps: &[Step], typed: impl FnMut(HWND, String) + 'static, mut passed: im
 fn seen(steps: &[Step]) -> Vec<Seen> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let (typed, passed) = (seen.clone(), seen.clone());
-    run(steps, move |hwnd, text| typed.borrow_mut().push(Seen::Typed(hwnd as usize, text)), move |message| passed.borrow_mut().push(Seen::Passed(message)));
+    run(steps, move |hwnd, text| {
+        let mut seen = typed.borrow_mut();
+        match seen.last_mut() {
+            Some(Seen::Typed(last, typed)) if *last == hwnd as usize => typed.push_str(&text),
+            _ => seen.push(Seen::Typed(hwnd as usize, text)),
+        }
+    }, move |message| passed.borrow_mut().push(Seen::Passed(message)));
     seen.take()
 }
 
@@ -86,28 +104,28 @@ fn typed(text: &str, window: usize) -> Seen { Seen::Typed(window, text.to_owned(
 fn each_unit_of_the_basic_plane_types_itself_as_its_packet_is_handled() {
     let window = Window::new();
     let w = window.id();
-    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, 0xe9), Step::Packet(w, 0x20ac)]), [typed("a", w), typed("é", w), typed("€", w)]);
+    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, 0xe9), Step::Packet(w, 0x20ac)]), [typed("aé€", w)]);
 }
 
 #[test]
 fn a_surrogate_pair_queued_together_types_its_character() {
     let window = Window::new();
     let w = window.id();
-    assert_eq!(seen(&[Step::Packet(w, HIGH), Step::Packet(w, LOW), Step::Packet(w, u16::from(b'x'))]), [typed("😀", w), typed("x", w)]);
+    assert_eq!(seen(&[Step::Packet(w, HIGH), Step::Packet(w, LOW), Step::Packet(w, u16::from(b'x'))]), [typed("😀x", w)]);
 }
 
 #[test]
 fn a_lone_high_half_at_the_end_of_the_queue_types_a_replacement_at_once() {
     let window = Window::new();
     let w = window.id();
-    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, HIGH)]), [typed("a", w), typed("\u{fffd}", w)]);
+    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, HIGH)]), [typed("a\u{fffd}", w)]);
 }
 
 #[test]
 fn a_lone_low_half_types_a_replacement() {
     let window = Window::new();
     let w = window.id();
-    assert_eq!(seen(&[Step::Packet(w, LOW), Step::Packet(w, HIGH), Step::Packet(w, HIGH), Step::Packet(w, LOW)]), [typed("\u{fffd}", w), typed("\u{fffd}😀", w)]);
+    assert_eq!(seen(&[Step::Packet(w, LOW), Step::Packet(w, HIGH), Step::Packet(w, HIGH), Step::Packet(w, LOW)]), [typed("\u{fffd}\u{fffd}😀", w)]);
 }
 
 #[test]
@@ -131,7 +149,7 @@ fn a_lone_half_before_an_ordinary_key_types_its_replacement_before_that_key() {
 fn a_lone_half_before_a_click_types_its_replacement_before_the_click() {
     let window = Window::new();
     let w = window.id();
-    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, HIGH), Step::Click(w)]), [typed("a", w), typed("\u{fffd}", w), Seen::Passed(WM_LBUTTONDOWN)]);
+    assert_eq!(seen(&[Step::Packet(w, u16::from(b'a')), Step::Packet(w, HIGH), Step::Click(w)]), [typed("a\u{fffd}", w), Seen::Passed(WM_LBUTTONDOWN)]);
 }
 
 #[test]
@@ -177,4 +195,83 @@ fn a_quit_asked_right_after_a_packet_saves_the_packets_text() {
     rt.frame(1.0);
     assert_eq!(rt.state.saved.as_deref(), Some("a\u{fffd}"), "the quit's save holds every packet handled before it, a lone half ended");
     rt.withdraw_close(CloseKind::Quit);
+}
+
+#[test]
+fn another_windows_message_stays_before_the_packet_queued_after_it() {
+    let (a, b) = (Window::new(), Window::new());
+    let (a, b) = (a.id(), b.id());
+    assert_eq!(
+        seen(&[Step::Packet(a, HIGH), Step::Other(b, WM_IME_COMPOSITION), Step::Packet(a, u16::from(b'a'))]),
+        [typed("\u{fffd}", a), Seen::Passed(WM_IME_COMPOSITION), typed("a", a)],
+    );
+}
+
+#[test]
+fn another_windows_message_between_two_halves_ends_the_first() {
+    let (a, b) = (Window::new(), Window::new());
+    let (a, b) = (a.id(), b.id());
+    assert_eq!(
+        seen(&[Step::Packet(a, HIGH), Step::Other(b, WM_IME_COMPOSITION), Step::Packet(a, LOW)]),
+        [typed("\u{fffd}", a), Seen::Passed(WM_IME_COMPOSITION), typed("\u{fffd}", a)],
+    );
+}
+
+#[test]
+fn a_repeated_lone_high_half_types_a_replacement_for_each_repeat() {
+    let window = Window::new();
+    let w = window.id();
+    assert_eq!(seen(&[Step::Repeated(w, HIGH, 3)]), [typed("\u{fffd}\u{fffd}\u{fffd}", w)]);
+}
+
+#[test]
+fn repeated_halves_pair_once_and_type_a_replacement_for_each_unit_left() {
+    let window = Window::new();
+    let w = window.id();
+    assert_eq!(seen(&[Step::Repeated(w, HIGH, 3), Step::Packet(w, LOW)]), [typed("\u{fffd}\u{fffd}😀", w)]);
+    assert_eq!(seen(&[Step::Repeated(w, HIGH, 2), Step::Repeated(w, LOW, 3)]), [typed("\u{fffd}😀\u{fffd}\u{fffd}", w)]);
+}
+
+#[test]
+fn a_close_sent_while_the_hook_reads_a_packet_waits_until_the_packet_reaches_its_window() {
+    let window = Window::new();
+    let w = window.id();
+    queue(&[Step::Packet(w, u16::from(b'a'))]);
+    // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
+    let mut packet: MSG = unsafe { std::mem::zeroed() };
+    // SAFETY: `packet` is a valid `MSG` to fill, and the window belongs to this thread.
+    assert!(unsafe { PeekMessageW(&mut packet, w as HWND, WM_KEYDOWN, WM_KEYDOWN, PM_REMOVE) } != 0);
+    send_close(w);
+    let delivered = Rc::new(RefCell::new(String::new()));
+    let into = delivered.clone();
+    let mut hook = super::hook(move |hwnd, text| {
+        // SAFETY: IsWindow reads a handle and takes no pointers.
+        if unsafe { IsWindow(hwnd) } != 0 { into.borrow_mut().push_str(&text) }
+    });
+    assert!(hook((&raw const packet).cast()), "the hook takes the packet");
+    assert_eq!(*delivered.borrow(), "a", "the packet being handled reaches its window before the sent close runs");
+    run(&[], |_, _| {}, |_| {});
+}
+
+#[test]
+fn a_close_sent_while_a_high_half_looks_for_its_low_half_stays_queued_until_the_hook_returns() {
+    let window = Window::new();
+    let w = window.id();
+    queue(&[Step::Packet(w, HIGH), Step::Packet(w, LOW)]);
+    // SAFETY: `MSG` is plain data, for which all zeros is a valid value.
+    let mut packet: MSG = unsafe { std::mem::zeroed() };
+    // SAFETY: `packet` is a valid `MSG` to fill, and the window belongs to this thread.
+    assert!(unsafe { PeekMessageW(&mut packet, w as HWND, WM_KEYDOWN, WM_KEYDOWN, PM_REMOVE) } != 0);
+    send_close(w);
+    let delivered = Rc::new(RefCell::new(String::new()));
+    let into = delivered.clone();
+    let mut hook = super::hook(move |hwnd, text| {
+        // SAFETY: IsWindow reads a handle and takes no pointers.
+        if unsafe { IsWindow(hwnd) } != 0 { into.borrow_mut().push_str(&text) }
+    });
+    assert!(hook((&raw const packet).cast()), "the hook takes the packet");
+    // SAFETY: IsWindow reads a handle and takes no pointers.
+    assert!(unsafe { IsWindow(w as HWND) } != 0, "the hook runs no sent message");
+    assert_eq!(*delivered.borrow(), "\u{fffd}", "a half whose look-ahead meets a sent message is ended in its window");
+    run(&[], |_, _| {}, |_| {});
 }
