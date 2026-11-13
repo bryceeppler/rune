@@ -829,15 +829,7 @@ impl<S: 'static> Host<S> {
         #[cfg(target_os = "macos")]
         crate::native_menu::adopt_standard_view();
         #[cfg(target_os = "macos")]
-        let panel = if self.macos_window.nonactivating_panel {
-            Some(crate::platform::macos::Panel::adopt_window(&window, size, &self.macos_window).ok_or("could not create nonactivating panel")?)
-        } else { None };
-        #[cfg(target_os = "macos")]
-        crate::platform::macos::configure_window(&window, &self.macos_window);
-        #[cfg(target_os = "macos")]
-        crate::platform::macos::drop::install(&window);
-        #[cfg(target_os = "macos")]
-        crate::platform::macos::text_input::install(&window);
+        let mac::Adopted { panel, text_input } = mac::adopt(&window, size, &self.macos_window)?;
         if self.options.click_through && let Err(error) = window.set_cursor_hittest(false) {
             eprintln!("click-through unavailable for {}: {error}", self.native_handle.key());
         }
@@ -962,6 +954,7 @@ impl<S: 'static> Host<S> {
             prime,
             launch_drawables,
             _spot: crate::platform::macos::traffic_lights::Spot::new(&window),
+            _text_input: text_input,
         };
         // Making the GPU and surface took part of the cloak's wait; the frame gets all of it.
         #[cfg(target_os = "windows")]

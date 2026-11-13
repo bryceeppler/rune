@@ -398,7 +398,7 @@ impl<S: 'static> Host<S> {
             }
             WindowEvent::Ime(ime) => {
                 #[cfg(target_os = "macos")]
-                if let Some(replacement) = crate::platform::macos::text_input::take_replacement(&l.window) {
+                if let Some(replacement) = crate::platform::text_input::macos::take_replacement(&l.window) {
                     rt.ime_replace_from_platform(replacement);
                 }
                 rt.ime_from_platform(match ime {

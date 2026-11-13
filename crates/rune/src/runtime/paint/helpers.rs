@@ -216,7 +216,7 @@ pub(super) fn emit_block_decorations(
 }
 
 /// Pixel caret and logical-point IME area use the same shaped cursor geometry.
-pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bool, scrolls: &mut HashMap<String, f32>) -> Option<([f32; 4], [f32; 4])> {
+pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bool, scrolls: &mut HashMap<String, f32>) -> Option<([f32; 4], [f32; 4], [f32; 2])> {
     let (spec, layout, input) = (n.text.as_ref()?, n.text_layout.as_ref()?, n.input.as_ref()?);
     let e = &input.edit;
     let ins = n.inset.map(|v| v * scale * s);
@@ -233,7 +233,7 @@ pub(super) fn input_caret(n: &Node, r: [f32; 4], scale: f32, s: f32, gliding: bo
     } else {
         (cx, (1.5 * s * scale).max(1.0))
     };
-    Some(([caret_x, cy + h * 0.1, caret_w, h * 0.8], [cx / s, cy / s, 2.0 * scale, h / s]))
+    Some(([caret_x, cy + h * 0.1, caret_w, h * 0.8], [cx / s, cy / s, 2.0 * scale, h / s], [x, r[1] + ins[1]]))
 }
 
 /// Whether `looping`'s sampled value multiplies the element's opacity.

@@ -1,17 +1,23 @@
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::sync::Weak;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 #[cfg(test)]
-#[path = "text_input_tests.rs"]
 mod tests;
 
 pub(crate) type Utf16Range = Range<usize>;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Document {
     text: String,
     selection: Range<usize>,
     marked: Option<Marked>,
+    model: Weak<()>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,21 +26,34 @@ struct Marked {
     selected: Utf16Range,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct Replacement {
     pub bytes: Range<usize>,
     pub expected: String,
-    pub delete: bool,
+    pub field: Field,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Field {
+    pub model: Weak<()>,
+    pub text: u64,
+}
+
+pub(crate) fn digest(text: &str) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl Document {
     pub(crate) fn new(text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) -> Document {
         let mut document = Document::default();
-        document.refresh(text, selection, preedit);
+        document.refresh(text, selection, preedit, &Weak::new());
         document
     }
 
-    pub(crate) fn refresh(&mut self, text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>) {
+    pub(crate) fn refresh(&mut self, text: &str, selection: Range<usize>, preedit: Option<&(String, Option<(usize, usize)>)>, model: &Weak<()>) {
+        if !self.model.ptr_eq(model) { self.model = model.clone(); }
         if self.text != text {
             self.text.clear();
             self.text.push_str(text);
@@ -70,17 +89,18 @@ impl Document {
         Some((composed[a..b].to_owned(), units(&composed, a)..units(&composed, b)))
     }
 
-    pub(crate) fn replacement(&self, wanted: Utf16Range, delete: bool) -> Option<Replacement> {
+    pub(crate) fn replacement(&self, wanted: Utf16Range) -> Option<Replacement> {
         if self.marked.is_some() { return None; }
         let total = self.text.encode_utf16().count();
         if wanted.start > total { return None; }
         let a = byte(&self.text, wanted.start, false);
         let b = byte(&self.text, wanted.end.min(total).max(wanted.start), true);
-        Some(Replacement { bytes: a..b, expected: self.text[a..b].to_owned(), delete })
+        let field = Field { model: self.model.clone(), text: digest(&self.text) };
+        Some(Replacement { bytes: a..b, expected: self.text[a..b].to_owned(), field })
     }
 
     pub(crate) fn mark(&mut self, string: &str, selected: Utf16Range, replacing: Option<&Replacement>) {
-        if let Some(r) = replacing { self.splice(r.bytes.clone(), ""); }
+        if let Some(r) = replacing { self.selection = r.bytes.clone(); }
         let length = string.encode_utf16().count();
         self.marked = (!string.is_empty()).then(|| Marked {
             text: string.to_owned(),
@@ -103,6 +123,21 @@ impl Document {
         let b = ceil(&self.text, bytes.end.min(self.text.len()).max(a));
         self.text.replace_range(a..b, with);
         self.selection = a + with.len()..a + with.len();
+    }
+
+    fn composed_bytes(&self, wanted: Utf16Range) -> Option<(Range<usize>, usize)> {
+        let composed = self.composed();
+        let total = composed.encode_utf16().count();
+        if wanted.start > total { return None; }
+        let a = byte(&composed, wanted.start, false);
+        let b = byte(&composed, wanted.end.min(total).max(wanted.start), true);
+        Some((a..b, composed.len()))
+    }
+
+    fn composed_units(&self, bytes: Range<usize>) -> Utf16Range {
+        let composed = self.composed();
+        let (a, b) = (floor(&composed, bytes.start.min(composed.len())), ceil(&composed, bytes.end.min(composed.len())));
+        units(&composed, a)..units(&composed, b.max(a))
     }
 
     fn composed(&self) -> std::borrow::Cow<'_, str> {
@@ -140,4 +175,54 @@ fn floor(s: &str, mut at: usize) -> usize {
 fn ceil(s: &str, mut at: usize) -> usize {
     while !s.is_char_boundary(at) { at += 1; }
     at
+}
+
+#[derive(Clone)]
+pub(crate) struct Geometry {
+    pub path: String,
+    pub layout: crate::text::TextLayout,
+    pub content: usize,
+    pub origin: [f32; 2],
+    pub scale: f32,
+    pub pixels: f32,
+}
+
+impl Geometry {
+    pub(crate) fn first_rect(&self, document: &Document, wanted: Utf16Range) -> Option<([f32; 4], Utf16Range)> {
+        let caret = self.layout.caret_box(document.selection.start, parley::layout::Affinity::Downstream, 1.0);
+        let at = |x: f64, y: f64| [(self.origin[0] + x as f32 * self.scale) / self.pixels, (self.origin[1] + y as f32 * self.scale) / self.pixels];
+        let [x, y] = at(caret.x0, caret.y0);
+        let [x1, y1] = at(caret.x1, caret.y1);
+        Some(([x, y, x1 - x, y1 - y], document.substring(wanted)?.1))
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Client {
+    pub document: Option<Document>,
+    pub geometry: Option<Geometry>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub replacing: Option<Replacement>,
+}
+
+thread_local! {
+    static CLIENTS: RefCell<HashMap<usize, Client>> = RefCell::default();
+}
+
+#[must_use]
+pub(crate) struct Registration(usize);
+
+impl Registration {
+    pub(crate) fn new(key: usize) -> Registration {
+        CLIENTS.with(|c| c.borrow_mut().insert(key, Client::default()));
+        Registration(key)
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {}
+}
+
+pub(crate) fn with_client<R>(key: usize, f: impl FnOnce(&mut Client) -> R) -> Option<R> {
+    CLIENTS.with(|c| c.borrow_mut().get_mut(&key).map(f))
 }

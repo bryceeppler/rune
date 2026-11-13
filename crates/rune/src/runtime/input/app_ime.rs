@@ -43,11 +43,13 @@ pub(crate) struct AppIme<S> {
     /// Models of removed fields whose finished composition commits once the view shows them
     /// again: only that view can reach them.
     unplaced: Vec<Weak<()>>,
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+    pub(crate) geometry: Option<crate::platform::text_input::Geometry>,
 }
 
 impl<S> Default for AppIme<S> {
     fn default() -> Self {
-        Self { hook: None, open: None, session: 0, ending: None, reset_ended: None, answering: None, unplaced: Vec::new() }
+        Self { hook: None, open: None, session: 0, ending: None, reset_ended: None, answering: None, unplaced: Vec::new(), geometry: None }
     }
 }
 
@@ -61,6 +63,18 @@ impl<S> AppIme<S> {
     pub(super) fn awaits(&self, edit: &crate::edit::TextEdit) -> bool {
         self.unplaced.iter().any(|model| edit.is_model(model))
     }
+}
+
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn geometry(n: &Node, origin: [f32; 2], scale: f32, s: f32) -> Option<crate::platform::text_input::Geometry> {
+    Some(crate::platform::text_input::Geometry {
+        path: n.path.clone(),
+        layout: n.text_layout.clone()?,
+        content: n.text.as_ref()?.content.len(),
+        origin,
+        scale,
+        pixels: s,
+    })
 }
 
 /// An `El::ime_cursor` element's drawn rect, device pixels, as the window's IME area in points.
@@ -137,16 +151,22 @@ impl<S: 'static> Runtime<S> {
     }
 
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
-    pub(crate) fn sync_text_input(&self, document: &mut Option<crate::platform::text_input::Document>) {
+    pub(crate) fn sync_text_input(&self, client: &mut crate::platform::text_input::Client) {
+        let focused = self.focused.as_deref();
         let Some(edit) = self.focused_input().map(|i| &i.edit).filter(|e| !e.is_secure()) else {
-            *document = None;
+            (client.document, client.geometry) = (None, None);
             return;
         };
-        let (text, selection, preedit) = (edit.text.as_str(), edit.selection().range(), edit.preedit.as_ref());
-        match document {
-            Some(d) => d.refresh(text, selection, preedit),
-            None => *document = Some(crate::platform::text_input::Document::new(text, selection, preedit)),
-        }
+        let (text, selection, preedit, model) = (edit.text.as_str(), edit.selection().range(), edit.preedit.as_ref(), edit.identity());
+        client.document.get_or_insert_with(Default::default).refresh(text, selection, preedit, &model);
+        client.geometry = self.app_ime.geometry.clone().filter(|g| Some(g.path.as_str()) == focused);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn text_input_rect(&self, wanted: crate::platform::text_input::Utf16Range) -> Option<([f32; 4], crate::platform::text_input::Utf16Range)> {
+        let mut client = crate::platform::text_input::Client::default();
+        self.sync_text_input(&mut client);
+        client.geometry?.first_rect(client.document.as_ref()?, wanted)
     }
 
     #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
@@ -159,9 +179,9 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn run_ime_replace(&mut self, r: crate::platform::text_input::Replacement, session: u64, one: &mut Tx) -> bool {
         if session < self.app_ime.session || self.focused_input().is_none_or(|i| i.edit.is_secure()) { return false; }
         self.with_focused(|e| {
-            if e.preedit.is_none() && e.text.get(r.bytes.clone()) == Some(r.expected.as_str()) {
+            let same_field = e.is_model(&r.field.model) && crate::platform::text_input::digest(&e.text) == r.field.text;
+            if same_field && e.preedit.is_none() && e.text.get(r.bytes.clone()) == Some(r.expected.as_str()) {
                 e.set_selection(crate::Selection::bytes(r.bytes.start, r.bytes.end));
-                if r.delete && !r.bytes.is_empty() { e.insert(""); }
             }
             EditOutcome::default()
         }, one)

@@ -1,4 +1,4 @@
-use super::{Document, Replacement};
+use super::{Client, Document, Registration, digest, with_client};
 
 #[test]
 fn the_selection_counts_utf16_units_past_emoji_and_kanji() {
@@ -32,8 +32,8 @@ fn reconversion_takes_the_selected_word_into_the_composition() {
     let text = "今日は晴れ";
     let mut doc = Document::new(text, 0..6, None);
     let selected = doc.selected_range().expect("a selection");
-    let replacing = doc.replacement(selected, true).expect("the selected word");
-    assert_eq!(replacing, Replacement { bytes: 0..6, expected: "今日".to_owned(), delete: true });
+    let replacing = doc.replacement(selected).expect("the selected word");
+    assert_eq!((replacing.bytes.clone(), replacing.expected.as_str(), replacing.field.text), (0..6, "今日", digest(text)));
     doc.mark("きょう", 0..3, Some(&replacing));
     assert_eq!(doc.marked_range(), Some(0..3));
     assert_eq!(doc.substring(0..6), Some(("きょうは晴れ".to_owned(), 0..6)));
@@ -45,8 +45,8 @@ fn reconversion_takes_the_selected_word_into_the_composition() {
 #[test]
 fn an_insert_at_a_range_replaces_what_it_names() {
     let mut doc = Document::new("say omw", 7..7, None);
-    let replacing = doc.replacement(4..7, false).expect("the shortcut");
-    assert_eq!(replacing, Replacement { bytes: 4..7, expected: "omw".to_owned(), delete: false });
+    let replacing = doc.replacement(4..7).expect("the shortcut");
+    assert_eq!((replacing.bytes.clone(), replacing.expected.as_str()), (4..7, "omw"));
     doc.insert("On my way!", Some(&replacing));
     assert_eq!(doc.substring(0..100), Some(("say On my way!".to_owned(), 0..14)));
     assert_eq!(doc.selected_range(), Some(14..14));
@@ -56,8 +56,19 @@ fn an_insert_at_a_range_replaces_what_it_names() {
 fn inside_a_composition_the_input_method_replaces_only_its_own_text() {
     let preedit = ("にほ".to_owned(), None);
     let doc = Document::new("ab", 2..2, Some(&preedit));
-    assert_eq!(doc.replacement(2..4, false), None);
+    assert!(doc.replacement(2..4).is_none());
     let mut unmarked = doc.clone();
     unmarked.unmark();
     assert_eq!((unmarked.marked_range(), unmarked.substring(0..9)), (None, Some(("ab".to_owned(), 0..2))));
+}
+
+#[test]
+fn a_window_s_client_lives_only_as_long_as_its_registration() {
+    let key = 0x5eed;
+    assert!(with_client(key, |_| ()).is_none(), "no client before the window registers");
+    let registration = Registration::new(key);
+    with_client(key, |c: &mut Client| c.document = Some(Document::new("kept text", 0..0, None)));
+    assert_eq!(with_client(key, |c| c.document.as_ref().and_then(|d| d.substring(0..4))).flatten(), Some(("kept".to_owned(), 0..4)));
+    drop(registration);
+    assert!(with_client(key, |_| ()).is_none(), "closing the window forgets its text");
 }

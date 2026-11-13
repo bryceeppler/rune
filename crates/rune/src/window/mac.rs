@@ -12,6 +12,20 @@ use crate::platform::macos::{content_view, ns_window};
 #[path = "mac_tests.rs"]
 mod tests;
 
+pub(super) struct Adopted {
+    pub(super) panel: Option<crate::platform::macos::Panel>,
+    pub(super) text_input: Option<crate::platform::text_input::Registration>,
+}
+
+pub(super) fn adopt(window: &Window, size: (f32, f32), options: &crate::MacWindowOptions) -> Result<Adopted, String> {
+    let panel = if options.nonactivating_panel {
+        Some(crate::platform::macos::Panel::adopt_window(window, size, options).ok_or("could not create nonactivating panel")?)
+    } else { None };
+    crate::platform::macos::configure_window(window, options);
+    crate::platform::macos::drop::install(window);
+    Ok(Adopted { panel, text_input: crate::platform::text_input::macos::install(window) })
+}
+
 unsafe extern "C" fn cannot_move_window(_: &AnyObject, _: Sel) -> Bool {
     Bool::NO
 }

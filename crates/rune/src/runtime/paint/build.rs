@@ -52,7 +52,7 @@ impl<S: 'static> Runtime<S> {
             self.sticky_frame.resize(n_nodes, sticky::UNBOUNDED);
         }
         let sel_ranges = self.selection_ranges();
-        self.ime_area = None;
+        (self.ime_area, self.app_ime.geometry) = (None, None);
         let now = self.t;
         let vp = [0.0, 0.0, self.viewport.0 * s, self.viewport.1 * s];
         let mut glyph_count = 0usize;
@@ -771,8 +771,8 @@ impl<S: 'static> Runtime<S> {
                 .filter(|_| !self.flights.iter().any(|f| n.key.as_deref() == Some(&f.source_key)
                     && f.alphas(f.destination, now, self.reduced_motion).0 > 0.0))
                 .and_then(|_| input_caret(n, r, sc, s, gliding, &mut self.input_scroll));
-            if let Some((_, area)) = input_caret
-                && n.input.as_ref().is_some_and(|input| !input.edit.is_secure()) { self.ime_area = Some(area); }
+            if let Some((_, area, origin)) = input_caret
+                && n.input.as_ref().is_some_and(|input| !input.edit.is_secure()) { (self.ime_area, self.app_ime.geometry) = (Some(area), app_ime::geometry(n, origin, sc, s)); }
             else if n.ime_cursor && self.ime_area.is_none() && self.allowed(i) && !self.subtree_exiting(i) { self.ime_area = Some(app_ime::area(r, s)); }
             let paint_visible = if in_cache {
                 r[2] >= clip[0] - filter_margin - 2.0
@@ -1088,7 +1088,7 @@ impl<S: 'static> Runtime<S> {
                         cover,
                         scale_motion,
                         gliding,
-                        caret: input_caret.map(|(caret, _)| caret),
+                        caret: input_caret.map(|(caret, ..)| caret),
                     },
                     &sel_ranges,
                     &mut glyph_count,

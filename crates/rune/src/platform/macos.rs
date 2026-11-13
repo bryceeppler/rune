@@ -19,7 +19,6 @@ pub(crate) mod help;
 pub mod panel_bridge;
 pub(crate) mod presence;
 mod presentation;
-pub(crate) mod text_input;
 pub(crate) mod traffic_lights;
 pub(crate) mod window_shape;
 

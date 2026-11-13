@@ -25,6 +25,7 @@ pub(super) struct Native {
     pub(super) launch_drawables: super::LaunchDrawables,
     /// Forgets the window's traffic-light spot.
     pub(super) _spot: crate::platform::macos::traffic_lights::Spot,
+    pub(super) _text_input: Option<crate::platform::text_input::Registration>,
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
