@@ -104,7 +104,7 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
     let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None, last_main: Default::default() }));
     #[cfg(target_os = "windows")]
     {
-        let _ = typing.set(Rc::downgrade(&windows));
+        typing.get_or_init(|| Rc::downgrade(&windows));
         let windows = Rc::downgrade(&windows);
         crate::platform::quit::on_session(move |step| match windows.upgrade().as_deref().map(RefCell::try_borrow_mut) {
             Some(Ok(mut windows)) => windows.session(step),
@@ -136,6 +136,13 @@ impl ApplicationHandler<WakeEvent> for Handler {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) { self.0.borrow_mut().window_event(event_loop, id, event); }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) { self.0.borrow_mut().about_to_wait(event_loop); }
     fn exiting(&mut self, event_loop: &ActiveEventLoop) { self.0.borrow_mut().exiting(event_loop); }
+}
+
+#[cfg(target_os = "windows")]
+impl Windows {
+    fn typed(&mut self, id: WindowId, text: String) {
+        if let Some(host) = self.hosts.iter_mut().flatten().find(|h| h.owns(id)) { host.typed(text); }
+    }
 }
 
 #[test]

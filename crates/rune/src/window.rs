@@ -164,11 +164,6 @@ struct Windows {
     last_main: quitting::LastMain,
 }
 impl Windows {
-    #[cfg(target_os = "windows")]
-    pub(super) fn typed(&mut self, id: WindowId, text: String) {
-        if let Some(host) = self.hosts.iter_mut().flatten().find(|h| h.owns(id)) { host.typed(text); }
-    }
-
     fn cleanup(&mut self, event_loop: &ActiveEventLoop) {
         self.settle_quit(event_loop);
         for host in &mut self.hosts {
