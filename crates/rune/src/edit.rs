@@ -415,11 +415,6 @@ impl TextEdit {
 
     pub fn set_revealed(&mut self, revealed: bool) { self.revealed = revealed; }
 
-    pub(crate) fn clear_preedit(&mut self) {
-        if let Some((mut text, _)) = self.preedit.take() { text.zeroize(); }
-        self.reconverting = None;
-    }
-
     pub(crate) fn clear_pending(&mut self) {
         self.pending = None;
     }

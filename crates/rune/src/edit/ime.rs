@@ -35,6 +35,11 @@ pub(super) struct Reconverting {
 }
 
 impl super::TextEdit {
+    pub(crate) fn clear_preedit(&mut self) {
+        if let Some((mut text, _)) = self.preedit.take() { text.zeroize(); }
+        self.reconverting = None;
+    }
+
     pub(crate) fn reconvert(&mut self, bytes: std::ops::Range<usize>) {
         self.reconverting = Some(Reconverting { bytes: (bytes.start, bytes.end), selection: self.selection, ended: false });
     }

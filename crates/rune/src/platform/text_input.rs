@@ -5,6 +5,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Weak;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(test)]
@@ -199,7 +201,7 @@ pub(crate) struct Geometry {
 
 impl Geometry {
     pub(crate) fn first_rect(&self, document: &Document, wanted: Utf16Range) -> Option<([f32; 4], Utf16Range)> {
-        let bytes = document.composed_bytes(wanted, &self.laid.content)?;
+        let bytes = whole_characters(&self.laid.content, document.composed_bytes(wanted, &self.laid.content)?);
         let boxes = self.layout.range_boxes(bytes.start, bytes.end, false);
         let (rect, covered) = match boxes.first() {
             Some(&(_, line)) => {
@@ -215,6 +217,16 @@ impl Geometry {
         let [x1, y1] = at(rect.x1, rect.y1);
         Some(([x, y, x1 - x, y1 - y], document.composed_units(covered)))
     }
+}
+
+fn whole_characters(text: &str, bytes: Range<usize>) -> Range<usize> {
+    if bytes.is_empty() { return bytes; }
+    let mut whole = 0..text.len();
+    for (start, grapheme) in text.grapheme_indices(true) {
+        if start <= bytes.start { whole.start = start; }
+        if start + grapheme.len() >= bytes.end { whole.end = start + grapheme.len(); break; }
+    }
+    whole
 }
 
 #[derive(Default)]
