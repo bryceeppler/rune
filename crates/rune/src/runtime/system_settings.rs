@@ -37,6 +37,15 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
+    /// What [`Cx::caption`] reports. Windows windows with `Chrome::caption_buttons` set it as
+    /// they resize, maximize, change scale and gain or lose focus; a change re-runs the view.
+    pub fn set_caption(&mut self, caption: Option<crate::Caption>) {
+        if caption != self.caption {
+            self.caption = caption;
+            self.dirty = true;
+        }
+    }
+
     /// What [`Cx::accent`] and [`Cx::focus_color`] report, and the colour of default focus
     /// rings. Native windows set it from [`system_accent`](crate::system_accent) and again when
     /// the user picks another accent; a change re-runs the view. Headless runs keep

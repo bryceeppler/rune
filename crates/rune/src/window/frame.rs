@@ -14,13 +14,15 @@ pub(crate) struct FrameRequest {
     /// request (`Tx::instant`, `Tx::motion`, reduced motion).
     pub spring: Option<Spring>,
     pub center: bool,
+    /// `Tx::toggle_maximized`: maximize, or restore a maximized window.
+    pub toggle_maximized: bool,
 }
 
 impl FrameRequest {
     /// A later request's size replaces an earlier one's; centring sticks.
     pub fn merge(self, later: FrameRequest) -> FrameRequest {
         let (size, animate, spring) = if later.size.is_some() { (later.size, later.animate, later.spring) } else { (self.size, self.animate, self.spring) };
-        FrameRequest { size, animate, spring, center: self.center || later.center }
+        FrameRequest { size, animate, spring, center: self.center || later.center, toggle_maximized: self.toggle_maximized != later.toggle_maximized }
     }
 }
 
@@ -198,9 +200,9 @@ mod tests {
 
     #[test]
     fn later_sizes_win_and_centring_sticks() {
-        let a = FrameRequest { size: Some((1.0, 2.0)), animate: true, spring: None, center: true };
-        let b = FrameRequest { size: Some((3.0, 4.0)), animate: false, spring: None, center: false };
-        assert_eq!(a.merge(b), FrameRequest { size: Some((3.0, 4.0)), animate: false, spring: None, center: true });
+        let a = FrameRequest { size: Some((1.0, 2.0)), animate: true, spring: None, center: true, toggle_maximized: false };
+        let b = FrameRequest { size: Some((3.0, 4.0)), animate: false, spring: None, center: false, toggle_maximized: false };
+        assert_eq!(a.merge(b), FrameRequest { size: Some((3.0, 4.0)), animate: false, spring: None, center: true, toggle_maximized: false });
         assert_eq!(b.merge(FrameRequest { center: true, ..Default::default() }), FrameRequest { center: true, ..b });
     }
 }

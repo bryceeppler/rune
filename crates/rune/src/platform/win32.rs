@@ -13,12 +13,14 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TRANSPARENT,
 };
 
+mod caption;
 mod cloak;
 mod dpi_drag;
 mod exe_icon;
 pub(crate) mod packets;
 mod pointer;
 
+pub(crate) use caption::CaptionFrame;
 pub(crate) use cloak::Cloak;
 pub(crate) use dpi_drag::follow_suggested_rect;
 pub(crate) use exe_icon::with_exe_icon;

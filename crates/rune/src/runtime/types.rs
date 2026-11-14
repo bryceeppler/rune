@@ -130,6 +130,7 @@ pub(crate) struct Node {
     /// `El::selection_group`.
     pub(super) selection_group: bool,
     pub(super) window_drag: bool,
+    pub(super) caption_button: Option<crate::CaptionButton>,
     pub(super) ime_cursor: bool,
     /// Placeholder left in `self.nodes` after `try_reuse_memo` moves a node into the new pass.
     pub(super) moved_stub: bool,
@@ -193,6 +194,7 @@ impl Node {
             virtual_mount: false,
             selection_group: false,
             window_drag: false,
+            caption_button: None,
             ime_cursor: false,
             moved_stub: true,
         }

@@ -14,6 +14,7 @@ pub(super) struct Measurement<'a, S: 'static> {
     pub(super) fit_height: bool,
     pub(super) system_reduced_motion: bool,
     pub(super) titlebar_inset: f32,
+    pub(super) caption: Option<crate::Caption>,
     pub(super) system_accent: crate::SystemAccent,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) reduced_motion: bool,

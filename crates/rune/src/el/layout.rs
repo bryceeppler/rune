@@ -279,6 +279,16 @@ impl El {
         self.window_drag = true;
         self
     }
+    /// This element draws a title bar's minimize, maximize or close button, in a Windows window
+    /// that draws its own caption (`Chrome::caption_buttons`). Windows' hit test names it, so
+    /// hovering the maximize button offers Snap Layouts, while presses and hover still reach the
+    /// element: give it the `on_press` that acts (`Tx::minimize`, `Tx::toggle_maximized`,
+    /// `Tx::close_window`). Elsewhere it changes nothing. rune-kit's `CaptionButtons` draws all
+    /// three.
+    pub fn caption_button(mut self, button: crate::CaptionButton) -> Self {
+        self.caption_button = Some(button);
+        self
+    }
     /// The caret of an editor the app draws itself rather than with `text_input`: while this
     /// element is drawn and no text field has focus, the window turns its input method on (dead
     /// keys, CJK, the emoji picker, dictation), places the candidate window at this element's

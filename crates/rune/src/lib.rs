@@ -8,6 +8,7 @@ compile_error!("web does not support Rune's hot or native-file-dialog features; 
 
 mod a11y;
 mod app;
+mod caption;
 mod close_request;
 mod cold;
 mod cursor;
@@ -64,6 +65,8 @@ pub use a11y::AccessibilityLink;
 pub use accesskit;
 pub use app::App;
 pub use app::AppHandle;
+pub use caption::Caption;
+pub use caption::CaptionButton;
 pub use clipboard::ClipboardContent;
 pub use clipboard::ClipboardImage;
 pub use clipboard::ClipboardWrite;

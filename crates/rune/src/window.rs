@@ -848,6 +848,8 @@ impl<S: 'static> Host<S> {
         #[cfg(target_os = "windows")]
         crate::platform::quit::watch_session_end(&window);
         #[cfg(target_os = "windows")]
+        let caption = (chrome.caption_buttons && !self.options.borderless).then(|| crate::platform::win32::CaptionFrame::install(&window)).flatten();
+        #[cfg(target_os = "windows")]
         let cloak = crate::platform::win32::Cloak::default();
         #[cfg(target_os = "windows")]
         if visible {
@@ -873,6 +875,8 @@ impl<S: 'static> Host<S> {
             mac::own_window_dragging(&window);
         }
         self.rt.set_titlebar_inset(place_chrome(&window, chrome));
+        #[cfg(target_os = "windows")]
+        self.rt.set_caption(caption.as_ref().map(|c| c.caption(&window)));
         #[cfg(target_os = "macos")]
         {
             self.rt.double_click_interval = mac::double_click_interval();
@@ -993,7 +997,7 @@ impl<S: 'static> Host<S> {
         #[cfg(target_os = "windows")]
         cloak.extend(Instant::now() + win::READY_FALLBACK);
         #[cfg(target_os = "windows")]
-        let native = Native { cloak };
+        let native = Native { cloak, caption };
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let native = Native::default();
         self.win = Some(Win {
@@ -1035,7 +1039,7 @@ impl<S: 'static> Host<S> {
                 w.resize_surface(&gpu.device, size);
                 self.rt.set_viewport((size.width as f32 / scale, size.height as f32 / scale), scale);
             }
-            self.rt.set_titlebar_inset(place_chrome(&w.window, self.chrome));
+            w.place_chrome(&mut self.rt, self.chrome);
             if let Some(origin) = screen_origin(&w.window) {
                 self.rt.set_window_origin(origin);
             }

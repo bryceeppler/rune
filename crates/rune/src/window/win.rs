@@ -332,6 +332,24 @@ impl Win {
     }
 }
 
+impl Win {
+    /// Places the traffic lights and tells the view where its own title bar is:
+    /// `Cx::titlebar_inset`, and `Cx::caption` on Windows.
+    pub(super) fn place_chrome<S: 'static>(&self, rt: &mut crate::Runtime<S>, chrome: Chrome) {
+        rt.set_titlebar_inset(super::place_chrome(&self.window, chrome));
+        #[cfg(target_os = "windows")]
+        rt.set_caption(self.native.caption.as_ref().map(|c| c.caption(&self.window)));
+    }
+
+    /// The inner size to ask winit for `size` points of content: less the title bar a Windows
+    /// window draws itself, which winit counts as frame.
+    pub(super) fn inner_request(&self, (width, height): (f32, f32)) -> winit::dpi::LogicalSize<f32> {
+        #[cfg(target_os = "windows")]
+        let height = height - self.native.caption.as_ref().map_or(0.0, |c| c.inset(&self.window));
+        winit::dpi::LogicalSize::new(width, height)
+    }
+}
+
 /// `on_ready` starts an app's live work, so it can't wait on a drawable: a window launched
 /// covered, occluded or hidden by the system may not draw for as long as it stays that way.
 /// It runs at the first frame skipped for being off screen, or `READY_FALLBACK` after opening
