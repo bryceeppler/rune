@@ -55,6 +55,7 @@ impl<S: 'static> Runtime<S> {
             fit_height: self.fit_height,
             system_reduced_motion: self.system_reduced_motion,
             titlebar_inset: self.titlebar_inset,
+            caption: self.caption,
             system_accent: self.system_accent,
             system_scroll_bars: self.scroll_bars.state,
             reduced_motion: self.reduced_motion,
@@ -342,6 +343,7 @@ impl<S: 'static> Measurement<'_, S> {
         let fresh_cx = |this: &Self| Cx::<S> {
             env: this.env,
             titlebar_inset: this.titlebar_inset,
+            caption: this.caption,
             system_accent: this.system_accent,
             system_scroll_bars: this.system_scroll_bars,
             system_reduced_motion: this.system_reduced_motion,

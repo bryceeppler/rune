@@ -194,7 +194,7 @@ impl<S: 'static> Runtime<S> {
         let pending = self.last_press.take();
         let now = self.now_clock();
         let n = &self.nodes[ti];
-        if n.window_drag && n.handlers.on_press.is_none() && n.handlers.on_double_press.is_none() && n.handlers.on_drag.is_none() && n.handlers.drag_out.is_none() && self.textbox_input(ti).is_none() {
+        if self.drags_window(ti) {
             self.titlebar.press_region(now, x, y, self.double_click_interval);
             if self.focused.is_some() {
                 self.queue.push(Action::Blur);

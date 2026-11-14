@@ -384,6 +384,7 @@ fn flatten_owned(
         glide,
         input,
         window_drag,
+        caption_button,
         ime_cursor,
         scale: static_scale,
         time_scale,
@@ -490,6 +491,7 @@ fn flatten_owned(
         virtual_mount,
         selection_group,
         window_drag,
+        caption_button,
         ime_cursor,
         moved_stub: false,
     });
@@ -699,6 +701,7 @@ fn flatten_ref(
         virtual_mount: el.virtual_mount,
         selection_group: el.selection_group,
         window_drag: el.window_drag,
+        caption_button: el.caption_button,
         ime_cursor: el.ime_cursor,
         moved_stub: false,
     });

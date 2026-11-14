@@ -212,7 +212,7 @@ impl<S: 'static> Host<S> {
                 }
                 #[cfg(target_os = "macos")]
                 if let Some(l) = self.win.as_ref().filter(|l| l.native.full_screen.take()) {
-                    self.rt.set_titlebar_inset(place_chrome(&l.window, self.chrome));
+                    l.place_chrome(&mut self.rt, self.chrome);
                 }
                 self.redraw();
                 self.shell(event_loop);
@@ -246,13 +246,13 @@ impl<S: 'static> Host<S> {
                     if size.width > 0 && size.height > 0 {
                         l.resize_surface(&gpu.device, size);
                         rt.set_viewport((size.width as f32 / scale, size.height as f32 / scale), scale);
-                        rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                        l.place_chrome(rt, chrome);
                         l.window.request_redraw();
                     }
                 }
             }
             WindowEvent::Resized(size) => {
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                l.place_chrome(rt, chrome);
                 let was_live = rt.live_visible();
                 rt.set_live_visible(l.visible && !l.occluded && size.width > 0 && size.height > 0 && !l.minimized());
                 // Restored where no occlusion event says so (Windows): as uncovering does, the
@@ -303,7 +303,7 @@ impl<S: 'static> Host<S> {
                     let viewport = (size.width as f32 / scale, size.height as f32 / scale);
                     if resized || viewport != rt.viewport || scale != rt.env.scale {
                         rt.set_viewport(viewport, scale);
-                        rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                        l.place_chrome(rt, chrome);
                         l.window.request_redraw();
                     }
                 }
@@ -325,7 +325,7 @@ impl<S: 'static> Host<S> {
                     rt.cancel_timer_frame();
                     self.idle = true; return;
                 }
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                l.place_chrome(rt, chrome);
                 // A window opened while the displays slept has no display link yet.
                 #[cfg(target_os = "macos")]
                 if l.native.pacing.is_none() { l.native.pacing = crate::platform::display_link::DisplayLink::new(&l.window, self.frame_wake.clone()); }
@@ -354,7 +354,7 @@ impl<S: 'static> Host<S> {
                 rt.set_full_keyboard_access(crate::platform::preferences::full_keyboard_access());
                 rt.set_system_scroll_bars_state(crate::platform::scroll_bars::reread().with_override(self.args.scroll_bars));
                 self.secure_input.set(focused && l.visible && !l.occluded && rt.has_secure_focus());
-                rt.set_titlebar_inset(place_chrome(&l.window, chrome));
+                l.place_chrome(rt, chrome);
                 if !focused {
                     rt.cancel_composition();
                     l.window.set_ime_allowed(false);

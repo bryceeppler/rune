@@ -201,6 +201,13 @@ impl Tx {
         self.minimize = true;
     }
 
+    /// Maximize this window after this handler, or restore it when it is maximized, as its
+    /// title bar's maximize button would (zoom on macOS). Asked twice in one change, it does
+    /// nothing.
+    pub fn toggle_maximized(&mut self) {
+        self.frame_request(crate::window::frame::FrameRequest { toggle_maximized: true, ..Default::default() });
+    }
+
     /// Set this window's title after this handler, in its title bar and the Window menu. The
     /// window starts with `AppSpec`'s title and keeps the last one set when it's closed and
     /// opened again. Headless `--tree` output shows it as `"title"`. An overlay has no title.

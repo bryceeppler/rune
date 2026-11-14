@@ -147,12 +147,44 @@ impl<S: 'static> Runtime<S> {
         self.hits.iter().rev().find_map(|&(id, r)| {
             if !self.hit_contains(id, r, x, y) { return None; }
             let i = *self.node_index.get(&id)?;
-            let n = &self.nodes[i];
-            // A secondary-only child must not obscure primary input or background blur.
-            (!self.subtree_exiting(i) && self.allowed(i) && (n.has_primary_handler() || n.input.is_some() || n.role == "textbox"
-                || (n.role == "button" && n.vis.hit) || n.window_drag || n.focus.enabled || n.handlers.modal.is_some()
-                || self.is_selectable(i))).then_some(i)
+            self.takes_primary(i).then_some(i)
         })
+    }
+
+    /// Whether a press there goes to this element. A secondary-only child must not obscure
+    /// primary input or background blur.
+    fn takes_primary(&self, i: usize) -> bool {
+        let n = &self.nodes[i];
+        !self.subtree_exiting(i) && self.allowed(i) && (n.has_primary_handler() || n.input.is_some() || n.role == "textbox"
+            || (n.role == "button" && n.vis.hit) || n.window_drag || n.focus.enabled || n.handlers.modal.is_some()
+            || self.is_selectable(i))
+    }
+
+    /// A `.window_drag()` region a press on moves the window, rather than one that handles
+    /// presses itself.
+    pub(super) fn drags_window(&self, i: usize) -> bool {
+        let n = &self.nodes[i];
+        n.window_drag && n.handlers.on_press.is_none() && n.handlers.on_double_press.is_none() && n.handlers.on_drag.is_none()
+            && n.handlers.drag_out.is_none() && self.textbox_input(i).is_none()
+    }
+
+    /// What Windows' hit test answers across the last frame's drag regions and caption buttons
+    /// (`crate::caption`), from the rects presses go to.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) fn caption_map(&self) -> crate::caption::CaptionMap {
+        use crate::caption::CaptionHit;
+        let mut map: crate::caption::CaptionMap = self.hits.iter().filter_map(|&(id, r)| {
+            let i = *self.node_index.get(&id)?;
+            if !self.takes_primary(i) { return None; }
+            let hit = match self.nodes[i].caption_button {
+                Some(button) => CaptionHit::Button(button),
+                None if self.drags_window(i) => CaptionHit::Drag,
+                None => CaptionHit::Client,
+            };
+            Some((r, hit))
+        }).collect();
+        crate::caption::prune(&mut map);
+        map
     }
 
     /// The element a press, hover or drag at (x, y) goes to. Selectable text passes them to the

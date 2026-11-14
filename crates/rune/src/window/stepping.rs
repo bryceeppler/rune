@@ -85,7 +85,7 @@ impl<S: 'static> Host<S> {
             let rect = crate::overlay::options::local_rect(crate::windows::PlaceRequest::at(self.rt.viewport), Some(request.placement),
                 (area.width as f32 / scale as f32, area.height as f32 / scale as f32));
             let origin = monitor.position();
-            let _ = w.window.request_inner_size(LogicalSize::new(rect[2], rect[3]));
+            let _ = w.window.request_inner_size(w.inner_request((rect[2], rect[3])));
             w.window.set_outer_position(PhysicalPosition::new(origin.x + (f64::from(rect[0]) * scale).round() as i32,
                 origin.y + (f64::from(rect[1]) * scale).round() as i32));
         }
@@ -111,6 +111,8 @@ impl<S: 'static> Host<S> {
             self.args.size = None;
         }
         let Some(w) = &self.win else { return };
+        if request.toggle_maximized { w.window.set_maximized(!w.window.is_maximized()); }
+        if request.size.is_none() && !request.center { return; }
         #[cfg(target_os = "macos")]
         {
             use crate::window::frame::{FrameAnim, snap, target};
@@ -138,7 +140,7 @@ impl<S: 'static> Host<S> {
             let geometry = (window.current_monitor(), window.outer_position(), window.outer_size(), window.inner_size());
             if let Some((width, height)) = request.size {
                 self.frame_jump = Some((width, height));
-                let _ = window.request_inner_size(LogicalSize::new(width, height));
+                let _ = window.request_inner_size(w.inner_request((width, height)));
             }
             // Wayland windows can't see or set their position.
             if self.wayland { return; }
@@ -187,7 +189,7 @@ impl<S: 'static> Host<S> {
             crate::platform::macos::set_window_frame(&w.window, rect);
             self.frame_origin = Some([rect[0], rect[1]]);
             if anim.done(now) { self.frame_anim = None; }
-            self.rt.set_titlebar_inset(place_chrome(&w.window, self.chrome));
+            w.place_chrome(&mut self.rt, self.chrome);
             let size = w.window.inner_size();
             w.resize_surface(&gpu.device, size);
             let scale = w.window.scale_factor() as f32;

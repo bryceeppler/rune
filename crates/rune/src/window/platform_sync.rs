@@ -18,6 +18,8 @@ pub(super) fn sync_platform<S: 'static>(l: &mut Win, rt: &mut Runtime<S>, secure
     l.apply_cursor(rt, focused);
     #[cfg(target_os = "macos")]
     l.native.help.sync(&l.window, rt.help_regions());
+    #[cfg(target_os = "windows")]
+    if let Some(caption) = &l.native.caption { caption.set_map(rt.caption_map(), rt.env.scale); }
     clipboard.flush(rt);
     if let Some(a) = rt.ime_area {
         l.window.set_ime_cursor_area(

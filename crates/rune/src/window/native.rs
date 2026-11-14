@@ -38,6 +38,8 @@ pub(super) struct Native {
 pub(super) struct Native {
     /// Holds a window that's just been shown off screen until its frame lands.
     pub(super) cloak: crate::platform::win32::Cloak,
+    /// The title bar it draws itself (`Chrome::caption_buttons`).
+    pub(super) caption: Option<crate::platform::win32::CaptionFrame>,
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", all(unix, not(target_os = "ios"), not(target_os = "android")))))]

@@ -33,6 +33,7 @@ pub fn commit_generation() -> u64 {
 pub struct Cx<S> {
     pub(super) env: Env,
     pub(super) titlebar_inset: f32,
+    pub(super) caption: Option<crate::Caption>,
     pub(super) system_accent: crate::SystemAccent,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) system_reduced_motion: bool,
@@ -48,7 +49,7 @@ pub struct Cx<S> {
 impl<S> Cx<S> {
     pub(crate) fn retype<T>(&self) -> Cx<T> {
         Cx {
-            env: self.env, titlebar_inset: self.titlebar_inset, system_accent: self.system_accent,
+            env: self.env, titlebar_inset: self.titlebar_inset, caption: self.caption, system_accent: self.system_accent,
             system_scroll_bars: self.system_scroll_bars,
             system_reduced_motion: self.system_reduced_motion, reduced_motion: self.reduced_motion, time_scale: self.time_scale,
             caret: self.caret.clone(), caret_read: self.caret_read.clone(),
@@ -98,6 +99,14 @@ impl<S> Cx<S> {
     /// it needs it in its version.
     pub fn titlebar_inset(&self) -> f32 {
         self.titlebar_inset
+    }
+    /// The title bar band this window draws itself, on Windows with
+    /// [`Chrome::caption_buttons`](crate::Chrome::caption_buttons): its height, its caption
+    /// buttons' width, and whether the window is maximized and active. `None` where the system
+    /// draws the title bar (macOS, Linux, a Windows window without it, headless runs). The view
+    /// re-runs when it changes; a `memo` closure that reads it needs it in its version.
+    pub fn caption(&self) -> Option<crate::Caption> {
+        self.caption
     }
     /// The user's accent colour (System Settings › Appearance on macOS) for this window's
     /// appearance, [`SystemAccent::DEFAULT`](crate::SystemAccent::DEFAULT)'s blue elsewhere and

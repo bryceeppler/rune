@@ -77,10 +77,18 @@ pub struct Chrome {
     /// Applies only to this window's content view when borderless or full-size-content.
     /// Ordinary titled windows and NSPanel overlays keep their native behaviour.
     pub drag_regions: bool,
+    /// Windows: the content fills the window, title bar included, and the app draws the title
+    /// bar and its minimize, maximize and close buttons ([`El::caption_button`](crate::El::caption_button),
+    /// rune-kit's `CaptionButtons`) in the band [`Cx::caption`](crate::Cx::caption) describes.
+    /// `.window_drag()` regions answer Windows' hit test as the title bar, so dragging, Snap,
+    /// double-click to maximize and the system menu stay the system's; the resize borders,
+    /// shadow and rounded corners stay too. Off: Windows draws its own title bar above the
+    /// content. Other platforms ignore it.
+    pub caption_buttons: bool,
 }
 
 impl Chrome {
-    pub const DEFAULT: Chrome = Chrome { full_size_content: true, traffic_lights: None, drag_regions: false };
+    pub const DEFAULT: Chrome = Chrome { full_size_content: true, traffic_lights: None, drag_regions: false, caption_buttons: false };
     /// Headless `--chrome` overlay and checks: macOS 26 draws 14 pt buttons on a 23 pt pitch.
     pub const TRAFFIC_LIGHT: f32 = 14.0;
     pub const TRAFFIC_PITCH: f32 = 23.0;

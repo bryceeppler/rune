@@ -343,6 +343,6 @@ fn on_key(s: &mut App, ev: &KeyEvent, _: &mut Tx) -> bool {
 
 fn main() {
     // The traffic lights centred on the toolbar, 8 points down in the framed pane: 32 points.
-    let chrome = Chrome { full_size_content: true, traffic_lights: Some((16.0, 25.0)), drag_regions: true };
+    let chrome = Chrome { full_size_content: true, traffic_lights: Some((16.0, 25.0)), drag_regions: true, caption_buttons: false };
     rune::App::new(AppSpec { on_key: Some(on_key), ..AppSpec::new("Shell", (1040.0, 640.0), init, view) }).chrome(chrome).run();
 }
