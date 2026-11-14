@@ -1,8 +1,8 @@
 //! A window's accessibility tree through AppKit itself: asks the content view for its
-//! `accessibilityChildren`, as VoiceOver and the Accessibility Inspector do, walks the
-//! elements AccessKit answers with (role, label, identifier, value), and presses a button with
-//! `accessibilityPerformPress`. Opens a native window, so it only runs with RUNE_GUI_TESTS=1
-//! in a logged-in macOS GUI session.
+//! `accessibilityChildren` from the main queue, between the event loop's events, as VoiceOver
+//! and the Accessibility Inspector do, walks the elements AccessKit answers with (role, label,
+//! identifier, value), and presses a button with `accessibilityPerformPress`. Opens a native
+//! window, so it only runs with RUNE_GUI_TESTS=1 in a logged-in macOS GUI session.
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}
@@ -15,8 +15,30 @@ mod mac {
     use objc2::msg_send;
     use objc2::runtime::{AnyObject, Bool};
     use rune::*;
+    use std::ffi::c_void;
     use std::sync::{Mutex, OnceLock, mpsc};
     use std::time::Duration;
+
+    #[link(name = "System", kind = "dylib")]
+    unsafe extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(queue: *const u8, context: *mut c_void, work: extern "C" fn(*mut c_void));
+    }
+
+    type Job = Box<dyn FnOnce() + Send>;
+
+    /// Runs `job` on the main queue, outside any event loop callback, where AppKit answers an
+    /// assistive client's questions.
+    fn on_main(job: impl FnOnce() + Send + 'static) {
+        extern "C" fn run(context: *mut c_void) {
+            // SAFETY: `context` is the `Box<Job>` `on_main` gave up, and the queue runs it once.
+            let job = unsafe { Box::from_raw(context.cast::<Job>()) };
+            job();
+        }
+        let job: Box<Job> = Box::new(Box::new(job));
+        // SAFETY: the main queue is a static libdispatch object; `run` takes back the box.
+        unsafe { dispatch_async_f(&raw const _dispatch_main_q, Box::into_raw(job).cast(), run) }
+    }
 
     #[derive(Default)]
     struct State { presses: u32, name: TextEdit }
@@ -107,26 +129,25 @@ mod mac {
                 ready_rx.recv_timeout(Duration::from_secs(10)).expect("window ready");
                 let read = |press: bool| {
                     let (tx, rx) = mpsc::channel();
-                    handle.update(move |_, _| {
+                    on_main(move || {
                         let view = view_ptr(window.get().unwrap());
                         let mut presses = Vec::new();
                         let tree = walk(view, 0, &mut presses);
-                        if press {
+                        let pressed = press.then(|| presses.first().is_some_and(|&button| {
                             // SAFETY: AccessKit's element for the button, on the main thread.
-                            let ok: Bool = unsafe { msg_send![presses[0], accessibilityPerformPress] };
-                            assert!(ok.as_bool(), "accessibilityPerformPress");
-                        }
-                        let _ = tx.send(tree);
+                            let ok: Bool = unsafe { msg_send![button, accessibilityPerformPress] };
+                            ok.as_bool()
+                        }));
+                        let _ = tx.send((tree, pressed));
                     });
-                    rx.recv_timeout(Duration::from_secs(5)).expect("tree")
+                    let (tree, pressed) = rx.recv_timeout(Duration::from_secs(5)).expect("tree");
+                    if press { assert_eq!(pressed, Some(true), "accessibilityPerformPress"); }
+                    tree
                 };
-                // The first question activates the tree; the answer after a turn holds it.
-                let _ = read(false);
-                std::thread::sleep(Duration::from_millis(300));
                 let tree = read(false);
                 let mut dump = String::new();
                 print(&tree, 0, &mut dump);
-                println!("accessibility_macos: tree\n{dump}");
+                println!("accessibility_macos: the first answer\n{dump}");
                 let save = find(&tree, "save").expect("the button");
                 assert_eq!((save.role.as_str(), save.label.as_str()), ("AXButton", "Save"), "{dump}");
                 let title = find(&tree, "title").expect("the heading");
