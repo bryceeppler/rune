@@ -141,6 +141,9 @@ pub(crate) trait AnyHost {
     fn withdraw_quit(&mut self) {}
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn typed(&mut self, _text: String) {}
+    /// The window's whole accessibility tree, for a client waiting on its first request
+    /// (`crate::a11y::Answer`).
+    fn a11y_answer(&mut self) -> Option<accesskit::TreeUpdate> { None }
 }
 
 /// Builds every host, attaching its shortcut and menu guards, before any resumes: a window's
@@ -154,6 +157,8 @@ fn start_all<T, H>(items: Vec<T>, mut build: impl FnMut(usize, T) -> Option<H>, 
 type Factory = Box<dyn FnOnce(&[Display]) -> Vec<AnyWindowSpec>>;
 
 struct Windows {
+    /// Itself, for what the OS asks between the loop's events (`Reach`).
+    me: std::rc::Weak<RefCell<Windows>>,
     factory: Option<Factory>,
     args: Args,
     proxy: EventLoopProxy<WakeEvent>,
@@ -164,6 +169,10 @@ struct Windows {
     last_main: quitting::LastMain,
 }
 impl Windows {
+    fn a11y_answer(&mut self, slot: usize) -> Option<accesskit::TreeUpdate> {
+        self.hosts.get_mut(slot)?.as_mut()?.a11y_answer()
+    }
+
     fn cleanup(&mut self, event_loop: &ActiveEventLoop) {
         self.settle_quit(event_loop);
         for host in &mut self.hosts {
@@ -206,6 +215,7 @@ impl Windows {
 
 /// What a window needs from the shell to start, whatever its state type.
 pub(crate) struct Start<'a> {
+    windows: std::rc::Weak<RefCell<Windows>>,
     proxy: EventLoopProxy<WakeEvent>,
     slot: usize,
     gpu: Rc<RefCell<Weak<Gpu>>>,
@@ -236,7 +246,8 @@ pub(crate) fn start<S: 'static>(mut spec: WindowSpec<S>, handle: Option<WindowHa
     cx.overlays.append(&mut spec.app.overlays);
     let handle = handle.unwrap_or_else(|| WindowHandle::new(&spec.key));
     let open_urls = crate::open_url::incoming::listen(&spec.app);
-    let mut host = Host::new(spec, handle, args, cx.proxy, cx.slot, cx.gpu, cx.wayland);
+    let reach = Reach { windows: cx.windows, slot: cx.slot };
+    let mut host = Host::new(spec, handle, args, cx.proxy, reach, cx.gpu, cx.wayland);
     (host.keeps_loop, host._open_urls) = (keeps_loop, open_urls);
     Some(Box::new(host))
 }
@@ -262,7 +273,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
         let wayland = is_wayland(event_loop);
         self.hosts = start_all(specs, |slot, spec| {
             let traced = trace_window.as_deref() == Some(spec.key());
-            spec.start(self.args.clone(), Start { proxy: self.proxy.clone(), slot, gpu: self.gpu.clone(), wayland, traced, overlays: &mut overlays })
+            spec.start(self.args.clone(), Start { windows: self.me.clone(), proxy: self.proxy.clone(), slot, gpu: self.gpu.clone(), wayland, traced, overlays: &mut overlays })
         }, |host| host.resumed(event_loop));
         for mut overlay in overlays {
             let (slot, proxy) = (self.hosts.len(), self.proxy.clone());
@@ -344,7 +355,27 @@ impl ApplicationHandler<WakeEvent> for Windows {
 
 use file_drop::{DROP_SAMPLE, FileDrop, FileStep};
 
+/// A host's slot among the loop's windows, which a question the OS asks between the loop's
+/// events reaches when no callback holds them.
+#[derive(Clone)]
+struct Reach {
+    windows: std::rc::Weak<RefCell<Windows>>,
+    slot: usize,
+}
+
+impl Reach {
+    fn a11y(&self) -> crate::a11y::Answer {
+        let Reach { windows, slot } = self.clone();
+        Box::new(move || {
+            let windows = windows.upgrade()?;
+            let mut windows = windows.try_borrow_mut().ok()?;
+            windows.a11y_answer(slot)
+        })
+    }
+}
+
 struct Host<S: 'static> {
+    reach: Reach,
     chrome: Chrome,
     options: WindowOptions,
     placement: Option<crate::windows::PlaceRequest>,
@@ -422,7 +453,8 @@ struct Host<S: 'static> {
 }
 
 impl<S: 'static> Host<S> {
-    fn new(window_spec: WindowSpec<S>, native_handle: WindowHandle, args: Args, proxy: EventLoopProxy<WakeEvent>, slot: usize, gpu_pool: Rc<RefCell<Weak<Gpu>>>, wayland: bool) -> Self {
+    fn new(window_spec: WindowSpec<S>, native_handle: WindowHandle, args: Args, proxy: EventLoopProxy<WakeEvent>, reach: Reach, gpu_pool: Rc<RefCell<Weak<Gpu>>>, wayland: bool) -> Self {
+        let slot = reach.slot;
         let WindowSpec { mut app, options, key: _, on_created } = window_spec;
         let mut args = app.resolve_args(args);
         let on_window = app.on_window.take();
@@ -504,6 +536,7 @@ impl<S: 'static> Host<S> {
         let shortcuts = crate::shortcuts::Guard::attach(&shared, waker, false, wayland);
         let menus = crate::native_menu::Guard::attach(&shared, false);
         Host {
+            reach,
             chrome,
             options,
             placement: None,
@@ -824,7 +857,7 @@ impl<S: 'static> Host<S> {
         // First, before anything observes the view (macOS) or an assistive client asks.
         let a11y = {
             let handle = self.native_handle.clone();
-            crate::a11y::Adapter::new(&window, Arc::new(move || handle.send(WakeEvent::A11y)))
+            crate::a11y::Adapter::new(&window, Arc::new(move || handle.send(WakeEvent::A11y)), self.reach.a11y())
         };
         #[cfg(target_os = "macos")]
         crate::native_menu::adopt_standard_view();

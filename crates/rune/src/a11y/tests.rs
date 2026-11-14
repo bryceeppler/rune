@@ -1,6 +1,6 @@
 //! The accessibility tree the runtime builds, and the actions it runs.
 
-use accesskit::{Action as Ak, ActionData, ActionRequest, Role, TreeId};
+use accesskit::{Action as Ak, ActionData, ActionRequest, ActivationHandler, Role, TreeId};
 use serde_json::Value;
 
 use crate::{Cx, El, Env, GrowthSpec, LiveRegion, Runtime, ScrollSpec, TextEdit, col, row, text, text_input};
@@ -195,6 +195,61 @@ fn a_reopened_surface_gets_the_whole_tree() {
     assert!(second.service(&mut rt, "Form").is_none(), "nothing before the new client asks");
     second.activate();
     assert!(second.service(&mut rt, "Form").expect("activated").tree.is_some());
+}
+
+/// A window's host and its link, as the asking thread reaches them through the loop's windows.
+type Reached = std::rc::Rc<std::cell::RefCell<(Runtime<Form>, crate::AccessibilityLink)>>;
+
+fn first_question(host: &Reached) -> impl ActivationHandler {
+    let reach = std::rc::Rc::downgrade(host);
+    host.borrow().1.answering(Box::new(move || {
+        let host = reach.upgrade()?;
+        let mut host = host.try_borrow_mut().ok()?;
+        let (rt, link) = &mut *host;
+        link.answer(rt, "Form")
+    }))
+}
+
+/// macOS keeps the first answer it gets: a host free to answer gives the whole tree then, and
+/// its next turn sends only what changed since.
+#[test]
+fn a_first_question_the_host_can_answer_gets_the_whole_tree_at_once() {
+    let host: Reached = std::rc::Rc::new(std::cell::RefCell::new((form_rt(), crate::AccessibilityLink::new())));
+    let first = first_question(&host).request_initial_tree().expect("answered at once");
+    assert!(first.tree.is_some(), "the first answer holds the tree's root");
+    assert!(first.nodes.iter().any(|(_, n)| n.author_id() == Some("save")), "the first answer holds the button");
+    let (rt, link) = &mut *host.borrow_mut();
+    assert!(link.service(rt, "Form").is_none(), "the next turn has nothing new to send");
+    let toggle = request(rt, "wifi", Ak::Click, None);
+    rt.a11y_action(&toggle);
+    rt.frame(0.0);
+    let update = link.service(rt, "Form").expect("the switch changed");
+    assert!(update.tree.is_none() && update.nodes.len() <= 3, "only what changed after the first answer");
+}
+
+/// A question that arrives while a loop callback holds the host gets AccessKit's placeholder,
+/// and the host's next turn sends the whole tree.
+#[test]
+fn a_first_question_while_the_host_is_busy_gets_the_whole_tree_on_its_next_turn() {
+    let host: Reached = std::rc::Rc::new(std::cell::RefCell::new((form_rt(), crate::AccessibilityLink::new())));
+    let mut handler = first_question(&host);
+    let busy = host.borrow_mut();
+    assert!(handler.request_initial_tree().is_none(), "a busy host can't answer at once");
+    drop(busy);
+    let (rt, link) = &mut *host.borrow_mut();
+    assert!(link.service(rt, "Form").expect("activated").tree.is_some(), "the next turn sends the whole tree");
+}
+
+/// Before the first frame there is nothing to answer with: the placeholder stands until the
+/// first frame's turn sends the whole tree.
+#[test]
+fn a_first_question_before_the_first_frame_gets_the_whole_tree_after_it() {
+    let rt = Runtime::new(Form::default(), form, (400.0, 500.0), Env::new(true, 2.0));
+    let host: Reached = std::rc::Rc::new(std::cell::RefCell::new((rt, crate::AccessibilityLink::new())));
+    assert!(first_question(&host).request_initial_tree().is_none(), "nothing laid out yet");
+    let (rt, link) = &mut *host.borrow_mut();
+    rt.frame(0.0);
+    assert!(link.service(rt, "Form").expect("the first frame").tree.is_some(), "the first frame's turn sends the whole tree");
 }
 
 #[derive(Default)]

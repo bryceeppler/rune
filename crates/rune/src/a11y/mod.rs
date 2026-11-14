@@ -2,7 +2,9 @@
 //! (UI Automation on Windows, NSAccessibility on macOS, AT-SPI on Linux). The adapter's
 //! handlers run wherever the OS calls them; they only queue what they heard and wake the host,
 //! whose thread then activates the runtime's tree (`runtime/a11y/tree.rs`), runs the actions
-//! and sends tree updates. Until a client asks, the runtime builds nothing.
+//! and sends tree updates. Until a client asks, the runtime builds nothing. macOS asks its first
+//! question on the main thread and keeps the answer, so a window's host answers it with the
+//! whole tree at once when no event loop callback holds it.
 #![cfg_attr(not(all(feature = "accessibility", any(target_os = "windows", target_os = "macos", target_os = "linux"))), allow(dead_code))]
 
 use std::sync::{Arc, Mutex};
@@ -42,6 +44,7 @@ impl Shared {
     }
 }
 
+#[cfg_attr(all(feature = "accessibility", target_os = "macos"), allow(dead_code))]
 struct Activation(Arc<Shared>);
 impl ActivationHandler for Activation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
@@ -49,6 +52,20 @@ impl ActivationHandler for Activation {
         // placeholder until then.
         self.0.push(|i| i.activate = true);
         None
+    }
+}
+
+/// Builds the whole tree on the asking thread, or `None` when the host can't now.
+pub(crate) type Answer = Box<dyn FnMut() -> Option<TreeUpdate>>;
+
+/// The first question when the host may answer it at once; otherwise as [`Activation`].
+#[cfg_attr(not(all(feature = "accessibility", target_os = "macos")), allow(dead_code))]
+struct Answering { shared: Arc<Shared>, answer: Answer }
+impl ActivationHandler for Answering {
+    fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+        let tree = (self.answer)();
+        if tree.is_none() { self.shared.push(|i| i.activate = true); }
+        tree
     }
 }
 
@@ -92,6 +109,23 @@ impl AccessibilityLink {
 
     /// What an assistive client's first request does: the next update holds the whole tree.
     pub fn activate(&self) { self.shared.push(|i| i.activate = true); }
+
+    /// The handler for a client's first request that `answer` may answer at once, as the
+    /// host's [`AccessibilityLink::answer`]; when it can't, the link activates as
+    /// [`AccessibilityLink::activate`] does.
+    #[cfg_attr(not(all(feature = "accessibility", target_os = "macos")), allow(dead_code))]
+    pub(crate) fn answering(&self, answer: Answer) -> impl ActivationHandler + use<> {
+        Answering { shared: self.shared.clone(), answer }
+    }
+
+    /// Activates `rt`'s tree and returns all of it, for a client waiting on its first request:
+    /// `None` before the first frame laid anything out, and the next update then holds it.
+    pub fn answer<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> Option<TreeUpdate> {
+        self.adopt(rt);
+        rt.a11y_activate(name);
+        if log() { eprintln!("rune: a11y {name:?}: activated on the asking thread"); }
+        self.update(rt)
+    }
 
     /// Runs what the link heard on `rt`, then returns the tree's changes for the adapter, as a
     /// host's turn does. `name` names the root when the runtime has no window title.
@@ -146,15 +180,16 @@ pub(crate) struct Adapter {
 }
 
 impl Adapter {
-    /// An adapter for `window`, waking its host with `wake`. `None` where Rune has no adapter
-    /// (the `accessibility` feature off, the web, iOS).
+    /// An adapter for `window`, waking its host with `wake`; on macOS `answer` answers the
+    /// first question at once when it can. `None` where Rune has no adapter (the
+    /// `accessibility` feature off, the web, iOS).
     #[allow(unused_variables)]
-    pub(crate) fn new(window: &winit::window::Window, wake: crate::Waker) -> Option<Self> {
+    pub(crate) fn new(window: &winit::window::Window, wake: crate::Waker, answer: Answer) -> Option<Self> {
         let link = AccessibilityLink::with_wake(wake);
         #[cfg(all(feature = "accessibility", target_os = "windows"))]
         return windows::Adapter::new(window, Activation(link.shared.clone()), Actions(link.shared.clone())).map(|inner| Adapter { link, inner });
         #[cfg(all(feature = "accessibility", target_os = "macos"))]
-        return macos::Adapter::new(window, Activation(link.shared.clone()), Actions(link.shared.clone())).map(|inner| Adapter { link, inner });
+        return macos::Adapter::new(window, link.answering(answer), Actions(link.shared.clone())).map(|inner| Adapter { link, inner });
         #[cfg(all(feature = "accessibility", target_os = "linux"))]
         return Self::surface(link);
         #[allow(unreachable_code)]
@@ -207,6 +242,12 @@ impl Adapter {
         let queued = self.receive(rt, name);
         self.sync(rt);
         queued
+    }
+
+    /// The whole tree for a client waiting on its first request ([`AccessibilityLink::answer`]).
+    #[cfg_attr(not(all(feature = "accessibility", target_os = "macos")), allow(dead_code))]
+    pub(crate) fn answer<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> Option<TreeUpdate> {
+        self.link.answer(rt, name)
     }
 
     /// Runs what the adapter heard on `rt`: activation, deactivation and actions. True when

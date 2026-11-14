@@ -101,7 +101,7 @@ fn run_configured(factory: Factory, args: Args, accessory: bool) -> Result<(), S
         let proxy = proxy.clone();
         crate::platform::quit::on_sigterm(move || { let _ = proxy.send_event(WakeEvent::SessionEnd); });
     }
-    let windows = Rc::new(RefCell::new(Windows { factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None, last_main: Default::default() }));
+    let windows = Rc::new_cyclic(|me| RefCell::new(Windows { me: me.clone(), factory: Some(factory), args, proxy, hosts: Vec::new(), gpu: Rc::default(), quitting: None, last_main: Default::default() }));
     #[cfg(target_os = "windows")]
     {
         typing.get_or_init(|| Rc::downgrade(&windows));

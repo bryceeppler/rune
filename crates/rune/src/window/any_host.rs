@@ -33,6 +33,10 @@ impl<S: 'static> AnyHost for Host<S> {
 
     fn withdraw_quit(&mut self) { self.rt.withdraw_close(crate::CloseKind::Quit); }
 
+    fn a11y_answer(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.win.as_mut()?.a11y.as_mut()?.answer(&mut self.rt, self.spec.title)
+    }
+
     fn typed(&mut self, text: String) {
         let Some(l) = &self.win else { return };
         self.rt.key(crate::KeyEvent { key: crate::Key::Text(text), mods: crate::Mods::default() });

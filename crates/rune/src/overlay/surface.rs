@@ -8,7 +8,7 @@ impl<T: 'static> Overlay<T> {
     pub(super) fn attach(&mut self, backing: Backing, scale: f32) -> Option<Live> {
         // First, before the surface binds the view (macOS may observe it).
         let a11y = self.shared.wake.lock().unwrap().clone().and_then(|wake| match &backing {
-            Backing::Window(window) => crate::a11y::Adapter::new(window, wake),
+            Backing::Window(window) => crate::a11y::Adapter::new(window, wake, Box::new(|| None)),
             #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
             Backing::Layer(_) | Backing::Xwayland(_) => crate::a11y::Adapter::windowless(wake),
         });
