@@ -14,11 +14,13 @@ use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, G
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GA_ROOT, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetCursorPos, GetWindowLongW, HTCAPTION, HTCLIENT, HTCLOSE, HTMAXBUTTON,
-    HTMINBUTTON, HTTOP, IsZoomed, MINMAXINFO, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowPos, WM_GETMINMAXINFO, WM_LBUTTONDOWN,
+    EnableMenuItem, GA_ROOT, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetCursorPos, GetSystemMenu, GetWindowLongW, HTCAPTION, HTCLIENT, HTCLOSE, HTMAXBUTTON,
+    HTMINBUTTON, HTTOP, IsZoomed, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MINMAXINFO, NCCALCSIZE_PARAMS, PostMessageW, SC_CLOSE,
+    SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SM_CXPADDEDBORDER, SM_CYFRAME, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetMenuDefaultItem, SetWindowPos, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TrackPopupMenu, WM_GETMINMAXINFO, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
-    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WindowFromPoint,
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_NCRBUTTONUP, WM_SYSCOMMAND, WindowFromPoint,
 };
 
 use crate::caption::{CaptionHit, CaptionMap};
@@ -163,6 +165,23 @@ fn forward(hwnd: HWND, message: u32, keys: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe { DefSubclassProc(hwnd, message, keys, packed(client(hwnd, point(lparam)))) }
 }
 
+/// The window menu at `at`, as a right click on a system-drawn title bar opens it: the system
+/// doesn't for a title bar the window draws itself.
+fn system_menu(hwnd: HWND, at: POINT) {
+    let zoomed = maximized(hwnd);
+    // SAFETY: the window menu of a live window owned by this thread, tracked modally here.
+    unsafe {
+        let menu = GetSystemMenu(hwnd, 0);
+        if menu.is_null() { return; }
+        for (command, on) in [(SC_RESTORE, zoomed), (SC_MOVE, !zoomed), (SC_SIZE, !zoomed), (SC_MINIMIZE, true), (SC_MAXIMIZE, !zoomed), (SC_CLOSE, true)] {
+            EnableMenuItem(menu, command, MF_BYCOMMAND | if on { MF_ENABLED } else { MF_GRAYED });
+        }
+        SetMenuDefaultItem(menu, SC_CLOSE, 0);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, std::ptr::null());
+        if command != 0 { PostMessageW(hwnd, WM_SYSCOMMAND, command as WPARAM, 0); }
+    }
+}
+
 fn leave(hwnd: HWND) {
     // SAFETY: as above.
     unsafe { DefSubclassProc(hwnd, WM_MOUSELEAVE, 0, 0) };
@@ -191,19 +210,17 @@ unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lpa
             return forward(hwnd, WM_MOUSEMOVE, 0, lparam);
         }
         WM_NCMOUSEMOVE if state.on_button.replace(false) => leave(hwnd),
-        WM_NCMOUSELEAVE if state.on_button.get() => match pointer_hit(hwnd) {
-            Some(hit) if button(hit as WPARAM) => track(hwnd, TME_LEAVE | TME_NONCLIENT),
-            Some(HTCLIENT) => {
-                state.on_button.set(false);
-                track(hwnd, TME_LEAVE);
-            }
-            _ => {
-                state.on_button.set(false);
-                leave(hwnd);
-            }
+        WM_NCMOUSELEAVE if state.on_button.replace(false) => match pointer_hit(hwnd) {
+            Some(HTCLIENT) => track(hwnd, TME_LEAVE),
+            Some(hit) if button(hit as WPARAM) => {}
+            _ => leave(hwnd),
         },
         WM_MOUSELEAVE if pointer_hit(hwnd).is_some_and(|hit| button(hit as WPARAM)) => return 0,
         WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if button(wparam) => return forward(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam),
+        WM_NCRBUTTONUP if wparam == HTCAPTION as WPARAM => {
+            system_menu(hwnd, point(lparam));
+            return 0;
+        }
         WM_NCLBUTTONUP if button(wparam) => return forward(hwnd, WM_LBUTTONUP, 0, lparam),
         WM_GETMINMAXINFO => {
             // SAFETY: winit fills in the limits for the content size it was given first.
