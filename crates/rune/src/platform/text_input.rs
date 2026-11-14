@@ -203,18 +203,17 @@ pub(crate) struct Geometry {
 impl Geometry {
     pub(crate) fn first_rect(&self, document: &Document, wanted: Utf16Range) -> Option<([f32; 4], Utf16Range)> {
         let bytes = whole_characters(&self.laid.content, document.composed_bytes(wanted, &self.laid.content)?);
-        let boxes = self.layout.range_boxes(bytes.start, bytes.end, false);
-        let (rect, covered) = match boxes.first() {
-            Some(&(_, line)) => {
-                let end = self.layout.line(line).map_or(bytes.end, |l| l.text_range().end).clamp(bytes.start, bytes.end);
-                let rect = boxes.iter().filter(|(_, l)| *l == line).map(|(bb, _)| *bb)
-                    .reduce(|a, b| parley::BoundingBox::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1)))?;
-                (rect, bytes.start..end)
-            }
-            None => {
-                let affinity = self.caret.filter(|&(at, _)| at == bytes.start).map_or(parley::layout::Affinity::Downstream, |(_, affinity)| affinity);
-                (self.layout.caret_box(bytes.start, affinity, 0.0), bytes.start..bytes.start)
-            }
+        let (rect, covered) = if bytes.is_empty() {
+            let affinity = self.caret.filter(|&(at, _)| at == bytes.start).map_or(parley::layout::Affinity::Downstream, |(_, affinity)| affinity);
+            (self.layout.caret_box(bytes.start, affinity, 0.0), bytes.clone())
+        } else {
+            let (line, range) = self.layout.lines().enumerate().map(|(index, l)| (index, l.text_range()))
+                .find(|(_, range)| range.contains(&bytes.start))?;
+            let covered = bytes.start..bytes.end.min(range.end);
+            let drawn = self.layout.range_boxes(covered.start, covered.end, false).into_iter()
+                .filter(|&(_, on)| on == line).map(|(bb, _)| bb)
+                .reduce(|a, b| parley::BoundingBox::new(a.x0.min(b.x0), a.y0.min(b.y0), a.x1.max(b.x1), a.y1.max(b.y1)));
+            (drawn.unwrap_or_else(|| self.layout.caret_box(covered.start, parley::layout::Affinity::Downstream, 0.0)), covered)
         };
         let at = |x: f64, y: f64| [(self.origin[0] + x as f32 * self.scale) / self.pixels, (self.origin[1] + y as f32 * self.scale) / self.pixels];
         let [x, y] = at(rect.x0, rect.y0);
