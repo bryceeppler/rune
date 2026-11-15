@@ -367,7 +367,9 @@ impl<S: 'static> ErasedWindow for Erased<S> {
             inherited.scene = None;
             inherited.size = None;
         }
-        crate::window::start(self.spec, self.handle, !self.secondary, inherited, cx)
+        let handle = self.handle.unwrap_or_else(|| crate::WindowHandle::new(&self.spec.key));
+        self.spec.app.shared.anchor.bind(&handle);
+        crate::window::start(self.spec, Some(handle), !self.secondary, inherited, cx)
     }
 }
 

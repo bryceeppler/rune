@@ -5,6 +5,8 @@
 //! macOS, pixels on Windows and X11. A frame saved on one display layout is moved onto one of the
 //! displays present when it is restored (`fit`).
 
+use std::sync::{Arc, Mutex};
+
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, Position};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Fullscreen, Window};
@@ -96,6 +98,85 @@ impl WindowGeometry {
         };
         let size = (fit(content.0, want.0, w, min.0), fit(content.1, want.1, h, min.1));
         WindowGeometry { frame: self.frame.map(|_| placed), size, ..self.clone() }
+    }
+}
+
+/// Where a window `points` big goes to sit centred on `parent`, an outer frame in desktop
+/// units: its top-left on the screen holding most of `parent`, moved only as far as it takes
+/// to lie on that screen, and kept on it when the window is bigger. A `parent` on no screen
+/// centres it on the primary screen. None without screens.
+pub(crate) fn centred_on(parent: [i32; 4], points: (f64, f64), screens: &[Screen]) -> Option<[i32; 2]> {
+    let open: Vec<&Screen> = screens.iter().filter(|s| s.area[2] > 0 && s.area[3] > 0).collect();
+    let held = |s: &&&Screen| overlap(parent, s.area);
+    let best = open.iter().max_by_key(held).filter(|s| held(s) > 0);
+    let screen = best.or_else(|| open.iter().find(|s| s.primary)).or(open.first())?;
+    let units = if screen.units.is_finite() && screen.units > 0.0 { screen.units } else { 1.0 };
+    let size = [points.0, points.1].map(|p| (p * units).round() as i64);
+    let area = screen.area.map(i64::from);
+    let around = if best.is_some() { parent.map(i64::from) } else { area };
+    let slack = i64::from(screen.slack.max(0));
+    let axis = |i: usize| {
+        let centred = around[i] + (around[i + 2] - size[i]).div_euclid(2);
+        let placed = centred.min(area[i] + area[i + 2] + slack - size[i]).max(area[i] - slack);
+        placed.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    };
+    Some([axis(0), axis(1)])
+}
+
+/// A position in desktop units, as winit takes it: points on macOS, pixels elsewhere.
+fn desktop_position(x: i32, y: i32) -> Position {
+    if cfg!(target_os = "macos") {
+        Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y)))
+    } else {
+        Position::Physical(PhysicalPosition::new(x, y))
+    }
+}
+
+/// The window `App::centered_on` named: where it shows now, or where it comes back to while
+/// minimized, and the room its decoration takes in points.
+struct Parent {
+    frame: [i32; 4],
+    chrome: (f64, f64),
+}
+
+impl Parent {
+    /// None before the window exists.
+    fn of(handle: &crate::WindowHandle) -> Option<Parent> {
+        let window = handle.window().ok().filter(|w| w.is_minimized() != Some(true));
+        let live = window.as_ref().and_then(|w| Some((outer_frame(w, false)?, w)));
+        let chrome = live.map_or((0.0, 0.0), |(frame, w)| chrome(w, frame));
+        let frame = live.map(|(frame, _)| frame).or_else(|| handle.geometry()?.frame).filter(|f| f[2] > 0 && f[3] > 0)?;
+        Some(Parent { frame, chrome })
+    }
+}
+
+/// The room `window`'s decoration takes around its content, in points, from its outer frame.
+fn chrome(window: &Window, frame: [i32; 4]) -> (f64, f64) {
+    let units = units_per_point(window.scale_factor());
+    let inner: LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
+    (f64::from(frame[2]) / units - inner.width, f64::from(frame[3]) / units - inner.height)
+}
+
+/// `window`'s outer size in points. A hidden X11 window has no frame until the window manager
+/// maps it, so it wears `borrowed`, its parent's decoration, instead.
+fn outer_points(window: &Window, frame: [i32; 4], borrowed: (f64, f64)) -> (f64, f64) {
+    let units = units_per_point(window.scale_factor());
+    let outer = (f64::from(frame[2]) / units, f64::from(frame[3]) / units);
+    let own = chrome(window, frame);
+    if own.0.abs() < 0.5 && own.1.abs() < 0.5 { (outer.0 + borrowed.0, outer.1 + borrowed.1) } else { outer }
+}
+
+/// An app's window once its host starts, so another app's `App::centered_on` can find it.
+#[derive(Clone, Default)]
+pub(crate) struct Anchor(Arc<Mutex<Option<crate::WindowHandle>>>);
+
+impl Anchor {
+    pub(crate) fn bind(&self, window: &crate::WindowHandle) {
+        *self.0.lock().unwrap() = Some(window.clone());
+    }
+
+    fn window(&self) -> Option<crate::WindowHandle> {
+        self.0.lock().unwrap().clone()
     }
 }
 
@@ -191,6 +272,16 @@ impl<S: 'static> crate::App<S> {
         self.restore_geometry = Some(saved);
         self
     }
+
+    /// Each time this window comes on screen from hidden, it opens centred on `parent`'s
+    /// window: on that window where it shows now, or where it comes back to while minimized,
+    /// moved only as far as it takes to lie on the display holding most of it. A window
+    /// already on screen stays where it is. Until `parent` has a window, and on Wayland, which
+    /// places windows itself, it opens where the platform puts it.
+    pub fn centered_on<P: 'static>(self, parent: &crate::AppHandle<P>) -> Self {
+        *self.shared.centered_on.lock().unwrap() = Some(parent.shared.anchor.clone());
+        self
+    }
 }
 
 impl<S: 'static> Host<S> {
@@ -228,12 +319,22 @@ impl<S: 'static> Host<S> {
         let wayland = is_wayland(event_loop);
         let min = self.options.size_limits(self.spec.min_size).0;
         let placed = saved.fitted(&screens(event_loop), units_per_point(saved.scale), min);
-        let position = placed.frame.filter(|_| !wayland).map(|[x, y, ..]| if cfg!(target_os = "macos") {
-            Position::Logical(LogicalPosition::new(f64::from(x), f64::from(y)))
-        } else {
-            Position::Physical(PhysicalPosition::new(x, y))
-        });
+        let position = placed.frame.filter(|_| !wayland).map(|[x, y, ..]| desktop_position(x, y));
         Some((position, placed.size))
+    }
+
+    /// Centres this hidden window on the one `App::centered_on` named, before it shows.
+    pub(super) fn centre_on_parent(&mut self, event_loop: &ActiveEventLoop) {
+        if is_wayland(event_loop) { return; }
+        let anchor = self.shared.centered_on.lock().unwrap().clone();
+        let Some(parent) = anchor.and_then(|a| a.window()).as_ref().and_then(Parent::of) else { return };
+        let Some(w) = self.win.as_ref().filter(|w| !w.visible) else { return };
+        let Some(frame) = outer_frame(&w.window, false) else { return };
+        let Some([x, y]) = centred_on(parent.frame, outer_points(&w.window, frame, parent.chrome), &screens(event_loop)) else { return };
+        w.window.set_outer_position(desktop_position(x, y));
+        #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))]
+        crate::platform::x11::placed::on_map(&w.window, x, y);
+        self.sync_origin();
     }
 
     /// Maximizes or fullscreens a window `App::restore_geometry` opened, once, as it was saved.

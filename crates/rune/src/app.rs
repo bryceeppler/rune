@@ -721,6 +721,10 @@ pub(crate) struct Shared<S> {
     /// `AppHandle::quit` was called, or the web app is ending.
     pub(crate) quitting: AtomicBool,
     pub(crate) window_error: Mutex<Option<String>>,
+    /// This app's window once its host starts, for another app's `App::centered_on`.
+    pub(crate) anchor: crate::window::geometry::Anchor,
+    /// The window `App::centered_on` named.
+    pub(crate) centered_on: Mutex<Option<crate::window::geometry::Anchor>>,
 }
 
 impl<S> Default for Shared<S> {
@@ -733,6 +737,8 @@ impl<S> Default for Shared<S> {
             visible: AtomicBool::new(false),
             quitting: AtomicBool::new(false),
             window_error: Mutex::new(None),
+            anchor: Default::default(),
+            centered_on: Mutex::new(None),
         }
     }
 }

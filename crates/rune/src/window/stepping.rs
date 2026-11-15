@@ -71,6 +71,7 @@ impl<S: 'static> Host<S> {
     }
 
     pub(super) fn apply_placement(&mut self, event_loop: &ActiveEventLoop) {
+        self.centre_on_parent(event_loop);
         let (Some(request), Some(w)) = (&self.placement, &self.win) else { return };
         if is_wayland(event_loop) { return; }
         #[cfg(target_os = "macos")]

@@ -126,3 +126,35 @@ fn a_frame_under_the_minimum_grows_to_it() {
 }
 
 fn grown(s: &Screen) -> [i32; 4] { [s.area[0] - s.slack, s.area[1] - s.slack, s.area[2] + 2 * s.slack, s.area[3] + 2 * s.slack] }
+
+const SETTINGS: (f64, f64) = (780.0, 607.0);
+
+#[test]
+fn a_window_centres_on_its_parent() {
+    assert_eq!(centred_on([200, 100, 1000, 700], SETTINGS, &[LAPTOP, MONITOR]), Some([310, 146]));
+    assert_eq!(centred_on([1800, -200, 1200, 800], SETTINGS, &[LAPTOP, MONITOR]), Some([2010, -104]), "on a second display");
+}
+
+#[test]
+fn a_window_is_sized_in_the_units_of_its_parents_display() {
+    let primary = Screen { area: [0, 0, 1920, 1040], units: 1.0, slack: 0, primary: true };
+    let wide = Screen { area: [1920, 0, 3840, 2100], units: 1.5, slack: 0, primary: false };
+    assert_eq!(centred_on([2000, 100, 1500, 1000], SETTINGS, &[primary, wide]), Some([2165, 144]));
+}
+
+#[test]
+fn a_window_moves_only_as_far_as_it_takes_to_stay_on_its_parents_display() {
+    assert_eq!(centred_on([1100, 600, 400, 300], SETTINGS, &[LAPTOP, MONITOR]), Some([732, 375]));
+    assert_eq!(centred_on([1300, 100, 800, 600], SETTINGS, &[LAPTOP, MONITOR]), Some([1512, 96]), "onto the display holding most of the parent");
+}
+
+#[test]
+fn a_window_bigger_than_the_display_keeps_its_top_left_on_it() {
+    assert_eq!(centred_on([100, 100, 800, 600], (1600.0, 1000.0), &[LAPTOP]), Some([0, 25]));
+}
+
+#[test]
+fn a_parent_on_no_display_centres_the_window_on_the_primary_one() {
+    assert_eq!(centred_on([5000, 5000, 800, 600], SETTINGS, &[MONITOR, LAPTOP]), Some([366, 200]));
+    assert_eq!(centred_on([200, 100, 1000, 700], SETTINGS, &[]), None);
+}

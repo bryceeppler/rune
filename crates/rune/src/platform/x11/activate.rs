@@ -4,7 +4,6 @@
 //! person's (source 2 in EWMH) with the key press's time moves the window to the desktop they
 //! are on and focuses it there.
 
-use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
 
@@ -33,12 +32,7 @@ pub(crate) fn asks(current: Option<u32>, window: Option<u32>, time: u32) -> Vec<
 /// Brings `window` to the current desktop and focuses it; false when it isn't an X11 window or
 /// the display can't be reached, so the caller falls back to winit's own focus.
 pub(crate) fn bring_here(window: &winit::window::Window, time: u32) -> bool {
-    let id = match window.window_handle().ok().map(|handle| handle.as_raw()) {
-        Some(RawWindowHandle::Xlib(w)) => match u32::try_from(w.window) { Ok(id) => id, Err(_) => return false },
-        Some(RawWindowHandle::Xcb(w)) => w.window.get(),
-        _ => return false,
-    };
-    send(id, time).is_some()
+    super::window_id(window).and_then(|id| send(id, time)).is_some()
 }
 
 fn send(id: u32, time: u32) -> Option<()> {
