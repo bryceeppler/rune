@@ -142,10 +142,10 @@ struct Parent {
 impl Parent {
     /// None before the window exists.
     fn of(handle: &crate::WindowHandle) -> Option<Parent> {
-        let window = handle.window().ok().filter(|w| w.is_minimized() != Some(true));
-        let live = window.as_ref().and_then(|w| Some((outer_frame(w, false)?, w)));
-        let chrome = live.map_or((0.0, 0.0), |(frame, w)| chrome(w, frame));
-        let frame = live.map(|(frame, _)| frame).or_else(|| handle.geometry()?.frame).filter(|f| f[2] > 0 && f[3] > 0)?;
+        let window = handle.window().ok();
+        let chrome = window.as_ref().and_then(|w| Some(chrome(w, outer_frame(w, false)?))).unwrap_or((0.0, 0.0));
+        let live = window.filter(|w| w.is_minimized() != Some(true)).and_then(|w| outer_frame(&w, false));
+        let frame = live.or_else(|| handle.geometry()?.frame).filter(|f| f[2] > 0 && f[3] > 0)?;
         Some(Parent { frame, chrome })
     }
 }
@@ -157,13 +157,13 @@ fn chrome(window: &Window, frame: [i32; 4]) -> (f64, f64) {
     (f64::from(frame[2]) / units - inner.width, f64::from(frame[3]) / units - inner.height)
 }
 
-/// `window`'s outer size in points. A hidden X11 window has no frame until the window manager
-/// maps it, so it wears `borrowed`, its parent's decoration, instead.
+/// `window`'s outer size in points. A decorated X11 window has no frame until the window
+/// manager first maps it, so until then it wears `borrowed`, its parent's decoration.
 fn outer_points(window: &Window, frame: [i32; 4], borrowed: (f64, f64)) -> (f64, f64) {
     let units = units_per_point(window.scale_factor());
     let outer = (f64::from(frame[2]) / units, f64::from(frame[3]) / units);
     let own = chrome(window, frame);
-    if own.0.abs() < 0.5 && own.1.abs() < 0.5 { (outer.0 + borrowed.0, outer.1 + borrowed.1) } else { outer }
+    if window.is_decorated() && own.0.abs() < 0.5 && own.1.abs() < 0.5 { (outer.0 + borrowed.0, outer.1 + borrowed.1) } else { outer }
 }
 
 /// An app's window once its host starts, so another app's `App::centered_on` can find it.
@@ -276,8 +276,10 @@ impl<S: 'static> crate::App<S> {
     /// Each time this window comes on screen from hidden, it opens centred on `parent`'s
     /// window: on that window where it shows now, or where it comes back to while minimized,
     /// moved only as far as it takes to lie on the display holding most of it. A window
-    /// already on screen stays where it is. Until `parent` has a window, and on Wayland, which
-    /// places windows itself, it opens where the platform puts it.
+    /// already on screen stays where it is. The window must exist while hidden, as
+    /// `WindowOptions { visible: false, .. }` makes it: one first created as it opens, or created
+    /// again after `release_gpu_when_closed`, opens where the platform puts it, as it does
+    /// before `parent` has a window and on Wayland, which places windows itself.
     pub fn centered_on<P: 'static>(self, parent: &crate::AppHandle<P>) -> Self {
         *self.shared.centered_on.lock().unwrap() = Some(parent.shared.anchor.clone());
         self
