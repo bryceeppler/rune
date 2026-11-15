@@ -158,3 +158,10 @@ fn a_parent_on_no_display_centres_the_window_on_the_primary_one() {
     assert_eq!(centred_on([5000, 5000, 800, 600], SETTINGS, &[MONITOR, LAPTOP]), Some([366, 200]));
     assert_eq!(centred_on([200, 100, 1000, 700], SETTINGS, &[]), None);
 }
+
+#[test]
+fn a_windows_border_may_pass_the_sides_and_bottom_but_never_the_top() {
+    let screen = Screen { area: [0, 0, 1920, 1040], units: 1.0, slack: 7, primary: true };
+    assert_eq!(centred_on([0, 0, 640, 420], SETTINGS, &[screen]), Some([-7, 0]), "the title bar stays on the display");
+    assert_eq!(centred_on([1280, 620, 640, 420], SETTINGS, &[screen]), Some([1147, 440]));
+}

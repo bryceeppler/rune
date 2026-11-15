@@ -103,8 +103,9 @@ impl WindowGeometry {
 
 /// Where a window `points` big goes to sit centred on `parent`, an outer frame in desktop
 /// units: its top-left on the screen holding most of `parent`, moved only as far as it takes
-/// to lie on that screen, and kept on it when the window is bigger. A `parent` on no screen
-/// centres it on the primary screen. None without screens.
+/// to lie on that screen, and kept on it when the window is bigger. Windows' invisible resize
+/// border may pass the area's sides and bottom, never its top, where the title bar is. A
+/// `parent` on no screen centres it on the primary screen. None without screens.
 pub(crate) fn centred_on(parent: [i32; 4], points: (f64, f64), screens: &[Screen]) -> Option<[i32; 2]> {
     let open: Vec<&Screen> = screens.iter().filter(|s| s.area[2] > 0 && s.area[3] > 0).collect();
     let held = |s: &&&Screen| overlap(parent, s.area);
@@ -117,7 +118,8 @@ pub(crate) fn centred_on(parent: [i32; 4], points: (f64, f64), screens: &[Screen
     let slack = i64::from(screen.slack.max(0));
     let axis = |i: usize| {
         let centred = around[i] + (around[i + 2] - size[i]).div_euclid(2);
-        let placed = centred.min(area[i] + area[i + 2] + slack - size[i]).max(area[i] - slack);
+        let lead = if i == 0 { slack } else { 0 };
+        let placed = centred.min(area[i] + area[i + 2] + slack - size[i]).max(area[i] - lead);
         placed.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
     };
     Some([axis(0), axis(1)])
