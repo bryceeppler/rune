@@ -144,10 +144,29 @@ impl<S: 'static> Runtime<S> {
 
     /// The topmost element under (x, y) that takes primary input, selectable text included.
     pub(super) fn top_target(&self, x: f32, y: f32) -> Option<usize> {
-        self.hits.iter().rev().find_map(|&(id, r)| {
+        self.top_where(x, y, |i| self.allowed(i))
+    }
+
+    /// The element a press at (x, y) would go to were the active modal, which lets drags
+    /// through, not there.
+    pub(super) fn target_behind_modal(&self, x: f32, y: f32) -> Option<usize> {
+        self.top_in(&self.hits_behind_modal, x, y, |_| true)
+    }
+
+    fn behind_drag_through_modal(&self, i: usize) -> bool {
+        !self.nodes[i].inert
+            && self.active_modal().and_then(|m| self.nodes[m].handlers.modal.as_ref()).is_some_and(|m| m.drags_through)
+    }
+
+    fn top_where(&self, x: f32, y: f32, reachable: impl Fn(usize) -> bool) -> Option<usize> {
+        self.top_in(&self.hits, x, y, reachable)
+    }
+
+    fn top_in(&self, hits: &[(NodeId, [f32; 4])], x: f32, y: f32, reachable: impl Fn(usize) -> bool) -> Option<usize> {
+        hits.iter().rev().find_map(|&(id, r)| {
             if !self.hit_contains(id, r, x, y) { return None; }
             let i = *self.node_index.get(&id)?;
-            self.takes_primary(i).then_some(i)
+            (reachable(i) && self.takes_primary(i)).then_some(i)
         })
     }
 
@@ -155,7 +174,7 @@ impl<S: 'static> Runtime<S> {
     /// primary input or background blur.
     fn takes_primary(&self, i: usize) -> bool {
         let n = &self.nodes[i];
-        !self.subtree_exiting(i) && self.allowed(i) && (n.has_primary_handler() || n.input.is_some() || n.role == "textbox"
+        !self.subtree_exiting(i) && (n.has_primary_handler() || n.input.is_some() || n.role == "textbox"
             || (n.role == "button" && n.vis.hit) || n.window_drag || n.focus.enabled || n.handlers.modal.is_some()
             || self.is_selectable(i))
     }
@@ -175,7 +194,7 @@ impl<S: 'static> Runtime<S> {
         use crate::caption::CaptionHit;
         let mut map: crate::caption::CaptionMap = self.hits.iter().filter_map(|&(id, r)| {
             let i = *self.node_index.get(&id)?;
-            if !self.takes_primary(i) { return None; }
+            if !(self.allowed(i) && self.takes_primary(i)) { return None; }
             let hit = match self.nodes[i].caption_button {
                 Some(button) => CaptionHit::Button(button),
                 None if self.drags_window(i) => CaptionHit::Drag,
@@ -233,7 +252,7 @@ impl<S: 'static> Runtime<S> {
         if (n.vis.hit || n.handlers.get().is_some_and(crate::el::Handlers::takes_hit) || n.input.is_some() || n.role == "textbox" || n.window_drag || n.focus.get().is_some_and(|f| f.enabled)
             || n.text.as_ref().is_some_and(|t| t.selectable))
             && !self.subtree_exiting(i)
-            && self.allowed(i) && effective_opacity > 0.001 && visible
+            && (self.allowed(i) || self.behind_drag_through_modal(i)) && effective_opacity > 0.001 && visible
         {
             let c = if n.parent.is_some() { pinh_clip } else { self.inh_scratch[0].clip };
             let rect_pt = if (press_k - 1.0).abs() > 1e-5 {
@@ -248,6 +267,10 @@ impl<S: 'static> Runtime<S> {
                 rect_pt[3].min(c[3] / s),
             ];
             let rect = if n.parent.is_some() { cr } else { rect_pt };
+            if !self.allowed(i) {
+                self.hits_behind_modal.push((self.nodes[i].id, rect));
+                return;
+            }
             if !self.push_link_hits(i, rect_pt, rect) { self.hits.push((self.nodes[i].id, rect)); }
             let n = &self.nodes[i];
             if n.vis.hit && effective_opacity > 0.0 && rect[2] > rect[0] && rect[3] > rect[1] {

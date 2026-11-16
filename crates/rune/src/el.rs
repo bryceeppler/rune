@@ -145,6 +145,7 @@ pub(crate) struct ModalSpec {
     pub dismiss: PressFn,
     pub outside: bool,
     pub kind: ModalKind,
+    pub drags_through: bool,
 }
 
 /// What a modal is, which decides where a right-click outside it goes ([`El::modal_kind`]).
@@ -1148,7 +1149,7 @@ impl El {
     }
     /// Trap focus and make the background inert while mounted. Escape requests dismissal.
     pub fn modal<S: 'static>(mut self, click_outside: bool, dismiss: impl Fn(&mut S) + 'static) -> Self {
-        self.handlers.modal = Some(ModalSpec { outside: click_outside, kind: ModalKind::Dialog,
+        self.handlers.modal = Some(ModalSpec { outside: click_outside, kind: ModalKind::Dialog, drags_through: false,
             dismiss: Rc::new(move |s, _| dismiss(downcast::<S>(s))) });
         self
     }
@@ -1160,6 +1161,15 @@ impl El {
     }
     pub fn modal_click_outside(mut self, enabled: bool) -> Self {
         if let Some(h) = self.handlers.get_mut_if_some() && let Some(m) = &mut h.modal { m.outside = enabled; }
+        self
+    }
+    /// A press outside this [`El::modal`] on an element that drags ([`El::on_drag`]) goes to
+    /// that element, so a row behind a floating sidebar can be dragged onto it. The modal stays
+    /// open while the press drags past the click slop; a release short of it dismisses the modal
+    /// as an outside click does. Either way the element's `on_press` never runs, and focus stays
+    /// in the modal.
+    pub fn modal_drags_through(mut self, enabled: bool) -> Self {
+        if let Some(h) = self.handlers.get_mut_if_some() && let Some(m) = &mut h.modal { m.drags_through = enabled; }
         self
     }
     /// A finite opacity/scale sequence on the shared render clock. The final pose holds;

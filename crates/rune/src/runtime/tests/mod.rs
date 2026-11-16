@@ -37,6 +37,7 @@ mod scroll_growth;
 mod scroll_hover;
 mod scroll_retarget;
 mod scroll_spring;
+mod modal_drags_through;
 mod secondary_through;
 mod secure_text;
 mod shimmer;

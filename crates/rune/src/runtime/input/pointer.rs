@@ -102,6 +102,7 @@ impl<S: 'static> Runtime<S> {
         let button = std::mem::take(&mut self.capture_button);
         self.queue.push(Action::Drag(path, d, button));
         self.capture = None;
+        self.dragged_through = None;
         self.end_press_repeat();
         self.capture_inside = false;
         self.double_armed = false;
@@ -164,17 +165,27 @@ impl<S: 'static> Runtime<S> {
         // A press cancels the waits to report an enter; the next move after it starts them again.
         self.hover_pending.retain(|p| !p.1);
         self.hover_paused = true;
-        let target = self.primary_target(x, y);
+        let mut target = self.primary_target(x, y);
         if target.and_then(|t| self.textbox_input(t)).is_none() {
             self.input_click.clear();
         }
+        self.dragged_through = None;
         if let Some(i) = self.active_modal()
             && target.is_none_or(|t| !self.allowed(t))
         {
-            if self.nodes[i].handlers.modal.as_ref().is_some_and(|m| m.outside) {
-                self.queue.push(Action::Dismiss(self.nodes[i].path.clone()));
-            }
-            return;
+            let modal = self.nodes[i].handlers.modal.as_ref();
+            let dragged = modal.filter(|m| m.drags_through).and_then(|_| self.target_behind_modal(x, y)).filter(|&t| {
+                let n = &self.nodes[t];
+                n.handlers.on_drag.is_some() && !self.drags_out(n)
+            });
+            let Some(dragged) = dragged else {
+                if modal.is_some_and(|m| m.outside) {
+                    self.queue.push(Action::Dismiss(self.nodes[i].path.clone()));
+                }
+                return;
+            };
+            self.dragged_through = Some(self.nodes[i].path.clone());
+            target = Some(dragged);
         }
         self.playground_pointer_down(x);
         self.press_selection(target, x, y);
@@ -231,7 +242,8 @@ impl<S: 'static> Runtime<S> {
             .take_while(|&p| self.allowed(p))
             .find(|&p| self.nodes[p].focus.key.is_some() && self.can_focus(p))).flatten();
         let in_textbox = std::iter::successors(n.parent, |&p| self.nodes[p].parent).any(|p| self.textbox_input(p).is_some());
-        let (preserve_focus, keeps) = (self.press_keeps_focus(ti), self.press_keeps_selection(ti));
+        let through = self.dragged_through.is_some();
+        let (preserve_focus, keeps) = (through || self.press_keeps_focus(ti), through || self.press_keeps_selection(ti));
         if !on_link && !keeps && n.focus.enabled && !self.is_selectable(ti) {
             self.queue.push(Action::FocusControl(n.path.clone()));
         } else if !on_link && !keeps && let Some(p) = keyed {
@@ -308,6 +320,13 @@ impl<S: 'static> Runtime<S> {
             let (dx, dy) = (x - self.press_at.0, y - self.press_at.1);
             let [lx, ly] = self.to_local(i, x, y);
             self.queue.push(Action::Drag(path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, ..d }, button));
+        }
+        if let Some(modal) = self.dragged_through.take() {
+            if !self.press_moved {
+                self.queue.push(Action::Dismiss(modal));
+            }
+            self.capture_inside = false;
+            return;
         }
         self.link_up(&path, x, y);
         self.pill_up(&path, x, y);
