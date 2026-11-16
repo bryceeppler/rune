@@ -102,7 +102,7 @@ impl<S: 'static> Runtime<S> {
         let button = std::mem::take(&mut self.capture_button);
         self.queue.push(Action::Drag(path, d, button));
         self.capture = None;
-        self.dragged_through = None;
+        self.dragged_through_modal = None;
         self.end_press_repeat();
         self.capture_inside = false;
         self.double_armed = false;
@@ -169,7 +169,7 @@ impl<S: 'static> Runtime<S> {
         if target.and_then(|t| self.textbox_input(t)).is_none() {
             self.input_click.clear();
         }
-        self.dragged_through = None;
+        self.dragged_through_modal = None;
         if let Some(i) = self.active_modal()
             && target.is_none_or(|t| !self.allowed(t))
         {
@@ -184,7 +184,7 @@ impl<S: 'static> Runtime<S> {
                 }
                 return;
             };
-            self.dragged_through = Some(self.nodes[i].path.clone());
+            self.dragged_through_modal = Some(self.nodes[i].path.clone());
             target = Some(dragged);
         }
         self.playground_pointer_down(x);
@@ -242,7 +242,7 @@ impl<S: 'static> Runtime<S> {
             .take_while(|&p| self.allowed(p))
             .find(|&p| self.nodes[p].focus.key.is_some() && self.can_focus(p))).flatten();
         let in_textbox = std::iter::successors(n.parent, |&p| self.nodes[p].parent).any(|p| self.textbox_input(p).is_some());
-        let through = self.dragged_through.is_some();
+        let through = self.dragged_through_modal.is_some();
         let (preserve_focus, keeps) = (through || self.press_keeps_focus(ti), through || self.press_keeps_selection(ti));
         if !on_link && !keeps && n.focus.enabled && !self.is_selectable(ti) {
             self.queue.push(Action::FocusControl(n.path.clone()));
@@ -321,7 +321,7 @@ impl<S: 'static> Runtime<S> {
             let [lx, ly] = self.to_local(i, x, y);
             self.queue.push(Action::Drag(path.clone(), Drag { phase: Phase::Up, x: lx, y: ly, dx, dy, ..d }, button));
         }
-        if let Some(modal) = self.dragged_through.take() {
+        if let Some(modal) = self.dragged_through_modal.take() {
             if !self.press_moved {
                 self.queue.push(Action::Dismiss(modal));
             }

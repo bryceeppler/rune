@@ -444,9 +444,6 @@ pub struct Runtime<S: 'static> {
     /// elements skip their fill and cut their shadows out of their interior.
     pub(crate) native_materials: bool,
     hits: Vec<(NodeId, [f32; 4])>,
-    /// What a press would hit behind a modal that lets drags through
-    /// ([`crate::El::modal_drags_through`]), in paint order, kept apart from `hits` so nothing
-    /// else behind the modal answers the pointer.
     hits_behind_modal: Vec<(NodeId, [f32; 4])>,
     overlay_hits: Vec<[f32; 4]>,
     glyph_scratch: Vec<GlyphQuad>,
@@ -769,9 +766,7 @@ pub struct Runtime<S: 'static> {
     press_down_t: f64,
     /// The held press has travelled past the click slop: it isn't a click of a double press.
     press_moved: bool,
-    /// The modal the held press began outside of and dragged through
-    /// ([`crate::El::modal_drags_through`]): its release dismisses it unless the press moved.
-    dragged_through: Option<String>,
+    dragged_through_modal: Option<String>,
     /// A scroll under the held press cancelled it ([`Runtime::scroll_cancels_press`]).
     press_cancelled: bool,
     titlebar: titlebar::Titlebar,
@@ -1056,7 +1051,7 @@ impl<S: 'static> Runtime<S> {
             press_repeat: Default::default(),
             press_down_t: 0.0,
             press_moved: false,
-            dragged_through: None,
+            dragged_through_modal: None,
             press_cancelled: false,
             titlebar: Default::default(),
             double_click_interval: 0.5,

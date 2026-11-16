@@ -1164,10 +1164,9 @@ impl El {
         self
     }
     /// A press outside this [`El::modal`] on an element that drags ([`El::on_drag`]) goes to
-    /// that element, so a row behind a floating sidebar can be dragged onto it. The modal stays
-    /// open while the press drags past the click slop; a release short of it dismisses the modal
-    /// as an outside click does. Either way the element's `on_press` never runs, and focus stays
-    /// in the modal.
+    /// that element. The modal stays open while the press drags past the click slop; a release
+    /// short of it dismisses the modal as an outside click does. Either way the element's
+    /// `on_press` never runs, and focus stays in the modal.
     pub fn modal_drags_through(mut self, enabled: bool) -> Self {
         if let Some(h) = self.handlers.get_mut_if_some() && let Some(m) = &mut h.modal { m.drags_through = enabled; }
         self

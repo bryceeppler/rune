@@ -147,8 +147,6 @@ impl<S: 'static> Runtime<S> {
         self.top_where(x, y, |i| self.allowed(i))
     }
 
-    /// The element a press at (x, y) would go to were the active modal, which lets drags
-    /// through, not there.
     pub(super) fn target_behind_modal(&self, x: f32, y: f32) -> Option<usize> {
         self.top_in(&self.hits_behind_modal, x, y, |_| true)
     }
