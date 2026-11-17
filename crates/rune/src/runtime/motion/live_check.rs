@@ -220,7 +220,7 @@ impl NodePrint {
             ("text", |t| key(|h| t.live.is_none().then_some(&t.content).hash(h)), Some(snippet)),
             ("text colour", |t| key(|h| rgba(t.color).hash(h)), Some(|t| colour(t.color))),
             ("text style", |t| key(|h| bits(&[t.style.size, t.style.weight]).hash(h)), Some(|t| format!("{:.1}pt weight {}", t.style.size, t.style.weight))),
-            ("pills", |t| key(|h| for p in &t.pills { (p.start, p.end, p.icon.map(|i| i.name), p.bg, p.fg).hash(h) }), None),
+            ("pills", |t| key(|h| for p in &t.pills { (p.start, p.end, p.style.icon.map(|i| i.name), p.style.bg, p.style.fg).hash(h) }), None),
             ("rings", |t| key(|h| for &(a, b, c, w) in &t.rings { (a, b, c, w.to_bits()).hash(h) }), None),
             ("strikes", |t| key(|h| t.strikes.hash(h)), None),
             ("highlights", |t| key(|h| for hl in &t.highlights {

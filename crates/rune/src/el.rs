@@ -387,38 +387,8 @@ pub(crate) struct PasteFn {
 /// A pill's leading icon by its id; see [`El::pill_icon`].
 pub(crate) type PillIconFn = Rc<dyn Fn(&str) -> Option<&'static crate::Icon>>;
 /// A pill's look by its id; see [`El::pill_style`].
-pub(crate) type PillStyleFn = Rc<dyn Fn(&str) -> PillStyle>;
+pub(crate) type PillStyleFn = Rc<dyn Fn(&str) -> crate::PillStyle>;
 
-/// How one [`Mark::Pill`](crate::Mark::Pill) chip looks: any part left unset falls back to
-/// [`El::pill_colors`] and [`El::pill_icon`], then the field's defaults. Build one with
-/// `PillStyle::default().bg(..).icon(..)`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PillStyle {
-    pub(crate) bg: Option<Color>,
-    pub(crate) fg: Option<Color>,
-    pub(crate) icon: Option<&'static crate::Icon>,
-}
-
-impl PillStyle {
-    pub const fn new() -> Self {
-        Self { bg: None, fg: None, icon: None }
-    }
-    /// The chip's colour.
-    pub const fn bg(mut self, bg: Color) -> Self {
-        self.bg = Some(bg);
-        self
-    }
-    /// The label and icon colour.
-    pub const fn fg(mut self, fg: Color) -> Self {
-        self.fg = Some(fg);
-        self
-    }
-    /// The leading icon, in the label's colour.
-    pub const fn icon(mut self, icon: &'static crate::Icon) -> Self {
-        self.icon = Some(icon);
-        self
-    }
-}
 pub(crate) type InputPasteFn = Rc<dyn Fn(crate::states::States<'_>, &crate::ClipboardContent, &mut Tx) -> bool>;
 pub(crate) type PickFn = Box<dyn FnOnce(crate::states::States<'_>, Option<crate::Picked>, &mut Tx)>;
 

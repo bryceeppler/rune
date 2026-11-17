@@ -1,10 +1,62 @@
-//! The chips drawn behind pill labels in a laid-out paragraph.
+//! Pills in a paragraph: the room their chips take in its layout, and the chips drawn behind
+//! their labels.
 use parley::BaseDirection;
 use swash::text::{BidiClass, Codepoint as _};
 
 use super::*;
 
-pub(super) fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>]) -> BaseDirection {
+/// A pill's label and the room its chip takes before and after it, in device px.
+pub(super) struct LabelRoom {
+    pub index: usize,
+    pub label: std::ops::Range<usize>,
+    pub lead: u32,
+    pub trail: u32,
+}
+
+/// The room each pill of `pills` takes in `text` laid out at `size` points and `scale`, and the
+/// direction the text runs past the labels. A range that is empty, off a character boundary or
+/// across a line break has no label and keeps no chip.
+pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32) -> (BaseDirection, Vec<LabelRoom>) {
+    let pm = PillMetrics::new(size);
+    let labels: Vec<(usize, &PillChip, std::ops::Range<usize>)> = pills
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (i, p, (p.start as usize).min(text.len())..(p.end as usize).min(text.len())))
+        .filter(|(_, _, r)| !r.is_empty() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end) && !text.as_bytes()[r.clone()].contains(&b'\n'))
+        .collect();
+    let direction = direction_past_labels(text, &labels.iter().map(|(_, _, r)| r.clone()).collect::<Vec<_>>());
+    let rooms = labels
+        .into_iter()
+        .map(|(index, p, label)| {
+            let (lead, trail) = (pm.lead(p.style.icon.is_some()), pm.trail());
+            let (lead, trail) = if starts_rtl(direction, &label) { (0.0, lead + trail) } else { (lead, trail) };
+            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32 }
+        })
+        .collect();
+    (direction, rooms)
+}
+
+/// Boxes before and after each pill's label make room for its chip; they keep the pill's index
+/// in their id. The label may break like any text; `break_lines_with_blocks` moves a split pill
+/// whole to the next line and lets it wrap only when it is wider than a line, as a browser wraps
+/// a span.
+pub(super) fn push_label_rooms(b: &mut parley::RangedBuilder<'_, Ink>, rooms: &[LabelRoom]) {
+    for room in rooms {
+        for (side, index, width) in [(0, room.label.start, room.lead), (1, room.label.end, room.trail)] {
+            b.push_inline_box(parley::InlineBox {
+                id: PILL_BOX | (room.index as u64) << 1 | side,
+                kind: parley::InlineBoxKind::InFlow,
+                index,
+                width: width as f32,
+                height: 0.0,
+                baseline: None,
+                vertical_align: parley::VerticalAlign::BASELINE,
+            });
+        }
+    }
+}
+
+fn direction_past_labels(text: &str, labels: &[std::ops::Range<usize>]) -> BaseDirection {
     if labels.is_empty() {
         return BaseDirection::Auto;
     }
@@ -43,7 +95,7 @@ pub(crate) fn strong_direction(text: &str, labels: &[std::ops::Range<usize>]) ->
 /// inline box before a text's first character the left-to-right level, which draws it at the
 /// line's far left, so such a pill keeps all its chip's room in the box after its label, which
 /// draws beside the label on its left, and its icon at that room's right.
-pub(super) fn starts_rtl(direction: BaseDirection, label: &std::ops::Range<usize>) -> bool {
+fn starts_rtl(direction: BaseDirection, label: &std::ops::Range<usize>) -> bool {
     direction == BaseDirection::Rtl && label.start == 0
 }
 
@@ -151,7 +203,7 @@ fn chips(
                 let (top, bot) = ((base - asc - 1.0 * scale).round(), (base + desc + 1.0 * scale).round());
                 let x0 = gr_x0.min(m.inline_min_coord + m.offset);
                 let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-                out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
                 continue;
             };
             if lead.width == 0.0
@@ -160,11 +212,11 @@ fn chips(
                 let (x0, x1) = (room.x + margin, (room.x + room.width - margin).max(gr_x1));
                 let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
                 let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-                out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
-                if let Some(icon) = pill.icon {
+                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                if let Some(icon) = pill.style.icon {
                     let px = (pm.icon * scale).round().max(1.0);
                     let ix = origin[0] + room.x + room.width - (pm.margin + pm.pad) * scale - px;
-                    icons.push((icon, px as u32, [ix.round(), ((top + bot - px) * 0.5).round()], pill.fg));
+                    icons.push((icon, px as u32, [ix.round(), ((top + bot - px) * 0.5).round()], pill.style.fg));
                 }
                 continue;
             }
@@ -193,11 +245,11 @@ fn chips(
             };
             let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
             let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-            out(i, PaintedDeco::new(Deco { rect, color: pill.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
-            if let Some(icon) = pill.icon {
+            out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+            if let Some(icon) = pill.style.icon {
                 let px = (pm.icon * scale).round().max(1.0);
                 let ix = if rtl_lead { rect[0] + rect[2] - pm.pad * scale - px } else { rect[0] + pm.pad * scale };
-                icons.push((icon, px as u32, [ix.round(), ((top + bot - px) * 0.5).round()], pill.fg));
+                icons.push((icon, px as u32, [ix.round(), ((top + bot - px) * 0.5).round()], pill.style.fg));
             }
         }
     }

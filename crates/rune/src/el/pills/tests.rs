@@ -1,5 +1,6 @@
 use crate::color::Color;
-use crate::el::{PillStyle, rich, text, text_input};
+use crate::PillStyle;
+use crate::el::{rich, text, text_input};
 use crate::text::{Span, TextSystem};
 use parley::Alignment;
 use crate::{TextEdit, TextStyle};
@@ -22,7 +23,7 @@ fn pills_record_sorted_chips_and_skip_bad_ranges() {
         (0..body.len() + 1, PillStyle::new()),
     ]);
     let t = e.text.as_ref().unwrap();
-    let got: Vec<(u32, u32, Option<Color>, Option<Color>)> = t.pills.iter().map(|p| (p.start, p.end, p.bg, p.fg)).collect();
+    let got: Vec<(u32, u32, Option<Color>, Option<Color>)> = t.pills.iter().map(|p| (p.start, p.end, p.style.bg, p.style.fg)).collect();
     assert_eq!(got, [(agent.start as u32, agent.end as u32, None, Some(INK)), (file.start as u32, file.end as u32, Some(CHIP), None)]);
 }
 
@@ -70,7 +71,8 @@ fn a_pill_label_stays_on_one_line_and_takes_room() {
 mod live {
     use std::ops::Range;
 
-    use crate::el::{PillStyle, col, text};
+    use crate::PillStyle;
+    use crate::el::{col, text};
     use crate::{Cx, El, Env, Key, KeyEvent, Mods, Runtime, TextStyle};
 
     struct S {

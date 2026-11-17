@@ -72,14 +72,43 @@ impl Span {
     }
 }
 
-/// An atomic pill drawn as a chip: byte range `start..end` of the content, and its leading icon.
+/// How one [`Mark::Pill`](crate::Mark::Pill) chip looks: any part left unset falls back to
+/// [`El::pill_colors`](crate::El::pill_colors) and [`El::pill_icon`](crate::El::pill_icon), then
+/// the field's defaults. Build one with `PillStyle::default().bg(..).icon(..)`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PillStyle {
+    pub(crate) bg: Option<Color>,
+    pub(crate) fg: Option<Color>,
+    pub(crate) icon: Option<&'static Icon>,
+}
+
+impl PillStyle {
+    pub const fn new() -> Self {
+        Self { bg: None, fg: None, icon: None }
+    }
+    /// The chip's colour.
+    pub const fn bg(mut self, bg: Color) -> Self {
+        self.bg = Some(bg);
+        self
+    }
+    /// The label and icon colour.
+    pub const fn fg(mut self, fg: Color) -> Self {
+        self.fg = Some(fg);
+        self
+    }
+    /// The leading icon, in the label's colour.
+    pub const fn icon(mut self, icon: &'static Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
+
+/// An atomic pill: byte range `start..end` of the content, drawn in `style`.
 #[derive(Clone, Debug)]
 pub(crate) struct PillChip {
     pub start: u32,
     pub end: u32,
-    pub icon: Option<&'static Icon>,
-    pub bg: Option<Color>,
-    pub fg: Option<Color>,
+    pub style: PillStyle,
 }
 
 /// A pill chip's horizontal geometry in points for text of `size` points: the room before its

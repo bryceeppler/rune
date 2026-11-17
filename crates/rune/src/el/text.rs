@@ -137,7 +137,7 @@ impl El {
     ///     move |id| if agents.contains(id) { PillStyle::default().bg(PURPLE).icon(&BOT) } else { PillStyle::default() }
     /// })
     /// ```
-    pub fn pill_style(mut self, style: impl Fn(&str) -> PillStyle + 'static) -> Self {
+    pub fn pill_style(mut self, style: impl Fn(&str) -> crate::PillStyle + 'static) -> Self {
         if let Some(inp) = &mut self.input {
             inp.pill_style = Some(Rc::new(style));
             self.sync_input_pills();
@@ -156,9 +156,9 @@ impl El {
             .display_pills()
             .into_iter()
             .map(|(start, end, id)| {
-                let st = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
-                let icon = st.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)));
-                crate::text::PillChip { start, end, icon, bg: st.bg, fg: st.fg }
+                let mut style = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
+                style.icon = style.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)));
+                crate::text::PillChip { start, end, style }
             })
             .collect();
     }
@@ -498,7 +498,7 @@ pub(crate) fn sync_rich(inp: &mut crate::el::InputSpec, t: &mut TextSpec) {
     }
     let pill_fg = t.pill_colors.and_then(|(_, fg)| fg);
     base_spans.extend(t.pills.iter().filter_map(|p| {
-        Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
+        Some(Span { start: p.start, end: p.end, color: Some(p.style.fg.or(pill_fg)?), ..Span::default() })
     }));
     let mut flat = crate::text::flatten_spans(&base_spans);
     for s in &mut flat {

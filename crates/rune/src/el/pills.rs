@@ -2,8 +2,8 @@
 //! wrapped like a [`text_input`](crate::text_input)'s [`Mark::Pill`](crate::Mark::Pill) chips.
 use std::ops::Range;
 
-use crate::el::{El, PillStyle};
-use crate::text::{PillChip, Span};
+use crate::el::El;
+use crate::text::{PillChip, PillStyle, Span};
 
 impl El {
     /// Draws bytes `range` of a [`text`](crate::text) or [`rich`](crate::rich) element as a
@@ -35,7 +35,7 @@ impl El {
                 continue;
             }
             let at = t.pills.partition_point(|p| p.start < start);
-            t.pills.insert(at, PillChip { start, end, icon: st.icon, bg: st.bg, fg: st.fg });
+            t.pills.insert(at, PillChip { start, end, style: st });
         }
         t.spans = with_pill_colors(&t.spans, &t.pills);
         self
@@ -44,11 +44,11 @@ impl El {
 
 /// `spans` with each pill's label colour over it.
 pub(crate) fn with_pill_colors(spans: &[Span], pills: &[PillChip]) -> Vec<Span> {
-    if pills.iter().all(|p| p.fg.is_none()) {
+    if pills.iter().all(|p| p.style.fg.is_none()) {
         return crate::text::flatten_spans(spans);
     }
     let mut all = spans.to_vec();
-    all.extend(pills.iter().filter_map(|p| Some(Span { start: p.start, end: p.end, color: Some(p.fg?), ..Span::default() })));
+    all.extend(pills.iter().filter_map(|p| Some(Span { start: p.start, end: p.end, color: Some(p.style.fg?), ..Span::default() })));
     crate::text::flatten_spans(&all)
 }
 

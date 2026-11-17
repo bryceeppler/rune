@@ -94,7 +94,7 @@ pub use atlas::{ATLAS_SIZE, Atlas, AtlasPage, GlyphQuad};
 pub(crate) use cursor::{cursor_from_point, cursor_geometry, line_edge, move_line, range_boxes};
 pub use decorations::Deco;
 pub(crate) use decorations::PaintedDeco;
-pub use span::{Ink, Link, LinkPaint, Span, TextHighlight};
+pub use span::{Ink, Link, LinkPaint, PillStyle, Span, TextHighlight};
 pub(crate) use span::{PillChip, PillMetrics, flatten_spans};
 
 use decorations::Decoration;
@@ -430,22 +430,7 @@ impl TextSystem {
             self.shapes.entry(shape_key).or_insert(key);
             return l.clone();
         }
-        // Each pill's label range, and the room before and after it in device px; boxes keep
-        // the pill's index in their id, so ranges that fail the checks keep no chip.
-        let pm = PillMetrics::new(style.size);
-        let labels = || {
-            pills.iter().enumerate().map(|(i, p)| (i, p, (p.start as usize).min(text.len())..(p.end as usize).min(text.len()))).filter(|(_, _, r)| {
-                !r.is_empty() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end) && !text.as_bytes()[r.clone()].contains(&b'\n')
-            })
-        };
-        let direction = pill_chips::direction_past_labels(text, &labels().map(|(_, _, r)| r).collect::<Vec<_>>());
-        let pills: Vec<(usize, std::ops::Range<usize>, u32, u32)> = labels()
-            .map(|(i, p, r)| {
-                let (lead, trail) = (pm.lead(p.icon.is_some()), pm.trail());
-                let (lead, trail) = if pill_chips::starts_rtl(direction, &r) { (0.0, lead + trail) } else { (lead, trail) };
-                (i, r, (lead * scale).round() as u32, (trail * scale).round() as u32)
-            })
-            .collect();
+        let (direction, pills) = pill_chips::label_rooms(text, pills, style.size, scale);
         let break_lines = |layout: &mut Layout<Ink>| {
             if has_indented_blocks || !pills.is_empty() {
                 break_lines_with_blocks(layout, blocks, style.size, scale, max_width);
@@ -695,22 +680,7 @@ impl TextSystem {
             for (range, v) in widen {
                 b.push(StyleProperty::WordSpacing(*v), range.clone());
             }
-            // Boxes before and after a pill's label make room for its chip. The label may break
-            // like any text; `break_lines_with_blocks` moves a split pill whole to the next line
-            // and lets it wrap only when it is wider than a line, as a browser wraps a span.
-            for (i, r, lead, trail) in &pills {
-                for (side, index, width) in [(0, r.start, *lead), (1, r.end, *trail)] {
-                    b.push_inline_box(parley::InlineBox {
-                        id: PILL_BOX | (*i as u64) << 1 | side,
-                        kind: parley::InlineBoxKind::InFlow,
-                        index,
-                        width: width as f32,
-                        height: 0.0,
-                        baseline: None,
-                        vertical_align: parley::VerticalAlign::BASELINE,
-                    });
-                }
-            }
+            pill_chips::push_label_rooms(&mut b, &pills);
             let mut layout: Layout<Ink> = b.build(text);
             break_lines(&mut layout);
             layout
