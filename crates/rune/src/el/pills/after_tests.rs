@@ -1,5 +1,3 @@
-//! A sized pill drawn after bytes that stay text: a photo under its Markdown reference while the
-//! caret edits it, beside the same photo drawn in place of the reference.
 use accesskit::Role;
 
 use crate::render::KIND_IMAGE;
@@ -32,8 +30,6 @@ fn view(s: &S, cx: &mut Cx<S>) -> El {
     col().child(el().child(field).children(bar))
 }
 
-/// "Pack\n", the reference, then "\nAfter", the reference a pill drawn in its place unless the
-/// photo draws `after` it; the caret at the reference's end.
 fn runtime(after: bool) -> (Runtime<S>, usize, usize) {
     let text = format!("Pack\n{REFERENCE}\nAfter");
     let at = text.find(REFERENCE).unwrap();

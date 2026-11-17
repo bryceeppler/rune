@@ -1,4 +1,3 @@
-//! A sized pill in a field: a photo between lines, beside a checkbox chip in the same field.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -27,8 +26,6 @@ struct S {
     said: &'static str,
 }
 
-/// The note's field, and a 90 by 34 point bar inside the photo's top-right corner, 10 points in,
-/// placed from where the field says the photo draws.
 fn view(s: &S, cx: &mut Cx<S>) -> El {
     let (photo, ringed, [above, below], said) = (s.photo.clone(), s.ringed, s.margin, s.said);
     let field = text_input(&s.edit, TextStyle::new(15.0, 400.0).lh(LINE))
@@ -57,7 +54,6 @@ fn view(s: &S, cx: &mut Cx<S>) -> El {
     col().child(el().child(field).children(bar))
 }
 
-/// "- [ ] Pack\n" with a checkbox pill, then the photo on a line of its own, then "After".
 fn note() -> (TextEdit, usize, usize) {
     let text = format!("{TASK}Pack\n{PHOTO}\nAfter");
     let at = text.find(PHOTO).unwrap();
@@ -68,7 +64,6 @@ fn note() -> (TextEdit, usize, usize) {
     (edit, at, at + PHOTO.len())
 }
 
-/// A PNG's header for a 64 by 40 image, which is all the clipboard checks.
 fn png() -> crate::ClipboardImage {
     let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     bytes.extend(64u32.to_be_bytes().into_iter().chain(40u32.to_be_bytes()).chain([8, 6, 0, 0, 0]));
