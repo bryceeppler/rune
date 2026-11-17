@@ -83,7 +83,8 @@ pub(super) fn read(pb: &NSPasteboard, all: bool) -> Option<ClipboardContent> {
 }
 
 fn holds_image(pb: &NSPasteboard) -> bool {
-    unsafe { pb.availableTypeFromArray(&NSArray::from_slice(&[NSPasteboardTypePNG, NSPasteboardTypeTIFF])).is_some() }
+    let types = unsafe { NSArray::from_vec(vec![NSPasteboardTypePNG.copy(), NSPasteboardTypeTIFF.copy()]) };
+    unsafe { pb.availableTypeFromArray(&types).is_some() }
 }
 
 /// The path of each pasteboard item's file URL, in order.
