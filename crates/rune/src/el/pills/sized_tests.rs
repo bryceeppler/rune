@@ -24,19 +24,20 @@ struct S {
     ringed: bool,
     margin: [f32; 2],
     pressed: Vec<String>,
+    said: &'static str,
 }
 
 /// The note's field, and a 90 by 34 point bar inside the photo's top-right corner, 10 points in,
 /// placed from where the field says the photo draws.
 fn view(s: &S, cx: &mut Cx<S>) -> El {
-    let (photo, ringed, [above, below]) = (s.photo.clone(), s.ringed, s.margin);
+    let (photo, ringed, [above, below], said) = (s.photo.clone(), s.ringed, s.margin, s.said);
     let field = text_input(&s.edit, TextStyle::new(15.0, 400.0).lh(LINE))
         .key("note")
         .w(s.width)
         .caret(CARET, TINT)
         .pill_style(move |id| match id {
             "photo" => {
-                let style = PillStyle::new().sized([640.0, 400.0]).image(&photo).description("Harbour at dusk").radius(8.0).border(HAIRLINE, 1.0)
+                let style = PillStyle::new().sized([640.0, 400.0]).image(&photo).description(said).radius(8.0).border(HAIRLINE, 1.0)
                     .fg(MUTED).icon(&WAITING).caption("Downloading photo…", TextStyle::new(13.0, 500.0).lh(20.0)).margin(above, below);
                 if ringed { style.selection_ring(RING, 3.0, 2.0) } else { style }
             }
@@ -84,7 +85,7 @@ fn runtime(width: f32, decoded: bool) -> (Runtime<S>, usize, usize) {
     if decoded {
         photo.set(64, 40, gradient(64, 40));
     }
-    let mut rt = Runtime::new(S { edit, photo, width, ringed: false, margin: [0.0; 2], pressed: Vec::new() }, view, (600.0, 600.0), Env::new(true, 2.0));
+    let mut rt = Runtime::new(S { edit, photo, width, ringed: false, margin: [0.0; 2], pressed: Vec::new(), said: "Harbour at dusk" }, view, (600.0, 600.0), Env::new(true, 2.0));
     settle(&mut rt);
     (rt, at, end)
 }
@@ -305,6 +306,22 @@ fn assistive_technology_hears_one_object_for_the_photo_and_an_image_with_its_des
     let b = images[0].bounds().unwrap();
     let photo = image(&rt).unwrap();
     assert!(((b.x1 - b.x0) as f32 - photo[2]).abs() < 1.0 && ((b.y1 - b.y0) as f32 - photo[3]).abs() < 1.0, "the image's bounds are the photo's: {b:?} {photo:?}");
+}
+
+#[test]
+fn assistive_technology_hears_a_photos_new_description_though_its_box_keeps_its_size() {
+    let (mut rt, _, _) = runtime(500.0, false);
+    rt.update(|s, _| s.said = "Downloading photo…");
+    settle(&mut rt);
+    let said = |update: &accesskit::TreeUpdate| update.nodes.iter().find(|(_, n)| n.role() == Role::Image).and_then(|(_, n)| n.label().map(str::to_owned));
+    rt.a11y_activate("Note");
+    let whole = rt.a11y_update().expect("the whole tree");
+    assert_eq!(said(&whole).as_deref(), Some("Downloading photo…"));
+    rt.state.photo.set(64, 40, gradient(64, 40));
+    rt.update(|s, _| s.said = "Harbour at dusk");
+    settle(&mut rt);
+    let update = rt.a11y_update().expect("the photo's description changed");
+    assert_eq!(said(&update).as_deref(), Some("Harbour at dusk"), "the photo's image node carries its new description");
 }
 
 #[test]
