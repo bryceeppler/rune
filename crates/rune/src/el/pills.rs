@@ -35,7 +35,7 @@ impl El {
                 continue;
             }
             let at = t.pills.partition_point(|p| p.start < start);
-            t.pills.insert(at, PillChip { start, end, style: st });
+            t.pills.insert(at, PillChip { start, end, style: st, ..PillChip::default() });
         }
         t.spans = with_pill_colors(&t.spans, &t.pills);
         self
@@ -52,6 +52,8 @@ pub(crate) fn with_pill_colors(spans: &[Span], pills: &[PillChip]) -> Vec<Span> 
     crate::text::flatten_spans(&all)
 }
 
+#[cfg(test)]
+mod after_tests;
 #[cfg(test)]
 mod sized_tests;
 #[cfg(test)]

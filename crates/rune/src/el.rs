@@ -225,6 +225,7 @@ pub struct InputSpec {
     pub(crate) rich_style: crate::edit::RichStyle,
     pub(crate) pill_icon: Option<PillIconFn>,
     pub(crate) pill_style: Option<PillStyleFn>,
+    pub(crate) pills_after: Vec<(std::ops::Range<usize>, String)>,
     /// The text's spans, strikes, blocks and links lag the edit and styles set since the field
     /// was built; flattening rebuilds them once ([`El::sync_input_rich`]).
     pub(crate) rich_stale: bool,
@@ -719,6 +720,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         paste: None,
         copy: None,
         pill_press: None,
+        pills_after: Vec::new(),
     }));
     e.sync_input_pills();
     e

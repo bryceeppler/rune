@@ -49,7 +49,7 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn pill_rect_in(&self, nodes: &[Node], i: usize, id: &str) -> Option<[f32; 4]> {
         let n = &nodes[i];
         let (input, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
-        let k = input.edit.display_pills().into_iter().position(|(_, _, p)| p == id)?;
+        let k = spec.pills.iter().position(|p| p.id.as_deref() == Some(id))?;
         let s = self.env.scale;
         let (_, r) = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s, f32::NEG_INFINITY..f32::INFINITY).into_iter().find(|(j, _)| *j == k)?;
         let scroll = if input.single_line { self.input_scroll.get(&n.path).copied().unwrap_or(0.0) } else { 0.0 };

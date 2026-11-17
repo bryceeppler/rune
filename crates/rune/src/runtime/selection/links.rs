@@ -228,7 +228,7 @@ impl<S: 'static> Runtime<S> {
     /// can be edited: a press there belongs to the chip.
     pub(super) fn chip_under(&self, i: usize, x: f32, y: f32) -> Option<String> {
         let n = &self.nodes[i];
-        let input = n.input.as_ref().filter(|input| input.pill_press.is_some())?;
+        n.input.as_ref().filter(|input| input.pill_press.is_some())?;
         let (spec, layout) = (n.text.as_ref()?, n.text_layout.as_ref()?);
         let [lx, ly] = self.to_local(i, x, y);
         let scroll = self.input_scroll.get(&n.path).copied().unwrap_or(0.0);
@@ -238,9 +238,7 @@ impl<S: 'static> Runtime<S> {
         let reach = 2.0 * spec.style.line_px() * s;
         let chips = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s, py - reach..py + reach);
         let k = chips.into_iter().find(|(_, r)| contains([r[0], r[1], r[0] + r[2], r[1] + r[3]], px, py))?.0;
-        let pill = spec.pills.get(k)?;
-        let (_, _, id) = input.edit.display_pills().into_iter().find(|&(a, b, _)| (a, b) == (pill.start, pill.end))?;
-        Some(id.to_owned())
+        spec.pills.get(k)?.id.clone()
     }
 
     /// Pointer down on field `i`: a press that begins on a pill chip is the chip's, and the

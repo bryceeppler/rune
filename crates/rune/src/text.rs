@@ -105,7 +105,7 @@ use atlas::{MAX_OVERFLOW_PAGES, MAX_STEADY_PAGES};
 #[cfg(test)]
 pub(crate) use glyph_emit::GLIDE_PHASES;
 use line_break::break_lines_with_blocks;
-use span::{PILL_BOX, PILL_SIZED, pill_index};
+use span::{PILL_AFTER, PILL_BOX, PILL_SIZED, pill_index};
 use tabs::mono_tab_stops;
 use system_fonts::{
     LoadedFiles, SYMBOL_FAMILIES, SYMBOL_FONT_FILES, family_list, load_families, load_system_mono, names_system_mono,

@@ -35,7 +35,7 @@ use parley::editing::Cursor;
 use parley::layout::Affinity;
 
 use super::*;
-use super::cursor::{cursor_from_point_in, drawn, line_for_offset, plain, step_on_line};
+use super::cursor::{cursor_from_point_in, drawn, line_for_offset, plain, starts_with_after_box, step_on_line};
 use super::layout_cache::fresh;
 use super::line_break::line_bytes;
 
@@ -133,7 +133,7 @@ impl Source {
         let local = |s: &Span, start: usize, len: usize| {
             ((s.start as usize).max(start) - start, ((s.end as usize).min(start + len)) - start, s.mono, s.weight.map(f32::to_bits), s.size.map(f32::to_bits), s.italic)
         };
-        let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.style.icon.is_some(), c.style.size.map(|s| s.map(f32::to_bits)), c.room().map(f32::to_bits));
+        let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.after, c.style.icon.is_some(), c.style.size.map(|s| s.map(f32::to_bits)), c.room().map(f32::to_bits));
         let (spans, pills) = (&self.spans[q.spans.clone()], &self.pills[q.pills.clone()]);
         (clip(&self.blocks, q.blocks.clone()) == p.blocks(q.breaks)
             && spans.len() == p.spans.len()
@@ -426,9 +426,11 @@ impl TextLayout {
         if let Some(to) = step_on_line(at.layout, cur, left) {
             return Some((to.index() + at.start, to.affinity()));
         }
-        let line = at.line + drawn(at.layout, cur).0.unwrap_or(at.lines).min(at.lines.saturating_sub(1));
+        let local = drawn(at.layout, cur).0.unwrap_or(at.lines).min(at.lines.saturating_sub(1));
+        let line = at.line + local;
         if left == at.layout.is_rtl() {
-            return Some((self.line(line + 1)?.text_range().start, Affinity::Downstream));
+            let over = usize::from(starts_with_after_box(at.layout, local + 1));
+            return Some((self.line(line + 1 + over)?.text_range().start, Affinity::Downstream));
         }
         let start = self.line(line)?.text_range().start;
         Some((self.cluster_at(start.checked_sub(1)?)?.0.start, Affinity::Downstream))

@@ -13,7 +13,7 @@ pub(super) fn break_lines_with_blocks(
     scale: f32,
     max_width: Option<f32>,
 ) {
-    let pills = layout.inline_boxes().filter(|b| b.id & PILL_BOX != 0).count() / 2;
+    let pills = layout.inline_boxes().filter(|b| b.id & PILL_BOX != 0 && b.id & 1 == 0).count();
     // `(para_idx, line_in_para)` and the room it gets instead: less to break before a chip, or
     // more to keep a chip with its label. Paragraphs break independently at `\n`, so one pass
     // can adjust the first misplaced pill in every paragraph at once.

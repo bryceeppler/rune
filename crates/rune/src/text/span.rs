@@ -182,12 +182,17 @@ impl PillStyle {
     }
 }
 
-/// An atomic pill: byte range `start..end` of the content, drawn in `style`.
-#[derive(Clone, Debug)]
+/// A pill over byte range `start..end` of the content, drawn in `style`: an atomic chip or box
+/// in place of its label, or, `after` them, a sized box on a line of its own while the bytes
+/// stay text.
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PillChip {
     pub start: u32,
     pub end: u32,
     pub style: PillStyle,
+    /// A field's id for it, which `on_pill_press` and `Cx::pill_rect` name.
+    pub id: Option<String>,
+    pub after: bool,
 }
 
 impl PillChip {
@@ -249,10 +254,12 @@ impl PillMetrics {
 pub(super) const PILL_BOX: u64 = 1 << 62;
 /// Tags the box that stands for a [`PillStyle::sized`] pill's label.
 pub(super) const PILL_SIZED: u64 = 1 << 61;
+/// Tags a sized pill's box that draws after its label, which stays text.
+pub(super) const PILL_AFTER: u64 = 1 << 60;
 
 /// The index of the pill a pill box's `id` belongs to.
 pub(super) fn pill_index(id: u64) -> usize {
-    ((id & !(PILL_BOX | PILL_SIZED)) >> 1) as usize
+    ((id & !(PILL_BOX | PILL_SIZED | PILL_AFTER)) >> 1) as usize
 }
 
 /// Flattens overlapping [`Span`]s into non-overlapping elementary intervals so that Parley's

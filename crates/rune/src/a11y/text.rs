@@ -262,5 +262,5 @@ impl<S: 'static> Runtime<S> {
 
 /// The drawn bytes of each sized pill's label in `spec`.
 fn sized_labels(spec: &crate::runtime::TextSpec) -> Vec<std::ops::Range<usize>> {
-    spec.pills.iter().filter(|p| p.style.size.is_some()).map(|p| p.start as usize..p.end as usize).collect()
+    spec.pills.iter().filter(|p| p.style.size.is_some() && !p.after).map(|p| p.start as usize..p.end as usize).collect()
 }

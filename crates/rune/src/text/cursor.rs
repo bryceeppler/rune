@@ -11,6 +11,8 @@ pub(crate) fn cursor_geometry(
     layout: &Layout<Ink>,
     size: f32,
 ) -> parley::BoundingBox {
+    let at = cursor.index();
+    let cursor = if after_box_at(layout, at) { parley::editing::Cursor::from_byte_index(layout, at, parley::layout::Affinity::Upstream) } else { *cursor };
     let mut bb = cursor.geometry(layout, size);
     let mut inline_min = match cursor.visual_clusters(layout) {
         [Some(left), _] => left.line().metrics().inline_min_coord,
@@ -45,7 +47,6 @@ pub(crate) fn cursor_geometry(
         bb.x1 += inline_min as f64;
     }
     // Parley puts a caret at a pill's edge against its label, inside the chip: move it outside.
-    let at = cursor.index();
     let mid = ((bb.y0 + bb.y1) * 0.5) as f32;
     if let Some(x) = pill_edge(layout, at, mid) {
         let w = bb.x1 - bb.x0;
@@ -76,6 +77,18 @@ fn text_band(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>) -> Option<(f32,
     let (m, font) = (line.metrics(), layout.root_span_metrics()?);
     let depth = m.block_max_coord - m.baseline;
     Some((m.baseline - depth - font.ascent + font.descent.abs() - below, m.block_max_coord - below))
+}
+
+/// Whether a sized pill's box draws after the text that ends at byte `at`: a caret there draws
+/// at the text's end, not on the box's line.
+fn after_box_at(layout: &Layout<Ink>, at: usize) -> bool {
+    layout.inline_boxes().any(|b| b.id & PILL_AFTER != 0 && b.index == at)
+}
+
+/// Whether line `i` of `layout` starts with a box drawn after a sized pill's label: no caret
+/// stands on it, so arrows step over it.
+pub(super) fn starts_with_after_box(layout: &Layout<Ink>, i: usize) -> bool {
+    layout.get(i).is_some_and(|line| matches!(line.items().next(), Some(PositionedLayoutItem::InlineBox(b)) if b.id & PILL_AFTER != 0))
 }
 
 /// The labels of `layout`'s sized pills: no text draws there, only the box before them.
@@ -188,7 +201,7 @@ pub(super) fn cursor_from_point_in(layout: &Layout<Ink>, x: f32, y: f32, plain: 
             && x <= b.x + b.width
             && let Some(ib) = layout.inline_boxes().find(|ib| ib.id == b.id)
         {
-            let aff = if b.id & 1 == 0 { Affinity::Downstream } else { Affinity::Upstream };
+            let aff = if b.id & 1 == 0 && b.id & PILL_AFTER == 0 { Affinity::Downstream } else { Affinity::Upstream };
             return Cursor::from_byte_index(layout, ib.index, aff);
         }
     }
@@ -265,13 +278,20 @@ pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, affinity: parley::lay
     let y = ((bb.y0 + bb.y1) * 0.5) as f32;
     let limit = layout.len() - 1;
     let idx = line_for_offset(layout, y).map_or(limit, |(ix, _)| ix);
-    if !down && idx == 0 {
-        return Some((0, Affinity::Downstream));
+    let mut to = idx;
+    loop {
+        if !down && to == 0 {
+            return Some((0, Affinity::Downstream));
+        }
+        if down && to >= limit {
+            return None;
+        }
+        to = if down { to + 1 } else { to - 1 };
+        if !starts_with_after_box(layout, to) {
+            break;
+        }
     }
-    if down && idx >= limit {
-        return None;
-    }
-    let line = layout.get(if down { idx + 1 } else { idx - 1 })?;
+    let line = layout.get(to)?;
     let m = line.metrics();
     let to = cursor_from_point(layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5);
     Some((to.index(), to.affinity()))

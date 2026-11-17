@@ -113,7 +113,7 @@ fn pill_chips_keep_room_and_never_overlap_at_wraps() {
         .enumerate()
         .map(|(k, label)| {
             let start = content.find(label).unwrap() as u32;
-            PillChip { start, end: start + label.len() as u32, style: crate::PillStyle { icon: (k == 1).then_some(&DOT), ..crate::PillStyle::new() } }
+            PillChip { start, end: start + label.len() as u32, style: crate::PillStyle { icon: (k == 1).then_some(&DOT), ..crate::PillStyle::new() }, ..Default::default() }
         })
         .collect();
     let scale = 2.0;
@@ -197,7 +197,7 @@ fn a_pill_wider_than_its_line_wraps_inside_it() {
     let label = "@Migrate config loader to the new schema";
     let content = format!("as in {label} did");
     let start = content.find(label).unwrap() as u32;
-    let pills = [PillChip { start, end: start + label.len() as u32, style: crate::PillStyle::new() }];
+    let pills = [PillChip { start, end: start + label.len() as u32, style: crate::PillStyle::new(), ..Default::default() }];
     let scale = 2.0;
     for width in (90..=200).step_by(7) {
         let max = width as f32 * scale;

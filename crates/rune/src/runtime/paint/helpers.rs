@@ -39,6 +39,7 @@ fn quote_sides(spec: &TextSpec, layout: &TextLayout) -> Vec<bool> {
             let labels: Vec<_> = spec.pills[first..]
                 .iter()
                 .take_while(|p| (p.start as usize) < range.end)
+                .filter(|p| !p.after)
                 .map(|p| p.start as usize - range.start..(p.end as usize).min(range.end) - range.start)
                 .collect();
             crate::text::strong_direction(text, &labels).map(|_| rtl)

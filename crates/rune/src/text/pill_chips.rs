@@ -7,7 +7,8 @@ use super::*;
 
 /// A pill's label and the room its chip takes before and after it, in device px. A sized pill
 /// takes its box's `size` before the label instead, with `room` more above and below it for
-/// its margins and selection ring, and hides the label.
+/// its margins and selection ring, and hides the label; one that draws `after` its label
+/// takes that room after it and leaves the label as text.
 pub(super) struct LabelRoom {
     pub index: usize,
     pub label: std::ops::Range<usize>,
@@ -15,6 +16,7 @@ pub(super) struct LabelRoom {
     pub trail: u32,
     pub size: Option<[f32; 2]>,
     pub room: [f32; 2],
+    pub after: bool,
 }
 
 /// The room each pill of `pills` takes in `text` laid out at `size` points and `scale`, and the
@@ -28,17 +30,22 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
         .map(|(i, p)| (i, p, (p.start as usize).min(text.len())..(p.end as usize).min(text.len())))
         .filter(|(_, _, r)| !r.is_empty() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end) && !text.as_bytes()[r.clone()].contains(&b'\n'))
         .collect();
-    let direction = direction_past_labels(text, &labels.iter().map(|(_, _, r)| r.clone()).collect::<Vec<_>>());
+    let hidden: Vec<_> = labels.iter().filter(|(_, p, _)| !p.after).map(|(_, _, r)| r.clone()).collect();
+    let direction = direction_past_labels(text, &hidden);
     let rooms = labels
         .into_iter()
-        .map(|(index, p, label)| {
+        .filter_map(|(index, p, label)| {
+            let after = p.after;
             if let Some(size) = p.style.size.filter(|s| s.iter().all(|v| v.is_finite() && *v > 0.0)) {
                 let room = p.room().map(|v| (v * scale).round());
-                return LabelRoom { index, label, lead: 0, trail: 0, size: Some(size.map(|v| (v * scale).round())), room };
+                return Some(LabelRoom { index, label, lead: 0, trail: 0, size: Some(size.map(|v| (v * scale).round())), room, after });
+            }
+            if after {
+                return None;
             }
             let (lead, trail) = (pm.lead(p.style.icon.is_some()), pm.trail());
             let (lead, trail) = if starts_rtl(direction, &label) { (0.0, lead + trail) } else { (lead, trail) };
-            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32, size: None, room: [0.0; 2] }
+            Some(LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32, size: None, room: [0.0; 2], after })
         })
         .collect();
     (direction, rooms)
@@ -49,9 +56,22 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
 /// whole to the next line and lets it wrap only when it is wider than a line, as a browser wraps
 /// a span. A sized pill's box grows its line to its height and its label takes no room;
 /// [`fit_sized_boxes`] sets where the box meets the baseline. The empty box after a sized
-/// pill's label is as tall as the room below its box, so the caret beside it can end there.
+/// pill's label is as tall as the room below its box, so the caret beside it can end there. A
+/// box drawn after its label is that pill's only box, at the label's end.
 pub(super) fn push_label_rooms(b: &mut parley::RangedBuilder<'_, Ink>, rooms: &[LabelRoom]) {
     for room in rooms {
+        if room.after && let Some([width, height]) = room.size {
+            b.push_inline_box(parley::InlineBox {
+                id: PILL_BOX | PILL_SIZED | PILL_AFTER | (room.index as u64) << 1,
+                kind: parley::InlineBoxKind::InFlow,
+                index: room.label.end,
+                width,
+                height: height + room.room[0] + room.room[1],
+                baseline: None,
+                vertical_align: parley::VerticalAlign::BASELINE,
+            });
+            continue;
+        }
         let tag = if room.size.is_some() { PILL_BOX | PILL_SIZED } else { PILL_BOX };
         let [width, height] = room.size.map_or([room.lead as f32, 0.0], |[w, h]| [w, h + room.room[0] + room.room[1]]);
         let below = if room.size.is_some() { room.room[1] } else { 0.0 };
@@ -77,7 +97,7 @@ pub(super) fn push_label_rooms(b: &mut parley::RangedBuilder<'_, Ink>, rooms: &[
 pub(crate) fn sized_box_widths(line: &parley::Line<'_, Ink>) -> Vec<f32> {
     line.items()
         .filter_map(|it| match it {
-            PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0 && b.id & 1 == 0 => Some(b.width),
+            PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0 && b.id & PILL_AFTER == 0 && b.id & 1 == 0 => Some(b.width),
             _ => None,
         })
         .collect()
@@ -98,7 +118,8 @@ pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[Lab
             let paragraph = text[..r.label.start].bytes().filter(|&c| c == b'\n').count();
             let indent = blocks.get(paragraph).map_or(0.0, |b| (b.indent_pt(font_size) * scale).round());
             let room = max_width.map_or(f32::INFINITY, |max| (max - indent - scale).max(1.0));
-            Some((PILL_BOX | PILL_SIZED | (r.index as u64) << 1, r, r.size?, room))
+            let tag = if r.after { PILL_BOX | PILL_SIZED | PILL_AFTER } else { PILL_BOX | PILL_SIZED };
+            Some((tag | (r.index as u64) << 1, r, r.size?, room))
         })
         .collect();
     if sized.is_empty() {

@@ -128,18 +128,6 @@ impl El {
         }
         self
     }
-    /// The look of each [`Mark::Pill`](crate::Mark::Pill) chip in a [`text_input`] by the
-    /// pill's id: chip colour, label colour and icon, so a person and an agent can differ.
-    /// What the style leaves unset falls back to [`El::pill_colors`] and [`El::pill_icon`].
-    /// The closure may capture app state; it runs each time the field is built, and what it
-    /// returns is drawn, so a cached subtree restyles when that state changes.
-    ///
-    /// ```ignore
-    /// text_input(s.draft.clone(), body).pill_style({
-    ///     let agents = s.agents.clone();
-    ///     move |id| if agents.contains(id) { PillStyle::default().bg(PURPLE).icon(&BOT) } else { PillStyle::default() }
-    /// })
-    /// ```
     /// What this field puts on the clipboard when it copies or cuts: `f` gets the selected text,
     /// with its HTML in a rich field, and returns what to copy instead, read before a cut
     /// removes the selection. A notes app adds a selected photo's image:
@@ -156,6 +144,18 @@ impl El {
         }
         self
     }
+    /// The look of each [`Mark::Pill`](crate::Mark::Pill) chip in a [`text_input`] by the
+    /// pill's id: chip colour, label colour and icon, so a person and an agent can differ.
+    /// What the style leaves unset falls back to [`El::pill_colors`] and [`El::pill_icon`].
+    /// The closure may capture app state; it runs each time the field is built, and what it
+    /// returns is drawn, so a cached subtree restyles when that state changes.
+    ///
+    /// ```ignore
+    /// text_input(s.draft.clone(), body).pill_style({
+    ///     let agents = s.agents.clone();
+    ///     move |id| if agents.contains(id) { PillStyle::default().bg(PURPLE).icon(&BOT) } else { PillStyle::default() }
+    /// })
+    /// ```
     pub fn pill_style(mut self, style: impl Fn(&str) -> crate::PillStyle + 'static) -> Self {
         if let Some(inp) = &mut self.input {
             inp.pill_style = Some(Rc::new(style));
@@ -164,22 +164,54 @@ impl El {
         }
         self
     }
+    /// Draws each [`sized`](crate::PillStyle::sized) pill `id`, styled by [`El::pill_style`],
+    /// as a box on a line of its own after bytes `range` of a [`text_input`]'s text. Unlike a
+    /// [`Mark::Pill`](crate::Mark::Pill)'s label, those bytes stay text the caret moves through
+    /// and edits. A caret at the end of `range` draws after its text, never beside the box, and
+    /// Up and Down step over the box's line. [`El::on_pill_press`] and
+    /// [`Cx::pill_rect`](crate::Cx::pill_rect) name the box by `id`, and a selection covering
+    /// `range` selects it as it does a pill. A range that is empty, crosses a line break or
+    /// overlaps a pill draws no box, nor does a style that is not sized. A notes app keeps a
+    /// photo under its Markdown reference while the caret edits it:
+    ///
+    /// ```ignore
+    /// text_input(&s.note, body).pill_style(photo_style).pills_after(s.revealed_photos().map(|p| (p.range.clone(), p.pill())))
+    /// ```
+    pub fn pills_after(mut self, pills: impl IntoIterator<Item = (std::ops::Range<usize>, String)>) -> Self {
+        if let Some(inp) = &mut self.input {
+            inp.pills_after.extend(pills);
+            self.sync_input_pills();
+            self.stale_rich();
+        }
+        self
+    }
     pub(super) fn sync_input_pills(&mut self) {
         let (Some(inp), Some(t)) = (&self.input, &mut self.text) else { return };
-        if inp.edit.is_plain() {
+        let edit = &inp.edit;
+        if edit.is_plain() && inp.pills_after.is_empty() {
             t.pills.clear();
             return;
         }
-        t.pills = inp
-            .edit
-            .display_pills()
-            .into_iter()
-            .map(|(start, end, id)| {
-                let mut style = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
-                style.icon = style.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)));
-                crate::text::PillChip { start, end, style }
-            })
-            .collect();
+        let pill = |start, end, id: &str, after| {
+            let mut style = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
+            style.icon = style.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)));
+            crate::text::PillChip { start, end, style, id: Some(id.to_owned()), after }
+        };
+        let mut pills: Vec<_> = edit.display_pills().into_iter().map(|(start, end, id)| pill(start, end, id, false)).collect();
+        let text = edit.text.as_str();
+        for (range, id) in &inp.pills_after {
+            let whole = range.start < range.end && range.end <= text.len() && text.is_char_boundary(range.start) && text.is_char_boundary(range.end);
+            if !whole || edit.is_secure() || text.as_bytes()[range.clone()].contains(&b'\n') {
+                continue;
+            }
+            let [(start, end)] = edit.map_range_to_display(range.start, range.end)[..] else { continue };
+            let after = pill(start, end, id, true);
+            if after.style.size.is_some() && !pills.iter().any(|p| p.start < end && start < p.end) {
+                pills.push(after);
+            }
+        }
+        pills.sort_by_key(|p| p.start);
+        t.pills = pills;
     }
     /// Marks a field's rich specs to rebuild when it flattens, after every builder has run.
     pub(crate) fn stale_rich(&mut self) {
@@ -496,7 +528,7 @@ pub(crate) fn sync_rich(inp: &mut crate::el::InputSpec, t: &mut TextSpec) {
         return;
     }
     t.rich_style = inp.rich_style;
-    if inp.edit.is_plain() && inp.decorations.is_empty() {
+    if inp.edit.is_plain() && inp.decorations.is_empty() && inp.pills_after.is_empty() {
         // A plain field lays out and draws exactly as before rich editing existed.
         t.spans.clear();
         t.strikes.clear();

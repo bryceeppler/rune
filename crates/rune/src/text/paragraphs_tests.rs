@@ -33,7 +33,7 @@ fn note(paragraphs: usize, trailing_newline: bool) -> Note {
         spans.push(Span::new(code, code + 4).mono().bg(Color::WHITE, 2.0));
         let at = text.len();
         line(&mut text, &format!("- [ ] task {i}"), Block::Bullet { level: 0, quote: false });
-        pills.push(PillChip { start: at as u32 + 2, end: at as u32 + 5, style: crate::PillStyle::new() });
+        pills.push(PillChip { start: at as u32 + 2, end: at as u32 + 5, style: crate::PillStyle::new(), ..Default::default() });
         line(&mut text, &format!("> quote {i} lazily"), Block::Quote);
         spans.push(Span::new(text.len() - 7, text.len() - 1).underline(Color::WHITE));
         line(&mut text, "```", Block::Code);
@@ -232,7 +232,7 @@ fn random_edits_lay_out_stacked_as_one_layout() {
             let a = next(bounds.len() - 1);
             let b = (a + 1 + next(4)).min(bounds.len() - 1);
             if !text[bounds[a]..bounds[b]].contains('\n') {
-                pills.push(PillChip { start: bounds[a] as u32, end: bounds[b] as u32, style: crate::PillStyle::new() });
+                pills.push(PillChip { start: bounds[a] as u32, end: bounds[b] as u32, style: crate::PillStyle::new(), ..Default::default() });
             }
         }
         let style = if step / 13 % 3 == 0 { TextStyle { family: Family::Mono, ..STYLE } } else { STYLE };

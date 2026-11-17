@@ -170,7 +170,7 @@ fn a_nested_hanging_paragraph_steps_in_like_a_nested_bullet_and_wraps_under_its_
 fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_after_it_outside_isolates() {
     let mut ts = TextSystem::default();
     let style = TextStyle::new(15.5, 400.0);
-    let pill = [PillChip { start: 0, end: 6, style: crate::PillStyle::new() }];
+    let pill = [PillChip { start: 0, end: 6, style: crate::PillStyle::new(), ..Default::default() }];
     for (text, pills, rtl) in [
         ("- [x] שלום", &pill[..], true),
         ("- [x] hello", &pill[..], false),
@@ -180,7 +180,7 @@ fn a_pill_before_a_paragraphs_first_letter_leaves_its_direction_to_the_letters_a
         ("- [x] \u{2067}שלום\u{2069} hello", &pill[..], false),
         ("- [ ] \u{2068}English\u{2069}\u{2069} שלום", &pill[..], true),
         ("- [x] \u{2067}שלום", &pill[..], false),
-        ("שלום - [x] \u{2066}English", &[PillChip { start: 9, end: 15, style: crate::PillStyle::new() }][..], true),
+        ("שלום - [x] \u{2066}English", &[PillChip { start: 9, end: 15, style: crate::PillStyle::new(), ..Default::default() }][..], true),
     ] {
         let layout = ts.layout_blocks_inner(text, &[], &[crate::edit::Block::Hanging { marker: 6, level: 0, quote: false }], pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
         assert_eq!(layout.is_rtl(), rtl, "{text:?} with {} pills", pills.len());
@@ -196,7 +196,7 @@ fn a_pill_starting_a_right_to_left_paragraph_draws_its_chip_and_icon_on_the_righ
     static BOX: Icon = Icon { name: "box", view: 24.0, body: "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\"/>" };
     let icon = Some(&BOX);
     for (text, rtl) in [("- [ ] שלום עולם", true), ("- [ ] hello world", false)] {
-        let pills = [PillChip { start: 0, end: 6, style: crate::PillStyle { icon, ..crate::PillStyle::new() } }];
+        let pills = [PillChip { start: 0, end: 6, style: crate::PillStyle { icon, ..crate::PillStyle::new() }, ..Default::default() }];
         let hidden = [Span::new(0, 6).size(0.01)];
         let laid = ts.layout_blocks_inner(text, &hidden, &[Block::Hanging { marker: 6, level: 0, quote: false }], &pills, style, 2.0, Some(600.0), Alignment::Start, Wrapping::Words, false);
         let word = parley::Cluster::from_byte_index(&laid, 6).unwrap();
@@ -224,7 +224,7 @@ fn a_hanging_task_line_measured_at_no_width_lays_out_every_character() {
     use crate::edit::Block;
     let mut ts = TextSystem::default();
     let text = "- [ ] Oat milk\n";
-    let pills = [PillChip { start: 0, end: 6, style: crate::PillStyle::new() }];
+    let pills = [PillChip { start: 0, end: 6, style: crate::PillStyle::new(), ..Default::default() }];
     let style = TextStyle::new(15.5, 400.0);
     for scale in [1.0, 2.0] {
         let layout = ts.layout_blocks_inner(text, &[], &[Block::Hanging { marker: 6, level: 0, quote: false }], &pills, style, scale, Some(0.0), Alignment::Start, Wrapping::Anywhere, false);

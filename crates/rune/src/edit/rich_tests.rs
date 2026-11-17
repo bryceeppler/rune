@@ -982,7 +982,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
     let chips: Vec<crate::text::PillChip> = w
         .display_pills()
         .into_iter()
-        .map(|(start, end, _)| crate::text::PillChip { start, end, style: crate::PillStyle::new() })
+        .map(|(start, end, _)| crate::text::PillChip { start, end, style: crate::PillStyle::new(), ..Default::default() })
         .collect();
     let layout: crate::text::TextLayout = ts.layout_blocks(&w.text, &[], w.blocks(), &chips, style, 2.0, Some(220.0), parley::Alignment::Start).into();
     assert!(layout.len() >= 3, "wrapped into {} lines", layout.len());
@@ -1005,7 +1005,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
     let p_chips: Vec<crate::text::PillChip> = ime_e
         .display_pills()
         .into_iter()
-        .map(|(start, end, _)| crate::text::PillChip { start, end, style: crate::PillStyle::new() })
+        .map(|(start, end, _)| crate::text::PillChip { start, end, style: crate::PillStyle::new(), ..Default::default() })
         .collect();
     let ime_layout = ts.layout_blocks(&disp, &[], &[Block::Paragraph], &p_chips, style, 2.0, None, parley::Alignment::Start);
     let (mut decos, mut icons) = (Vec::new(), Vec::new());
@@ -1016,7 +1016,7 @@ fn pill_edge_cases_words_lines_bidi_and_direct_text_mutation() {
 
     // RTL pill and mixed RTL+LTR pill chips have positive width.
     for (txt, start, end) in [("דוד", 0u32, 6u32), ("שלום@maya", 8, 13), ("@e\u{0301}", 0, 4)] {
-        let pc = [crate::text::PillChip { start, end, style: crate::PillStyle::new() }];
+        let pc = [crate::text::PillChip { start, end, style: crate::PillStyle::new(), ..Default::default() }];
         let l = ts.layout_blocks(txt, &[], &[Block::Paragraph], &pc, style, 2.0, None, parley::Alignment::Start);
         let (mut d, mut ic) = (Vec::new(), Vec::new());
         crate::text::pill_chips(&l.into(), &pc, 14.0, 2.0, [0.0, 0.0], f32::NEG_INFINITY..f32::INFINITY, Color::BLACK, &mut d, &mut ic);

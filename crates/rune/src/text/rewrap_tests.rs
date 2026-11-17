@@ -55,7 +55,7 @@ fn cases() -> Vec<Case> {
         .iter()
         .map(|label| {
             let start = pill_text.find(label).unwrap() as u32;
-            PillChip { start, end: start + label.len() as u32, style: crate::PillStyle::new() }
+            PillChip { start, end: start + label.len() as u32, style: crate::PillStyle::new(), ..Default::default() }
         })
         .collect();
     vec![

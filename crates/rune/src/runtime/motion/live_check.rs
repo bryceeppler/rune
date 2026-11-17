@@ -222,7 +222,7 @@ impl NodePrint {
             ("text style", |t| key(|h| bits(&[t.style.size, t.style.weight]).hash(h)), Some(|t| format!("{:.1}pt weight {}", t.style.size, t.style.weight))),
             ("pills", |t| key(|h| for p in &t.pills {
                 let st = &p.style;
-                (p.start, p.end, st.icon.map(|i| i.name), st.bg, st.fg, st.radius.map(f32::to_bits), st.size.map(|s| s.map(f32::to_bits))).hash(h);
+                (p.start, p.end, p.after, st.icon.map(|i| i.name), st.bg, st.fg, st.radius.map(f32::to_bits), st.size.map(|s| s.map(f32::to_bits))).hash(h);
                 let ring = st.selection_ring.map(|r| (r.color, r.width.to_bits(), r.gap.to_bits()));
                 let caption = st.caption.as_ref().map(|(t, s)| (t, s.size.to_bits(), s.weight.to_bits()));
                 (st.image.as_ref().map(|i| i.signature().0), &st.description, caption, st.border.map(|(c, w)| (c, w.to_bits())), ring).hash(h);
