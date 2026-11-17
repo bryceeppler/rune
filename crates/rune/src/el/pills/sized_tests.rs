@@ -290,6 +290,25 @@ fn the_view_places_a_bar_at_the_photos_corner_from_its_pill_rect() {
 }
 
 #[test]
+fn the_bar_finds_a_photo_below_many_lines_that_hold_pills_of_their_own() {
+    let line = format!("{TASK}Pack\n");
+    let lines = line.repeat(60);
+    let at = lines.len();
+    let mut marks: Vec<MarkRange> = (0..60).map(|i| i * line.len()).map(|s| MarkRange::new(s..s + TASK.len(), Mark::Pill("task".into()))).collect();
+    marks.push(MarkRange::new(at..at + PHOTO.len(), Mark::Pill("photo".into())));
+    let edit = TextEdit::from_parts(format!("{lines}{PHOTO}\nAfter"), marks, Vec::new());
+    let photo = Pixels::new();
+    photo.set(64, 40, gradient(64, 40));
+    let s = S { edit, photo, width: 500.0, ringed: false, margin: [0.0; 2], pressed: Vec::new(), said: "Harbour at dusk" };
+    let mut rt = Runtime::new(s, view, (600.0, 2000.0), Env::new(true, 2.0));
+    settle(&mut rt);
+    let bar = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("bar")).map(|e| e.rect).expect("the bar shows");
+    let photo = image(&rt).expect("the photo draws");
+    assert!(photo[1] >= 60.0 * LINE, "the photo is below the 60 lines: {photo:?}");
+    assert!((bar[0] + bar[2] - (photo[0] + photo[2] - 10.0)).abs() < 0.5 && (bar[1] - (photo[1] + 10.0)).abs() < 0.5, "10 points inside its corner: {bar:?} {photo:?}");
+}
+
+#[test]
 fn assistive_technology_hears_one_object_for_the_photo_and_an_image_with_its_description() {
     let (rt, _, _) = runtime(500.0, true);
     let tree = rt.accessibility_tree();

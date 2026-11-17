@@ -51,7 +51,7 @@ impl<S: 'static> Runtime<S> {
         let (input, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
         let k = spec.pills.iter().position(|p| p.id.as_deref() == Some(id))?;
         let s = self.env.scale;
-        let (_, r) = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s, f32::NEG_INFINITY..f32::INFINITY).into_iter().find(|(j, _)| *j == k)?;
+        let r = crate::text::pill_chip_rect(layout, &spec.pills, k, spec.style.size, s)?;
         let scroll = if input.single_line { self.input_scroll.get(&n.path).copied().unwrap_or(0.0) } else { 0.0 };
         let x = text_x(spec, n.inset[0], n.local.w - n.inset[2], layout.full_width() / s) - scroll;
         Some([x + r[0] / s, n.inset[1] + r[1] / s, r[2] / s, r[3] / s])

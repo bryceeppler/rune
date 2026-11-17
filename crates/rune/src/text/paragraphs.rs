@@ -558,7 +558,7 @@ impl TextLayout {
     }
 
     /// The layout holding byte `byte`, the next one at a paragraph's end.
-    fn at_byte(&self, byte: usize) -> Piece<'_> {
+    pub(crate) fn at_byte(&self, byte: usize) -> Piece<'_> {
         match &self.0 {
             Laid::Whole(l) => Piece::whole(l),
             Laid::Stacked(s) => Piece::of(s.para_at_byte(byte)),

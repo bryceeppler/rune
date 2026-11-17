@@ -229,6 +229,17 @@ pub(crate) fn pill_chip_rects(layout: &TextLayout, pills: &[PillChip], size: f32
     rects
 }
 
+/// Where pill `k` of `pills` first draws in `layout`, as [`pill_chip_rects`] gives it, read from
+/// the one paragraph holding the pill.
+pub(crate) fn pill_chip_rect(layout: &TextLayout, pills: &[PillChip], k: usize, size: f32, scale: f32) -> Option<[f32; 4]> {
+    let piece = layout.at_byte(pills.get(k)?.start as usize);
+    let first = piece.first_pill();
+    let mut rect = None;
+    let mut found = |i: usize, chip: PaintedDeco| if first + i == k { rect.get_or_insert(chip.deco.rect); };
+    chips(piece.layout, piece.start, piece.pills(pills), size, scale, [0.0, piece.y], Color::TRANSPARENT, &mut found, &mut Vec::new());
+    rect
+}
+
 /// [`pill_chips`] for one layout whose text starts at byte `start` of the text `pills` index.
 #[allow(clippy::too_many_arguments)]
 fn chips(
