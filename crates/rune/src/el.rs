@@ -232,6 +232,7 @@ pub struct InputSpec {
     pub(crate) key: Option<InputKeyFn>,
     pub(crate) change: Option<PressFn>,
     pub(crate) paste: Option<InputPasteFn>,
+    pub(crate) copy: Option<text::InputCopyFn>,
     pub(crate) pill_press: Option<LinkFn>,
 }
 
@@ -715,6 +716,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         key: None,
         change: None,
         paste: None,
+        copy: None,
         pill_press: None,
     }));
     e.sync_input_pills();

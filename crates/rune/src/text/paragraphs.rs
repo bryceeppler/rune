@@ -133,7 +133,7 @@ impl Source {
         let local = |s: &Span, start: usize, len: usize| {
             ((s.start as usize).max(start) - start, ((s.end as usize).min(start + len)) - start, s.mono, s.weight.map(f32::to_bits), s.size.map(f32::to_bits), s.italic)
         };
-        let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.style.icon.is_some());
+        let pill = |c: &PillChip, start: usize| (c.start as usize - start, c.end as usize - start, c.style.icon.is_some(), c.style.size.map(|s| s.map(f32::to_bits)), c.ring_reach().to_bits());
         let (spans, pills) = (&self.spans[q.spans.clone()], &self.pills[q.pills.clone()]);
         (clip(&self.blocks, q.blocks.clone()) == p.blocks(q.breaks)
             && spans.len() == p.spans.len()

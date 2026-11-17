@@ -53,4 +53,6 @@ pub(crate) fn with_pill_colors(spans: &[Span], pills: &[PillChip]) -> Vec<Span> 
 }
 
 #[cfg(test)]
+mod sized_tests;
+#[cfg(test)]
 mod tests;

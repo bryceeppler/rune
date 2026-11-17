@@ -1,12 +1,16 @@
 //! `Cx::selection_rects`: the line boxes of the [`El::selectable`](crate::El::selectable)
-//! text selection, for a view that places something over it (a Quote button). It is a layout
-//! read like `Cx::layout`, under a key no element can have, so it settles, replays from
-//! `memo` and re-runs the view the same way; the boxes ride along with the rects the view is
-//! given.
+//! text selection, for a view that places something over it (a Quote button), and
+//! `Cx::pill_rect`: where a field's pill draws, for a bar over a selected photo. Each is a
+//! layout read like `Cx::layout`, under a key no element can have, so it settles, replays from
+//! `memo` and re-runs the view the same way; the selection's boxes ride along with the rects
+//! the view is given.
 use super::*;
 
 /// The layout-read key `Cx::selection_rects` reads under.
 pub(crate) const SELECTION: &str = "\u{1}selection";
+/// The start of the layout-read key `Cx::pill_rect` reads under, then the field's key, a NUL
+/// and the pill's id.
+pub(crate) const PILL: &str = "\u{1}pill\u{0}";
 
 impl<S> Cx<S> {
     /// The line boxes of the text selection, `[x, y, w, h]` each in window points after
@@ -27,6 +31,30 @@ impl<S> Cx<S> {
         layout_read::note_read(&mut self.layout_reads.borrow_mut(), SELECTION, None);
         crate::memo::read_selection(&self.layout.selection);
         self.layout.selection.to_vec()
+    }
+
+    /// Where the [`Mark::Pill`](crate::Mark::Pill) with id `id` draws in the text field keyed
+    /// `key`: a [`sized`](crate::PillStyle::sized) pill's box, or a chip's first line,
+    /// `[x, y, w, h]` in the field's own points from its top-left, so it holds still while the
+    /// field scrolls. `None` when the field has no such pill. Like [`Cx::layout`], a view that
+    /// reads it re-runs when it moves or resizes past half a point.
+    #[track_caller]
+    pub fn pill_rect(&self, key: &str, id: &str) -> Option<[f32; 4]> {
+        self.layout(&format!("{PILL}{key}\u{0}{id}"))
+    }
+}
+
+impl<S: 'static> Runtime<S> {
+    /// [`Cx::pill_rect`] of the pill `id` in the field at `nodes[i]`.
+    pub(super) fn pill_rect_in(&self, nodes: &[Node], i: usize, id: &str) -> Option<[f32; 4]> {
+        let n = &nodes[i];
+        let (input, spec, layout) = (n.input.as_ref()?, n.text.as_ref()?, n.text_layout.as_ref()?);
+        let k = input.edit.display_pills().into_iter().position(|(_, _, p)| p == id)?;
+        let s = self.env.scale;
+        let (_, r) = crate::text::pill_chip_rects(layout, &spec.pills, spec.style.size, s, f32::NEG_INFINITY..f32::INFINITY).into_iter().find(|(j, _)| *j == k)?;
+        let scroll = if input.single_line { self.input_scroll.get(&n.path).copied().unwrap_or(0.0) } else { 0.0 };
+        let x = text_x(spec, n.inset[0], n.local.w - n.inset[2], layout.full_width() / s) - scroll;
+        Some([x + r[0] / s, n.inset[1] + r[1] / s, r[2] / s, r[3] / s])
     }
 }
 

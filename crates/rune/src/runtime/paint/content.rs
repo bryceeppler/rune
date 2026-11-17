@@ -189,6 +189,7 @@ impl<S: 'static> Runtime<S> {
             }
             // Text fields: selection under the text, placeholder, caret over it.
             let mut caret = None;
+            let mut field_selection = None;
             if let Some(inp) = &n.input {
                 let e = &inp.edit;
                 let departing = self.flights.iter().any(|f| f.departs(&n.path, n.key.as_deref())
@@ -215,8 +216,10 @@ impl<S: 'static> Runtime<S> {
                         let (da, db) = e.display_selection_range(a, b);
                         selectable::push_field_selection(&mut self.instances, layout, da, db,
                             origin, tk, premul(inp.selection, o, srgb), s, clip, fade);
+                        field_selection = Some((da, db));
                     }
-                    caret = input_caret;
+                    let photo_selected = field_selection.is_some_and(|(da, db)| crate::text::covers_sized(&spec.pills, da, db));
+                    caret = input_caret.filter(|_| !photo_selected);
                     if let Some((_, _)) = &e.preedit
                         && let (_, Some((pa, pb))) = e.display()
                     {
@@ -247,7 +250,7 @@ impl<S: 'static> Runtime<S> {
             } else {
                 f32::NEG_INFINITY..f32::INFINITY
             };
-            crate::text::pill_chips(layout, &spec.pills, spec.style.size, s, d_origin, band.clone(), pill_bg, &mut self.deco_scratch, &mut pill_icons);
+            let pill_boxes = crate::text::pill_chips(layout, &spec.pills, spec.style.size, s, d_origin, band.clone(), pill_bg, &mut self.deco_scratch, &mut pill_icons);
             // Elided text draws its decorations over the drawn string's offsets.
             let drawn_spans = n.elided.map(|e| e.spans(&spec.spans));
             let spans = drawn_spans.as_deref().unwrap_or(&spec.spans);
@@ -310,6 +313,23 @@ impl<S: 'static> Runtime<S> {
                     if self.paint_rank.is_some() && inst.uv[2] > 0.0 { self.icon_aprons.push(apron_key(&inst)); }
                     self.instances.push(inst);
                 }
+            }
+            if !pill_boxes.is_empty() {
+                let covered = match &n.input {
+                    Some(inp) => field_selection.map(|range| pill_boxes::Covered { range, tint: inp.selection }),
+                    None if spec.selectable => selectable::range_in(sel_ranges, i)
+                        .map(|(a, b)| pill_boxes::Covered { range: n.elided.map_or((a, b), |e| e.range(a, b)), tint: spec.selection }),
+                    None => None,
+                };
+                let place = |r: [f32; 4]| {
+                    let r = scale_about(r, rest_origin, d_origin, tk);
+                    [r[0] + glide[0], r[1] + glide[1], r[2], r[3]]
+                };
+                let fg = spec.pill_colors.and_then(|(_, fg)| fg).unwrap_or(color);
+                pill_boxes::BoxPaint {
+                    instances: &mut self.instances, images: &mut self.images, text: &mut self.text, glyphs: &mut self.glyph_scratch,
+                    place: &place, k: tk, raster, s, o, srgb, clip, fade,
+                }.paint(&pill_boxes, &spec.pills, covered.as_ref(), fg, spec.style.size);
             }
             if spec.selectable && let Some((a, b)) = selectable::range_in(sel_ranges, i) {
                 let (a, b) = n.elided.map_or((a, b), |e| e.range(a, b));

@@ -220,7 +220,13 @@ impl NodePrint {
             ("text", |t| key(|h| t.live.is_none().then_some(&t.content).hash(h)), Some(snippet)),
             ("text colour", |t| key(|h| rgba(t.color).hash(h)), Some(|t| colour(t.color))),
             ("text style", |t| key(|h| bits(&[t.style.size, t.style.weight]).hash(h)), Some(|t| format!("{:.1}pt weight {}", t.style.size, t.style.weight))),
-            ("pills", |t| key(|h| for p in &t.pills { (p.start, p.end, p.style.icon.map(|i| i.name), p.style.bg, p.style.fg).hash(h) }), None),
+            ("pills", |t| key(|h| for p in &t.pills {
+                let st = &p.style;
+                (p.start, p.end, st.icon.map(|i| i.name), st.bg, st.fg, st.radius.map(f32::to_bits), st.size.map(|s| s.map(f32::to_bits))).hash(h);
+                let ring = st.selection_ring.map(|r| (r.color, r.width.to_bits(), r.gap.to_bits()));
+                let caption = st.caption.as_ref().map(|(t, s)| (t, s.size.to_bits(), s.weight.to_bits()));
+                (st.image.as_ref().map(|i| i.signature().0), &st.description, caption, st.border.map(|(c, w)| (c, w.to_bits())), ring).hash(h);
+            }), None),
             ("rings", |t| key(|h| for &(a, b, c, w) in &t.rings { (a, b, c, w.to_bits()).hash(h) }), None),
             ("strikes", |t| key(|h| t.strikes.hash(h)), None),
             ("highlights", |t| key(|h| for hl in &t.highlights {

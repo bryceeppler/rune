@@ -16,17 +16,20 @@ use super::*;
 pub(crate) const ROOT: AkId = AkId(1);
 /// The help tooltip Rune draws, when one shows.
 const TOOLTIP: AkId = AkId(2);
-/// Bits under an element's id for the nodes it owns: its text's lines and links.
+/// Bits under an element's id for the nodes it owns: its text's lines, links and sized pills'
+/// images.
 const SUB: u32 = 16;
 const LINK_BASE: u64 = 0x8000;
+const IMAGE_BASE: u64 = 0xc000;
 
 pub(crate) fn element_id(id: NodeId) -> AkId { AkId(id.0 << SUB) }
 pub(crate) fn line_id(id: NodeId, line: usize) -> AkId { AkId((id.0 << SUB) | (1 + line as u64).min(LINK_BASE - 1)) }
-pub(crate) fn link_id(id: NodeId, k: usize) -> AkId { AkId((id.0 << SUB) | (LINK_BASE + k as u64).min((1 << SUB) - 1)) }
+pub(crate) fn link_id(id: NodeId, k: usize) -> AkId { AkId((id.0 << SUB) | (LINK_BASE + k as u64).min(IMAGE_BASE - 1)) }
+pub(crate) fn image_id(id: NodeId, k: usize) -> AkId { AkId((id.0 << SUB) | (IMAGE_BASE + k as u64).min((1 << SUB) - 1)) }
 /// The runtime node an AccessKit id names, and which of its own nodes: 0 the element, a line
-/// `1..LINK_BASE`, a link from `LINK_BASE`.
+/// `1..LINK_BASE`, a link `LINK_BASE..IMAGE_BASE`, an image from `IMAGE_BASE`.
 pub(crate) fn split_id(id: AkId) -> (NodeId, u64) { (NodeId(id.0 >> SUB), id.0 & ((1 << SUB) - 1)) }
-pub(crate) fn sub_link(sub: u64) -> Option<usize> { (sub >= LINK_BASE).then(|| (sub - LINK_BASE) as usize) }
+pub(crate) fn sub_link(sub: u64) -> Option<usize> { (LINK_BASE..IMAGE_BASE).contains(&sub).then(|| (sub - LINK_BASE) as usize) }
 
 /// What a tree update read last time: when none of it moved, nothing it builds can have.
 #[derive(Clone, PartialEq, Default)]

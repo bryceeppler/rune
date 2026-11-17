@@ -46,12 +46,39 @@ pub(crate) fn cursor_geometry(
     }
     // Parley puts a caret at a pill's edge against its label, inside the chip: move it outside.
     let at = cursor.index();
-    if let Some(x) = pill_edge(layout, at, ((bb.y0 + bb.y1) * 0.5) as f32) {
+    let mid = ((bb.y0 + bb.y1) * 0.5) as f32;
+    if let Some(x) = pill_edge(layout, at, mid) {
         let w = bb.x1 - bb.x0;
         bb.x0 = x as f64;
         bb.x1 = bb.x0 + w;
     }
+    if let Some((_, line)) = line_for_offset(layout, mid)
+        && let Some((top, bottom)) = text_band(layout, &line)
+    {
+        (bb.y0, bb.y1) = (top as f64, bottom as f64);
+    }
     bb
+}
+
+/// The top and bottom of the text on `line` when a sized pill's box raises the line's top above
+/// it: the line box its text alone would take, which the caret and the selection beside the box
+/// span. The box sits on the baseline, so the text below it keeps its depth, and the text's
+/// half-leading is the same above and below: its height above the baseline is its depth plus
+/// the font's ascent less its descent.
+fn text_band(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>) -> Option<(f32, f32)> {
+    let sized = line.items().any(|it| matches!(it, PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0));
+    if !sized {
+        return None;
+    }
+    let (m, font) = (line.metrics(), layout.root_span_metrics()?);
+    let depth = m.block_max_coord - m.baseline;
+    Some((m.baseline - depth - font.ascent + font.descent.abs(), m.block_max_coord))
+}
+
+/// The labels of `layout`'s sized pills: no text draws there, only the box before them.
+fn sized_labels(layout: &Layout<Ink>) -> Vec<std::ops::Range<usize>> {
+    let boxes = || layout.inline_boxes().filter(|b| b.id & PILL_SIZED != 0);
+    boxes().filter(|b| b.id & 1 == 0).filter_map(|lead| Some(lead.index..boxes().find(|t| t.id == lead.id | 1)?.index)).collect()
 }
 
 /// The x just outside the pill chip whose label starts or ends at byte `at`, on the line at
@@ -279,6 +306,7 @@ pub(crate) fn range_boxes(
         .geometry(layout);
     }
     let range = a..b;
+    let hidden = sized_labels(layout);
     let mut rects = Vec::new();
     for (line_ix, line) in layout.lines().enumerate() {
         let lr = line.text_range();
@@ -286,9 +314,13 @@ pub(crate) fn range_boxes(
             continue;
         }
         let m = line.metrics();
-        let line_min = m.block_min_coord.min(m.content_block_min_coord) as f64;
-        let line_max = m.block_max_coord.max(m.content_block_max_coord) as f64;
-        let newline_ws = if line.break_reason() == BreakReason::Explicit
+        let band = text_band(layout, &line);
+        let (line_min, line_max) = match band {
+            Some((top, bottom)) => (top as f64, bottom as f64),
+            None => (m.block_min_coord.min(m.content_block_min_coord) as f64, m.block_max_coord.max(m.content_block_max_coord) as f64),
+        };
+        let newline_ws = if band.is_none()
+            && line.break_reason() == BreakReason::Explicit
             && lr.end > lr.start
             && range.contains(&(lr.end - 1))
         {
@@ -305,7 +337,8 @@ pub(crate) fn range_boxes(
             let mut cx = (m.inline_min_coord + run.visual_clusters().next().and_then(|c| c.visual_offset()).unwrap_or(m.offset)) as f64;
             for cl in run.visual_clusters() {
                 let adv = cl.advance() as f64;
-                if range.contains(&cl.text_range().start) && adv > 0.0 {
+                let at = cl.text_range().start;
+                if range.contains(&at) && adv > 0.0 && !hidden.iter().any(|h| h.contains(&at)) {
                     intervals.push((cx, cx + adv));
                 }
                 cx += adv;
@@ -315,6 +348,7 @@ pub(crate) fn range_boxes(
             for item in line.items() {
                 if let PositionedLayoutItem::InlineBox(ib) = item
                     && ib.id & PILL_BOX != 0
+                    && ib.id & PILL_SIZED == 0
                     && ib.width > 0.0
                     && layout.inline_boxes().find(|b| b.id == ib.id).is_some_and(|b| {
                         if ib.id & 1 == 0 {

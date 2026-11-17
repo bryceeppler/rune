@@ -322,6 +322,8 @@ mod paint_helpers;
 use paint_helpers::*;
 #[path = "runtime/paint/content.rs"]
 mod paint_content;
+#[path = "runtime/paint/pill_boxes.rs"]
+mod pill_boxes;
 #[path = "runtime/input/hit.rs"]
 mod hit;
 #[path = "runtime/paint/build.rs"]

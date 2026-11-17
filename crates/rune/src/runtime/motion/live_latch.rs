@@ -30,14 +30,16 @@ impl<S: 'static> Runtime<S> {
             }
         }
         for sub in &self.live_subscriptions { sub.active.store(false, Ordering::Release); }
-        // Pixels only wake: each frame's build uploads their current image, so unlike bound
-        // values they leave nothing to sample on a later visible frame.
+        // Pixels, a pill's image among them, only wake: each frame's build uploads their
+        // current image, so unlike bound values they leave nothing to sample on a later visible
+        // frame.
         let mut sampled = false;
         for node in &self.nodes {
             let text = node.text.as_ref().and_then(|t| t.live.as_ref()).map(|t| &t.source);
             let pixels = node.vis.cold.get().and_then(|v| v.pixels.as_ref()).map(|p| &p.source);
+            let pill_images = || node.text.iter().flat_map(|t| &t.pills).filter_map(|p| p.style.image.as_ref()).map(|p| &p.source);
             let has_live = node.cold.get().is_some_and(|c| !c.live.is_empty());
-            if !has_live && text.is_none() && pixels.is_none() {
+            if !has_live && text.is_none() && pixels.is_none() && pill_images().next().is_none() {
                 continue;
             }
             // An element removed outright leaves the scene now but `nodes` only at the next
@@ -45,7 +47,7 @@ impl<S: 'static> Runtime<S> {
             // pixels keep waking until the exit ends (commit already dropped their bindings).
             if !self.scene.contains(node.id) { continue; }
             sampled |= text.is_some() || has_live;
-            for source in node.live.iter().map(|b| &b.source).chain(text).chain(pixels) {
+            for source in node.live.iter().map(|b| &b.source).chain(text).chain(pixels).chain(pill_images()) {
                 if let Some(sub) = self.live_subscriptions.iter().find(|s| s.source_id == source.id()) {
                     sub.active.store(true, Ordering::Release);
                 } else {

@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// `El::on_input_copy`.
+pub(crate) type InputCopyFn = Rc<dyn Fn(crate::states::States<'_>, crate::ClipboardContent) -> crate::ClipboardContent>;
+
 impl El {
     pub fn font(mut self, s: TextStyle) -> Self {
         if let Some(t) = &mut self.text {
@@ -137,6 +140,22 @@ impl El {
     ///     move |id| if agents.contains(id) { PillStyle::default().bg(PURPLE).icon(&BOT) } else { PillStyle::default() }
     /// })
     /// ```
+    /// What this field puts on the clipboard when it copies or cuts: `f` gets the selected text,
+    /// with its HTML in a rich field, and returns what to copy instead, read before a cut
+    /// removes the selection. A notes app adds a selected photo's image:
+    ///
+    /// ```ignore
+    /// text_input(&s.note, body).on_input_copy(|s: &Notes, copy| match s.selected_photo() {
+    ///     Some(photo) => copy.with_image(photo.clipboard_image()),
+    ///     None => copy,
+    /// })
+    /// ```
+    pub fn on_input_copy<S: 'static>(mut self, f: impl Fn(&S, crate::ClipboardContent) -> crate::ClipboardContent + 'static) -> Self {
+        if let Some(input) = &mut self.input {
+            input.copy = Some(Rc::new(move |s, content| f(downcast::<S>(s), content)));
+        }
+        self
+    }
     pub fn pill_style(mut self, style: impl Fn(&str) -> crate::PillStyle + 'static) -> Self {
         if let Some(inp) = &mut self.input {
             inp.pill_style = Some(Rc::new(style));

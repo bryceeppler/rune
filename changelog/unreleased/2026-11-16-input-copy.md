@@ -1,0 +1,1 @@
+- **`El::on_input_copy` lets a field add to what it copies and cuts**: it gets the selected text and HTML before a cut removes them and returns the clipboard content, for example with a selected photo's image from `ClipboardContent::with_image`.

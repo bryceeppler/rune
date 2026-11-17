@@ -75,16 +75,88 @@ impl Span {
 /// How one [`Mark::Pill`](crate::Mark::Pill) chip looks: any part left unset falls back to
 /// [`El::pill_colors`](crate::El::pill_colors) and [`El::pill_icon`](crate::El::pill_icon), then
 /// the field's defaults. Build one with `PillStyle::default().bg(..).icon(..)`.
-#[derive(Clone, Copy, Debug, Default)]
+///
+/// A [`sized`](PillStyle::sized) pill draws one box in place of its label, such as a photo:
+///
+/// ```ignore
+/// PillStyle::new().sized([640.0, 400.0]).image(photo.pixels()).description("Photo of the harbour")
+///     .bg(well).fg(muted).icon(&PHOTO).caption("Downloading photo…", caption_style)
+///     .radius(8.0).border(hairline, 1.0).selection_ring(accent, 3.0, 2.0)
+/// ```
+#[derive(Clone, Debug, Default)]
 pub struct PillStyle {
     pub(crate) bg: Option<Color>,
     pub(crate) fg: Option<Color>,
     pub(crate) icon: Option<&'static Icon>,
+    pub(crate) radius: Option<f32>,
+    pub(crate) size: Option<[f32; 2]>,
+    pub(crate) image: Option<crate::Pixels>,
+    pub(crate) description: Option<String>,
+    pub(crate) caption: Option<(String, crate::TextStyle)>,
+    pub(crate) border: Option<(Color, f32)>,
+    pub(crate) selection_ring: Option<SelectionRing>,
+}
+
+/// A sized pill's ring while the selection covers it: `width` points wide, `gap` points outside
+/// its box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SelectionRing {
+    pub color: Color,
+    pub width: f32,
+    pub gap: f32,
 }
 
 impl PillStyle {
     pub const fn new() -> Self {
-        Self { bg: None, fg: None, icon: None }
+        Self { bg: None, fg: None, icon: None, radius: None, size: None, image: None, description: None, caption: None, border: None, selection_ring: None }
+    }
+    /// One box `size` points wide and tall in place of the label, scaled down to fit the line's
+    /// width, and the line grows to its height. [`PillStyle::bg`] fills it and the icon draws
+    /// centred in it, which shows while the [`image`](PillStyle::image) loads or when it has
+    /// none. The caret steps over the box and Backspace deletes it whole, as with any pill.
+    pub const fn sized(mut self, size: [f32; 2]) -> Self {
+        self.size = Some(size);
+        self
+    }
+    /// Pixels a sized pill draws over its background, filling its box and cropped to its shape.
+    /// Until they hold an image the box shows its background and icon; when they do, the window
+    /// draws them without laying the text out again.
+    pub fn image(mut self, pixels: &crate::Pixels) -> Self {
+        self.image = Some(pixels.clone());
+        self
+    }
+    /// What assistive technology reads for a sized pill: the field's text holds one object
+    /// replacement character (U+FFFC) for the pill, and an image beside the text's lines carries
+    /// this description.
+    pub fn description(mut self, text: impl Into<String>) -> Self {
+        self.description = Some(text.into());
+        self
+    }
+    /// The chip's or the sized box's corner radius in points. Default: 5 points, at most half
+    /// the chip's height.
+    pub const fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+    /// One short line centred under a sized pill's icon while its image isn't ready, such as
+    /// "Downloading photo…", in [`PillStyle::fg`], half its line height below the icon.
+    pub fn caption(mut self, text: impl Into<String>, style: crate::TextStyle) -> Self {
+        self.caption = Some((text.into(), style));
+        self
+    }
+    /// A ring `width` points wide just inside a sized pill's box, over its image: a hairline
+    /// that keeps a pale photo's edge.
+    pub const fn border(mut self, color: Color, width: f32) -> Self {
+        self.border = Some((color, width));
+        self
+    }
+    /// A ring `width` points wide, `gap` points outside a sized pill's box, while the selection
+    /// covers the pill, in place of the selection's tint. The line keeps room for it above the
+    /// box; beside and below the box it draws over whatever is there, so the field's ancestors
+    /// must not clip within `width + gap` of the box.
+    pub const fn selection_ring(mut self, color: Color, width: f32, gap: f32) -> Self {
+        self.selection_ring = Some(SelectionRing { color, width, gap });
+        self
     }
     /// The chip's colour.
     pub const fn bg(mut self, bg: Color) -> Self {
@@ -109,6 +181,33 @@ pub(crate) struct PillChip {
     pub start: u32,
     pub end: u32,
     pub style: PillStyle,
+}
+
+impl PillChip {
+    /// Whether bytes `a..b` cover this pill whole.
+    pub fn within(&self, a: usize, b: usize) -> bool {
+        a <= self.start as usize && self.end as usize <= b
+    }
+
+    /// The radius of a chip or box `rect` (device px) at `scale`.
+    pub fn radius(&self, rect: [f32; 4], scale: f32) -> f32 {
+        (self.style.radius.unwrap_or(5.0) * scale).min(rect[2].min(rect[3]) * 0.5).max(0.0)
+    }
+
+    /// How far a sized pill's selection ring reaches outside its box, in points.
+    pub fn ring_reach(&self) -> f32 {
+        self.style.selection_ring.map_or(0.0, |r| (r.width + r.gap).max(0.0))
+    }
+
+    /// Whether this sized pill's image is ready to draw.
+    pub fn image_ready(&self) -> bool {
+        self.style.image.as_ref().is_some_and(|p| p.size().0 > 0)
+    }
+}
+
+/// Whether a selection of bytes `a..b` covers any sized pill of `pills`.
+pub(crate) fn covers_sized(pills: &[PillChip], a: usize, b: usize) -> bool {
+    a < b && pills.iter().any(|p| p.style.size.is_some() && p.within(a, b))
 }
 
 /// A pill chip's horizontal geometry in points for text of `size` points: the room before its
@@ -138,6 +237,13 @@ impl PillMetrics {
 /// Tags the inline boxes around pill labels: the rest of the id is the pill's index shifted
 /// left once, with the low bit set on the box after the label.
 pub(super) const PILL_BOX: u64 = 1 << 62;
+/// Tags the box that stands for a [`PillStyle::sized`] pill's label.
+pub(super) const PILL_SIZED: u64 = 1 << 61;
+
+/// The index of the pill a pill box's `id` belongs to.
+pub(super) fn pill_index(id: u64) -> usize {
+    ((id & !(PILL_BOX | PILL_SIZED)) >> 1) as usize
+}
 
 /// Flattens overlapping [`Span`]s into non-overlapping elementary intervals so that Parley's
 /// single `Brush(Ink)` index per glyph run carries the combined colour, background, underline,

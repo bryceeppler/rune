@@ -5,12 +5,16 @@ use swash::text::{BidiClass, Codepoint as _};
 
 use super::*;
 
-/// A pill's label and the room its chip takes before and after it, in device px.
+/// A pill's label and the room its chip takes before and after it, in device px. A sized pill
+/// takes its box's `size` before the label instead, with `above` more room over it for its
+/// selection ring, and hides the label.
 pub(super) struct LabelRoom {
     pub index: usize,
     pub label: std::ops::Range<usize>,
     pub lead: u32,
     pub trail: u32,
+    pub size: Option<[f32; 2]>,
+    pub above: f32,
 }
 
 /// The room each pill of `pills` takes in `text` laid out at `size` points and `scale`, and the
@@ -28,9 +32,13 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
     let rooms = labels
         .into_iter()
         .map(|(index, p, label)| {
+            if let Some(size) = p.style.size.filter(|s| s.iter().all(|v| v.is_finite() && *v > 0.0)) {
+                let above = (p.ring_reach() * scale).round();
+                return LabelRoom { index, label, lead: 0, trail: 0, size: Some(size.map(|v| (v * scale).round())), above };
+            }
             let (lead, trail) = (pm.lead(p.style.icon.is_some()), pm.trail());
             let (lead, trail) = if starts_rtl(direction, &label) { (0.0, lead + trail) } else { (lead, trail) };
-            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32 }
+            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32, size: None, above: 0.0 }
         })
         .collect();
     (direction, rooms)
@@ -39,19 +47,62 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
 /// Boxes before and after each pill's label make room for its chip; they keep the pill's index
 /// in their id. The label may break like any text; `break_lines_with_blocks` moves a split pill
 /// whole to the next line and lets it wrap only when it is wider than a line, as a browser wraps
-/// a span.
+/// a span. A sized pill's box sits on the baseline, so the line grows to its height, and its
+/// label takes no room.
 pub(super) fn push_label_rooms(b: &mut parley::RangedBuilder<'_, Ink>, rooms: &[LabelRoom]) {
     for room in rooms {
-        for (side, index, width) in [(0, room.label.start, room.lead), (1, room.label.end, room.trail)] {
+        let tag = if room.size.is_some() { PILL_BOX | PILL_SIZED } else { PILL_BOX };
+        let [width, height] = room.size.map_or([room.lead as f32, 0.0], |[w, h]| [w, h + room.above]);
+        for (side, index, width, height) in [(0, room.label.start, width, height), (1, room.label.end, room.trail as f32, 0.0)] {
             b.push_inline_box(parley::InlineBox {
-                id: PILL_BOX | (room.index as u64) << 1 | side,
+                id: tag | (room.index as u64) << 1 | side,
                 kind: parley::InlineBoxKind::InFlow,
                 index,
-                width: width as f32,
-                height: 0.0,
+                width,
+                height,
                 baseline: None,
                 vertical_align: parley::VerticalAlign::BASELINE,
             });
+        }
+        if room.size.is_some() {
+            b.push(StyleProperty::FontSize(HIDDEN_LABEL_SIZE), room.label.clone());
+            b.push(LineHeight::Absolute(0.0), room.label.clone());
+        }
+    }
+}
+
+/// The widths of the sized pills' boxes on `line`, in the order they draw (device px).
+pub(crate) fn sized_box_widths(line: &parley::Line<'_, Ink>) -> Vec<f32> {
+    line.items()
+        .filter_map(|it| match it {
+            PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0 && b.id & 1 == 0 => Some(b.width),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The font size a sized pill's label is shaped at, in points: too small to draw or take room.
+const HIDDEN_LABEL_SIZE: f32 = 0.01;
+
+/// Scales each sized pill's box in `layout` down to fit the room its paragraph's line has at
+/// `max_width` (device px), keeping its shape. `rooms` hold the boxes' full sizes.
+pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[LabelRoom], blocks: &[crate::edit::Block], font_size: f32, scale: f32, max_width: Option<f32>) {
+    let Some(max_width) = max_width else { return };
+    let sized: Vec<(u64, &LabelRoom, [f32; 2], f32)> = rooms
+        .iter()
+        .filter_map(|r| {
+            let paragraph = text[..r.label.start].bytes().filter(|&c| c == b'\n').count();
+            let indent = blocks.get(paragraph).map_or(0.0, |b| (b.indent_pt(font_size) * scale).round());
+            Some((PILL_BOX | PILL_SIZED | (r.index as u64) << 1, r, r.size?, (max_width - indent - scale).max(1.0)))
+        })
+        .collect();
+    if sized.is_empty() {
+        return;
+    }
+    for b in layout.inline_boxes_mut() {
+        if let Some(&(_, r, [w, h], room)) = sized.iter().find(|s| s.0 == b.id) {
+            let k = (room / w).min(1.0);
+            (b.width, b.height) = ((w * k).floor().max(1.0), (h * k).round().max(1.0) + r.above);
         }
     }
 }
@@ -102,7 +153,8 @@ fn starts_rtl(direction: BaseDirection, label: &std::ops::Range<usize>) -> bool 
 /// The chip behind each pill in the layouts of `layout` that meet `band` (its y, device px),
 /// at `origin`, and each leading icon with its size in px and top-left corner. A pill whose
 /// label wraps draws one chip per line, the first to its line's end and the rest from the
-/// line's start.
+/// line's start. A sized pill's chip fills its box; returns those boxes, by the pill's index in
+/// `pills`, for the image, icon and caption drawn in them.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pill_chips(
     layout: &TextLayout,
@@ -114,13 +166,21 @@ pub(crate) fn pill_chips(
     bg: Color,
     out: &mut Vec<PaintedDeco>,
     icons: &mut Vec<(&'static Icon, u32, [f32; 2], Option<Color>)>,
-) {
+) -> Vec<(usize, [f32; 4])> {
+    let mut boxes = Vec::new();
     for piece in layout.pieces_in_band(band) {
-        let pills = piece.pills(pills);
-        if !pills.is_empty() {
-            chips(piece.layout, piece.start, pills, size, scale, [origin[0], origin[1] + piece.y], bg, &mut |_, chip| out.push(chip), icons);
+        let (first, local) = (piece.first_pill(), piece.pills(pills));
+        if !local.is_empty() {
+            let mut each = |i: usize, chip: PaintedDeco| {
+                if local[i].style.size.is_some() {
+                    boxes.push((first + i, chip.deco.rect));
+                }
+                out.push(chip);
+            };
+            chips(piece.layout, piece.start, local, size, scale, [origin[0], origin[1] + piece.y], bg, &mut each, icons);
         }
     }
+    boxes
 }
 
 /// Where each pill's chips draw in the paragraphs of `layout` that meet `band` (device px,
@@ -163,7 +223,7 @@ fn chips(
             .collect();
         // Pills whose chip starts on this line, then those whose label wrapped onto it.
         let mut starts: Vec<(usize, Option<&parley::PositionedInlineBox>)> =
-            boxes.iter().filter(|b| b.id & 1 == 0).map(|b| (((b.id & !PILL_BOX) >> 1) as usize, Some(b))).collect();
+            boxes.iter().filter(|b| b.id & 1 == 0).map(|b| (pill_index(b.id), Some(b))).collect();
         let text = line.text_range();
         for (i, p) in pills.iter().enumerate() {
             let inside = local(p.start) < text.start && text.start < local(p.end);
@@ -174,6 +234,14 @@ fn chips(
         let line_end = m.inline_min_coord + m.offset + m.advance - m.hanging_advance;
         for (i, lead) in starts {
             let Some(pill) = pills.get(i) else { continue };
+            if pill.style.size.is_some() {
+                if let Some(b) = lead {
+                    let above = (pill.ring_reach() * scale).round();
+                    let rect = [origin[0] + b.x, origin[1] + b.y + above, b.width, b.height - above];
+                    out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: pill.radius(rect, scale) }, None, 0));
+                }
+                continue;
+            }
             let id = PILL_BOX | (i as u64) << 1;
             let trail = boxes.iter().find(|b| b.id == id | 1);
             let (mut asc, mut desc, mut gr_x0, mut gr_x1) = (0.0f32, 0.0f32, f32::INFINITY, f32::NEG_INFINITY);
@@ -203,7 +271,7 @@ fn chips(
                 let (top, bot) = ((base - asc - 1.0 * scale).round(), (base + desc + 1.0 * scale).round());
                 let x0 = gr_x0.min(m.inline_min_coord + m.offset);
                 let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: pill.radius(rect, scale) }, None, 0));
                 continue;
             };
             if lead.width == 0.0
@@ -212,7 +280,7 @@ fn chips(
                 let (x0, x1) = (room.x + margin, (room.x + room.width - margin).max(gr_x1));
                 let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
                 let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+                out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: pill.radius(rect, scale) }, None, 0));
                 if let Some(icon) = pill.style.icon {
                     let px = (pm.icon * scale).round().max(1.0);
                     let ix = origin[0] + room.x + room.width - (pm.margin + pm.pad) * scale - px;
@@ -245,7 +313,7 @@ fn chips(
             };
             let (top, bot) = chip_band(origin[1] + m.baseline, asc, desc, size, scale);
             let rect = [(origin[0] + x0).round(), top, (x1 - x0).max(0.0).round(), bot - top];
-            out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: (5.0 * scale).min(rect[3] * 0.5) }, None, 0));
+            out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: pill.radius(rect, scale) }, None, 0));
             if let Some(icon) = pill.style.icon {
                 let px = (pm.icon * scale).round().max(1.0);
                 let ix = if rtl_lead { rect[0] + rect[2] - pm.pad * scale - px } else { rect[0] + pm.pad * scale };

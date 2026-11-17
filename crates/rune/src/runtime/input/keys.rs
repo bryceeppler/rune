@@ -61,19 +61,27 @@ impl<S: 'static> Runtime<S> {
         };
         if input_handles {
             let layout = self.focused_layout();
-            // A rich field copies its selection's formatting too, read before a cut removes it.
-            let mut html = None;
+            // Read before a cut removes the selection: a rich field's formatting, and what the
+            // field's copy hook adds.
             let copies = matches!(ev.key, crate::edit::Key::Command('c' | 'x'));
-            let handled = self.with_focused(|e| {
-                if copies && e.is_rich() && !e.is_secure() {
-                    html = Some(e.selected_html()).filter(|h| !h.is_empty());
+            let hook = self.focused_input().and_then(|i| i.copy.clone()).filter(|_| copies);
+            let mut content = None;
+            let handled = self.with_focused_state(|mut state, access, _| {
+                let e = access(state.reborrow());
+                if copies && !e.is_secure() && (hook.is_some() || e.is_rich()) {
+                    let mut copy = crate::ClipboardContent::new(e.selected());
+                    if e.is_rich() && let Some(html) = Some(e.selected_html()).filter(|h| !h.is_empty()) {
+                        copy = copy.with_html(html);
+                    }
+                    content = Some(match &hook {
+                        Some(f) => f(state.reborrow(), copy),
+                        None => copy,
+                    });
                 }
-                e.key(ev, layout.as_ref())
+                access(state).key(ev, layout.as_ref())
             }, one);
-            if let Some(html) = html
-                && let Some(text) = one.copy.as_ref().filter(|w| !w.is_secret()).map(|w| w.content().text().to_owned())
-            {
-                one.copy_rich(crate::ClipboardContent::new(text).with_html(html));
+            if let Some(content) = content && one.copy.as_ref().is_some_and(|w| !w.is_secret()) {
+                one.copy_rich(content);
             }
             if handled { return true; }
         }

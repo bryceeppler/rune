@@ -95,7 +95,8 @@ pub(crate) use cursor::{cursor_from_point, cursor_geometry, line_edge, move_line
 pub use decorations::Deco;
 pub(crate) use decorations::PaintedDeco;
 pub use span::{Ink, Link, LinkPaint, PillStyle, Span, TextHighlight};
-pub(crate) use span::{PillChip, PillMetrics, flatten_spans};
+pub(crate) use pill_chips::sized_box_widths;
+pub(crate) use span::{PillChip, PillMetrics, covers_sized, flatten_spans};
 
 use decorations::Decoration;
 use atlas::{AtlasGlyph, COLOR_GLYPH_BUDGET, ColorGlyph, GlyphKey, GlyphMap, Rasterized};
@@ -104,7 +105,7 @@ use atlas::{MAX_OVERFLOW_PAGES, MAX_STEADY_PAGES};
 #[cfg(test)]
 pub(crate) use glyph_emit::GLIDE_PHASES;
 use line_break::break_lines_with_blocks;
-use span::PILL_BOX;
+use span::{PILL_BOX, PILL_SIZED, pill_index};
 use tabs::mono_tab_stops;
 use system_fonts::{
     LoadedFiles, SYMBOL_FAMILIES, SYMBOL_FONT_FILES, family_list, load_families, load_system_mono, names_system_mono,
@@ -432,6 +433,7 @@ impl TextSystem {
         }
         let (direction, pills) = pill_chips::label_rooms(text, pills, style.size, scale);
         let break_lines = |layout: &mut Layout<Ink>| {
+            pill_chips::fit_sized_boxes(layout, text, &pills, blocks, style.size, scale, max_width);
             if has_indented_blocks || !pills.is_empty() {
                 break_lines_with_blocks(layout, blocks, style.size, scale, max_width);
             } else {
