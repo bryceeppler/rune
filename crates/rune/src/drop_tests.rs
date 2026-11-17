@@ -318,3 +318,28 @@ fn a_target_that_follows_the_drag_hears_its_point_on_the_element_and_where_it_dr
     rt.frame(4.0 / 60.0);
     assert_eq!(take(&mut rt), [("over", Some((70.0, 60.0))), ("move", Some((70.0, 60.0))), ("off", None), ("drop", Some((70.0, 60.0)))]);
 }
+
+#[test]
+fn a_drop_on_a_text_input_hears_the_text_byte_under_the_pointer() {
+    struct Note { edit: crate::TextEdit, at: Vec<Option<usize>> }
+    fn view(s: &Note, _: &mut Cx<Note>) -> El {
+        col().children([
+            crate::text_input(&s.edit, crate::TextStyle::new(14.0, 400.0).lh(20.0)).key("note").size(300.0, 60.0)
+                .on_edit(|s: &mut Note| &mut s.edit)
+                .on_drop_files(|s: &mut Note, _, tx| s.at.push(tx.drop_point().and_then(|p| p.text))),
+            el().key("plain").size(300.0, 40.0).on_drop_files(|s: &mut Note, _, tx| s.at.push(tx.drop_point().and_then(|p| p.text))),
+        ])
+    }
+    let mut edit = crate::TextEdit::new("first line\nsecond line");
+    edit.set_caret(crate::Caret::at(0));
+    let mut rt = Runtime::new(Note { edit, at: Vec::new() }, view, (400.0, 200.0), Env::new(true, 2.0));
+    rt.frame(0.0);
+    let note = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("note")).unwrap().rect;
+    for (x, y) in [(note[0] + 1.0, note[1] + 30.0), (note[0] + 290.0, note[1] + 10.0), (note[0] + 10.0, note[1] + 80.0)] {
+        rt.drag_files(files(&["photo.jpg"]), Some((x, y)));
+        rt.drop_files(files(&["photo.jpg"]), Some((x, y)));
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.at, [Some(11), Some(10), None], "the second line's start, the first line's end, then an element with no text");
+    assert_eq!(rt.state.edit.selection().focus.byte, 0, "the caret stays where it was");
+}

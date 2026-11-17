@@ -1,0 +1,1 @@
+- `Tx::drop_point` on a text input, or an element holding one, carries `text`: the byte under the pointer, as a secondary press does, so a file dropped on a field can go where it was dropped instead of at the caret.

@@ -113,9 +113,10 @@ pub struct PointerEvent {
     pub y: f32,
     pub window_x: f32,
     pub window_y: f32,
-    /// For [`El::on_secondary_press_local`] on a text input or an element holding one, the
-    /// byte of the input's text the gesture is on: the character under the pointer, or the
-    /// caret for the Menu key and Shift+F10. `None` elsewhere.
+    /// For [`El::on_secondary_press_local`] and [`Tx::drop_point`](crate::Tx::drop_point) on a
+    /// text input or an element holding one, the byte of the input's text the gesture is on:
+    /// the caret position under the pointer, or the caret for the Menu key and Shift+F10.
+    /// `None` elsewhere.
     pub text: Option<usize>,
 }
 
