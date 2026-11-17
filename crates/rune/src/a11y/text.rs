@@ -30,7 +30,6 @@ pub(crate) struct Line {
 }
 
 impl Line {
-    /// Appends the character drawn from `drawn`, heard as `heard`.
     fn push(&mut self, heard: &str, drawn: usize, position: f32, width: f32) {
         self.value.push_str(heard);
         self.lengths.push(heard.len().min(255) as u8);

@@ -103,21 +103,22 @@ pub(crate) fn sized_box_widths(line: &parley::Line<'_, Ink>) -> Vec<f32> {
         .collect()
 }
 
-/// The font size a sized pill's label is shaped at, in points: too small to draw or take room.
-const HIDDEN_LABEL_SIZE: f32 = 0.01;
+/// The font size a sized pill's label is shaped at, in points: zero, so the label takes no width
+/// and a box as wide as the line keeps the label on its line.
+const HIDDEN_LABEL_SIZE: f32 = 0.0;
 
 /// Scales each sized pill's box in `layout` down to fit the room its paragraph's line has at
 /// `max_width` (device px), keeping its shape, and sets each box's baseline so its foot meets
-/// the foot of a line of text `line_px` tall: the room below the box is then its own margin.
+/// the foot of a line of `style`'s text: the room below the box is then its own margin.
 /// `rooms` hold the boxes' full sizes.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[LabelRoom], blocks: &[crate::edit::Block], font_size: f32, line_px: f32, scale: f32, max_width: Option<f32>) {
+pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[LabelRoom], blocks: &[crate::edit::Block], style: TextStyle, scale: f32, max_width: Option<f32>) {
+    let (font_size, line_px) = (style.size, style.line_px() * scale);
     let sized: Vec<(u64, &LabelRoom, [f32; 2], f32)> = rooms
         .iter()
         .filter_map(|r| {
             let paragraph = text[..r.label.start].bytes().filter(|&c| c == b'\n').count();
             let indent = blocks.get(paragraph).map_or(0.0, |b| (b.indent_pt(font_size) * scale).round());
-            let room = max_width.map_or(f32::INFINITY, |max| (max - indent - scale).max(1.0));
+            let room = max_width.map_or(f32::INFINITY, |max| (max - indent).max(1.0));
             let tag = if r.after { PILL_BOX | PILL_SIZED | PILL_AFTER } else { PILL_BOX | PILL_SIZED };
             Some((tag | (r.index as u64) << 1, r, r.size?, room))
         })
@@ -131,9 +132,9 @@ pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[Lab
     });
     for b in layout.inline_boxes_mut() {
         if let Some(&(_, r, [w, h], room)) = sized.iter().find(|s| s.0 == b.id) {
-            let k = (room / w).min(1.0);
+            let width = w.min(room).floor().max(1.0);
             let [above, below] = r.room;
-            (b.width, b.height) = ((w * k).floor().max(1.0), (h * k).round().max(1.0) + above + below);
+            (b.width, b.height) = (width, (h * width / w).round().max(1.0) + above + below);
             b.baseline = Some((b.height - depth).max(0.0));
         }
     }

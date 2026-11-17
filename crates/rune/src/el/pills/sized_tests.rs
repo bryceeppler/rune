@@ -115,7 +115,6 @@ fn field(rt: &Runtime<S>) -> [f32; 4] {
     rt.elements().into_iter().find(|e| e.key.as_deref() == Some("note")).unwrap().rect
 }
 
-/// The photo's drawn rect in points.
 fn image(rt: &Runtime<S>) -> Option<[f32; 4]> {
     rt.instances.iter().find(|i| i.params[1] == KIND_IMAGE).map(|i| i.rect.map(|v| v / 2.0))
 }
@@ -193,10 +192,9 @@ fn the_photo_line_grows_to_the_box_and_the_box_scales_down_to_a_narrow_field() {
     let (narrow, _, _) = runtime(200.0, true);
     for (rt, width) in [(&wide, 500.0), (&narrow, 200.0)] {
         let (photo, f) = (image(rt).unwrap(), field(rt));
-        let want_w = 640.0f32.min(width - 1.0);
-        assert!(photo[2] <= width && photo[2] >= want_w - 1.0, "the box fills the field's width at most: {photo:?} in {width}");
+        assert_eq!(photo[2], 640.0f32.min(width), "the box fills the field's width at most: {photo:?}");
         assert!((photo[3] / photo[2] - 400.0 / 640.0).abs() < 0.01, "and keeps its shape: {photo:?}");
-        assert!(f[3] >= photo[3] + 2.0 * LINE, "the field holds the photo's height and two text lines: {f:?}");
+        assert!(f[3] >= photo[3] + 2.0 * LINE && f[3] < photo[3] + 3.0 * LINE, "the field holds the photo's height and two text lines: {f:?}");
     }
     let (empty, _, _) = {
         let (mut rt, at, end) = runtime(500.0, true);
@@ -227,7 +225,6 @@ fn a_selected_photo_draws_its_tint_over_the_image_with_no_caret_or_strip() {
     assert_eq!(filled(&rt, TINT).len(), 2, "selected with a character before it: the character's strip and the photo's tint");
 }
 
-/// The rect of the first instance with a border of `color`, in points, and its border width.
 fn ring(rt: &Runtime<S>, color: Color) -> Option<([f32; 4], f32)> {
     let want = color.premul_srgb(1.0);
     rt.instances.iter().find(|i| i.border.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02)).map(|i| (i.rect.map(|v| v / 2.0), i.params[0] / 2.0))

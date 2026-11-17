@@ -11,7 +11,6 @@ pub(super) struct Covered {
     pub tint: Color,
 }
 
-/// Where a text's pill boxes draw, and what they draw into.
 pub(super) struct BoxPaint<'a> {
     pub instances: &'a mut Vec<Instance>,
     pub images: &'a mut crate::pixels::ImageAtlas,
