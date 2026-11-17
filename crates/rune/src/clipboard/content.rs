@@ -27,12 +27,13 @@ pub struct ClipboardContent {
     html: Option<Zeroizing<String>>,
     rtf: Option<Zeroizing<String>>,
     image: Option<ClipboardImage>,
+    image_left_out: bool,
     files: Vec<PathBuf>,
     pub(super) own_pills: bool,
 }
 impl PartialEq for ClipboardContent {
     fn eq(&self, other: &Self) -> bool {
-        self.text == other.text && self.html == other.html && self.rtf == other.rtf && self.image == other.image && self.files == other.files
+        self.text == other.text && self.html == other.html && self.rtf == other.rtf && self.image == other.image && self.image_left_out == other.image_left_out && self.files == other.files
     }
 }
 impl Eq for ClipboardContent {}
@@ -46,6 +47,9 @@ impl ClipboardContent {
     /// Adds an image. macOS writes it as PNG and TIFF beside the other forms; Windows and Linux
     /// write it alone (see [`Tx::copy_rich`](crate::Tx::copy_rich)); the web as PNG.
     pub fn with_image(mut self, image: ClipboardImage) -> Self { self.image = Some(image); self }
+    /// Marks that the clipboard held an image this content leaves out, as a paste does for one
+    /// over [`MAX_IMAGE_BYTES`] or the pixel limit.
+    pub fn with_image_left_out(mut self) -> Self { self.image_left_out = true; self }
     /// Adds files, so a paste into a file manager copies them. macOS writes one file URL item
     /// per file; Windows and Linux write the file list alone; the web skips them. Paths should
     /// be absolute.
@@ -56,6 +60,8 @@ impl ClipboardContent {
     /// The image on the clipboard, as PNG. Only pastes to a hook carry one: a field's
     /// `on_input_paste`, a root `on_paste_content` or `Tx::read_clipboard`.
     pub fn image(&self) -> Option<&ClipboardImage> { self.image.as_ref() }
+    /// The clipboard held an image too large to carry, so an app can say why nothing pasted.
+    pub fn image_left_out(&self) -> bool { self.image_left_out }
     /// The files on the clipboard. Like the image, only pastes to a hook carry them.
     pub fn files(&self) -> &[PathBuf] { &self.files }
     /// HTML, RTF, an image or files beside the text.
@@ -98,6 +104,7 @@ impl std::fmt::Debug for ClipboardContent {
             .field("html", &self.html.as_ref().map(|h| h.len()))
             .field("rtf", &self.rtf.as_ref().map(|r| r.len()))
             .field("image", &self.image)
+            .field("image_left_out", &self.image_left_out)
             .field("files", &self.files.len())
             .finish()
     }

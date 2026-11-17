@@ -69,15 +69,21 @@ pub(super) fn read(pb: &NSPasteboard, all: bool) -> Option<ClipboardContent> {
             .filter(|d| !d.is_empty() && d.len() <= MAX_RICH_BYTES)
             .map(|d| Zeroizing::new(d.bytes().to_vec()));
         let image = if all { read_image(pb) } else { None };
+        let image_left_out = all && image.is_none() && holds_image(pb);
         let files = if all { read_files(pb) } else { Vec::new() };
-        if text.is_none() && html.is_none() && rtf.is_none() && image.is_none() && files.is_empty() { return None; }
+        if text.is_none() && html.is_none() && rtf.is_none() && image.is_none() && !image_left_out && files.is_empty() { return None; }
         let html = html.or_else(|| rtf.as_deref().and_then(|rtf| rtf_to_html(rtf)));
         let mut content = ClipboardContent::from(text.unwrap_or_default()).with_files(files);
         if let Some(html) = html { content = content.with_html(html); }
         if let Some(rtf) = rtf { content = content.with_rtf(String::from_utf8_lossy(&rtf)); }
         if let Some(image) = image { content = content.with_image(image); }
+        if image_left_out { content = content.with_image_left_out(); }
         Some(content)
     })
+}
+
+fn holds_image(pb: &NSPasteboard) -> bool {
+    unsafe { pb.availableTypeFromArray(&NSArray::from_slice(&[NSPasteboardTypePNG, NSPasteboardTypeTIFF])).is_some() }
 }
 
 /// The path of each pasteboard item's file URL, in order.

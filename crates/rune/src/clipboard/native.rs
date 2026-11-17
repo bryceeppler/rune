@@ -77,15 +77,22 @@ impl Backend for arboard::Clipboard {
         #[cfg(not(target_os = "windows"))]
         let html = self.get().html().ok().filter(|h| !h.is_empty() && h.len() <= html::MAX_RICH_BYTES);
         #[cfg(any(target_os = "windows", all(unix, not(any(target_os = "ios", target_os = "android")))))]
-        let image = all.then(|| self.get_image().ok()).flatten()
-            .and_then(|i| u32::try_from(i.width).ok().zip(u32::try_from(i.height).ok()).and_then(|(w, h)| ClipboardImage::from_rgba(w, h, &i.bytes)));
+        let (image, image_left_out) = match all.then(|| self.get_image().ok()).flatten() {
+            Some(i) => {
+                let image = u32::try_from(i.width).ok().zip(u32::try_from(i.height).ok()).and_then(|(w, h)| ClipboardImage::from_rgba(w, h, &i.bytes));
+                let left_out = image.is_none();
+                (image, left_out)
+            }
+            None => (None, false),
+        };
         #[cfg(not(any(target_os = "windows", all(unix, not(any(target_os = "ios", target_os = "android"))))))]
-        let image: Option<ClipboardImage> = None;
+        let (image, image_left_out): (Option<ClipboardImage>, bool) = (None, false);
         let files = if all { self.get().file_list().unwrap_or_default() } else { Vec::new() };
-        if text.is_none() && html.is_none() && image.is_none() && files.is_empty() { return None; }
+        if text.is_none() && html.is_none() && image.is_none() && !image_left_out && files.is_empty() { return None; }
         let mut content = ClipboardContent::from(text.unwrap_or_default()).with_files(files);
         if let Some(html) = html { content = content.with_html(html); }
         if let Some(image) = image { content = content.with_image(image); }
+        if image_left_out { content = content.with_image_left_out(); }
         Some(content)
     }
     fn revision(&self) -> Option<u64> { revision() }
