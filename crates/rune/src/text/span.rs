@@ -95,6 +95,7 @@ pub struct PillStyle {
     pub(crate) caption: Option<(String, crate::TextStyle)>,
     pub(crate) border: Option<(Color, f32)>,
     pub(crate) selection_ring: Option<SelectionRing>,
+    pub(crate) margin: [f32; 2],
 }
 
 /// A sized pill's ring while the selection covers it: `width` points wide, `gap` points outside
@@ -108,7 +109,7 @@ pub(crate) struct SelectionRing {
 
 impl PillStyle {
     pub const fn new() -> Self {
-        Self { bg: None, fg: None, icon: None, radius: None, size: None, image: None, description: None, caption: None, border: None, selection_ring: None }
+        Self { bg: None, fg: None, icon: None, radius: None, size: None, image: None, description: None, caption: None, border: None, selection_ring: None, margin: [0.0; 2] }
     }
     /// One box `size` points wide and tall in place of the label, scaled down to fit the line's
     /// width, and the line grows to its height. [`PillStyle::bg`] fills it and the icon draws
@@ -158,6 +159,12 @@ impl PillStyle {
         self.selection_ring = Some(SelectionRing { color, width, gap });
         self
     }
+    /// Room a sized pill's line keeps above and below its box, in points, so the text before
+    /// and after stands that far from it. The room above is at least the selection ring's.
+    pub const fn margin(mut self, above: f32, below: f32) -> Self {
+        self.margin = [above, below];
+        self
+    }
     /// The chip's colour.
     pub const fn bg(mut self, bg: Color) -> Self {
         self.bg = Some(bg);
@@ -194,9 +201,12 @@ impl PillChip {
         (self.style.radius.unwrap_or(5.0) * scale).min(rect[2].min(rect[3]) * 0.5).max(0.0)
     }
 
-    /// How far a sized pill's selection ring reaches outside its box, in points.
-    pub fn ring_reach(&self) -> f32 {
-        self.style.selection_ring.map_or(0.0, |r| (r.width + r.gap).max(0.0))
+    /// The room a sized pill's line keeps above and below its box, in points: its margins, and
+    /// above it at least as far as its selection ring reaches.
+    pub fn room(&self) -> [f32; 2] {
+        let ring = self.style.selection_ring.map_or(0.0, |r| (r.width + r.gap).max(0.0));
+        let [above, below] = self.style.margin.map(|m| m.max(0.0));
+        [above.max(ring), below]
     }
 
     /// Whether this sized pill's image is ready to draw.

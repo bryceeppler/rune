@@ -61,18 +61,21 @@ pub(crate) fn cursor_geometry(
 }
 
 /// The top and bottom of the text on `line` when a sized pill's box raises the line's top above
-/// it: the line box its text alone would take, which the caret and the selection beside the box
-/// span. The box sits on the baseline, so the text below it keeps its depth, and the text's
-/// half-leading is the same above and below: its height above the baseline is its depth plus
-/// the font's ascent less its descent.
+/// it: as tall as the line box its text alone would take, which the caret and the selection
+/// beside the box span, and ending at the box's foot. The box's room below it reaches the foot of
+/// the text's line box, so the text keeps its depth, and the text's half-leading is the same
+/// above and below: its height above the baseline is its depth plus the font's ascent less its
+/// descent. The empty box after the pill's label is as tall as that room.
 fn text_band(layout: &Layout<Ink>, line: &parley::Line<'_, Ink>) -> Option<(f32, f32)> {
-    let sized = line.items().any(|it| matches!(it, PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0));
-    if !sized {
-        return None;
-    }
+    let sized = || line.items().filter_map(|it| match it {
+        PositionedLayoutItem::InlineBox(b) if b.id & PILL_SIZED != 0 => Some(b),
+        _ => None,
+    });
+    sized().next()?;
+    let below = sized().filter(|b| b.id & 1 == 1).map(|b| b.height).fold(0.0, f32::max);
     let (m, font) = (line.metrics(), layout.root_span_metrics()?);
     let depth = m.block_max_coord - m.baseline;
-    Some((m.baseline - depth - font.ascent + font.descent.abs(), m.block_max_coord))
+    Some((m.baseline - depth - font.ascent + font.descent.abs() - below, m.block_max_coord - below))
 }
 
 /// The labels of `layout`'s sized pills: no text draws there, only the box before them.

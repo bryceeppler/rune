@@ -22,13 +22,14 @@ struct S {
     photo: Pixels,
     width: f32,
     ringed: bool,
+    margin: [f32; 2],
     pressed: Vec<String>,
 }
 
 /// The note's field, and a 90 by 34 point bar inside the photo's top-right corner, 10 points in,
 /// placed from where the field says the photo draws.
 fn view(s: &S, cx: &mut Cx<S>) -> El {
-    let (photo, ringed) = (s.photo.clone(), s.ringed);
+    let (photo, ringed, [above, below]) = (s.photo.clone(), s.ringed, s.margin);
     let field = text_input(&s.edit, TextStyle::new(15.0, 400.0).lh(LINE))
         .key("note")
         .w(s.width)
@@ -36,7 +37,7 @@ fn view(s: &S, cx: &mut Cx<S>) -> El {
         .pill_style(move |id| match id {
             "photo" => {
                 let style = PillStyle::new().sized([640.0, 400.0]).image(&photo).description("Harbour at dusk").radius(8.0).border(HAIRLINE, 1.0)
-                    .fg(MUTED).icon(&WAITING).caption("Downloading photo…", TextStyle::new(13.0, 500.0).lh(20.0));
+                    .fg(MUTED).icon(&WAITING).caption("Downloading photo…", TextStyle::new(13.0, 500.0).lh(20.0)).margin(above, below);
                 if ringed { style.selection_ring(RING, 3.0, 2.0) } else { style }
             }
             _ => PillStyle::new(),
@@ -83,7 +84,7 @@ fn runtime(width: f32, decoded: bool) -> (Runtime<S>, usize, usize) {
     if decoded {
         photo.set(64, 40, gradient(64, 40));
     }
-    let mut rt = Runtime::new(S { edit, photo, width, ringed: false, pressed: Vec::new() }, view, (600.0, 600.0), Env::new(true, 2.0));
+    let mut rt = Runtime::new(S { edit, photo, width, ringed: false, margin: [0.0; 2], pressed: Vec::new() }, view, (600.0, 600.0), Env::new(true, 2.0));
     settle(&mut rt);
     (rt, at, end)
 }
@@ -355,4 +356,28 @@ fn copy_and_cut_of_a_selected_photo_carry_the_image_the_field_adds() {
     cmd(&mut rt, 'x');
     assert_eq!(copied(&rt), Some((PHOTO.into(), Some((64, 40)), true)), "a cut sees the photo before it goes");
     assert!(!rt.state.edit.text.contains(PHOTO), "and removes it");
+}
+
+#[test]
+fn a_photo_stands_its_margins_away_from_the_lines_above_and_below() {
+    let (plain, _, _) = runtime(500.0, true);
+    let (mut rt, at, end) = runtime(500.0, true);
+    rt.update(|s, _| {
+        s.margin = [10.0, 12.0];
+        s.ringed = true;
+    });
+    settle(&mut rt);
+    let (photo, f) = (image(&rt).unwrap(), field(&rt));
+    assert!((photo[1] - (f[1] + LINE) - 10.0).abs() < 0.6, "10 points under the line above, past the ring's 5: {photo:?} in {f:?}");
+    assert!((photo[2] - image(&plain).unwrap()[2]).abs() < 0.5 && (photo[3] - image(&plain).unwrap()[3]).abs() < 0.5, "at the photo's own size");
+    rt.update(move |s, _| s.edit.set_caret(Caret::at(end + 1)));
+    settle(&mut rt);
+    let after = caret(&rt);
+    assert!((after[1] - (photo[1] + photo[3]) - 12.0).abs() < 0.6, "the line below starts 12 points under the photo: {after:?} {photo:?}");
+    assert!((after[3] - LINE).abs() < 1.0, "and keeps its own height: {after:?}");
+    assert!((f[3] - (3.0 * LINE - LINE + 10.0 + photo[3] + 12.0)).abs() < 0.6, "the field holds both lines, the photo and its margins: {f:?}");
+    rt.update(move |s, _| s.edit.set_caret(Caret::at(at)));
+    settle(&mut rt);
+    let beside = caret(&rt);
+    assert!((beside[3] - LINE).abs() < 1.0 && (beside[1] + beside[3] - (photo[1] + photo[3])).abs() < LINE * 0.5, "the caret beside the photo is text height at its foot: {beside:?} {photo:?}");
 }

@@ -433,7 +433,7 @@ impl TextSystem {
         }
         let (direction, pills) = pill_chips::label_rooms(text, pills, style.size, scale);
         let break_lines = |layout: &mut Layout<Ink>| {
-            pill_chips::fit_sized_boxes(layout, text, &pills, blocks, style.size, scale, max_width);
+            pill_chips::fit_sized_boxes(layout, text, &pills, blocks, style.size, style.line_px() * scale, scale, max_width);
             if has_indented_blocks || !pills.is_empty() {
                 break_lines_with_blocks(layout, blocks, style.size, scale, max_width);
             } else {

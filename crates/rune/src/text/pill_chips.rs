@@ -6,15 +6,15 @@ use swash::text::{BidiClass, Codepoint as _};
 use super::*;
 
 /// A pill's label and the room its chip takes before and after it, in device px. A sized pill
-/// takes its box's `size` before the label instead, with `above` more room over it for its
-/// selection ring, and hides the label.
+/// takes its box's `size` before the label instead, with `room` more above and below it for
+/// its margins and selection ring, and hides the label.
 pub(super) struct LabelRoom {
     pub index: usize,
     pub label: std::ops::Range<usize>,
     pub lead: u32,
     pub trail: u32,
     pub size: Option<[f32; 2]>,
-    pub above: f32,
+    pub room: [f32; 2],
 }
 
 /// The room each pill of `pills` takes in `text` laid out at `size` points and `scale`, and the
@@ -33,12 +33,12 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
         .into_iter()
         .map(|(index, p, label)| {
             if let Some(size) = p.style.size.filter(|s| s.iter().all(|v| v.is_finite() && *v > 0.0)) {
-                let above = (p.ring_reach() * scale).round();
-                return LabelRoom { index, label, lead: 0, trail: 0, size: Some(size.map(|v| (v * scale).round())), above };
+                let room = p.room().map(|v| (v * scale).round());
+                return LabelRoom { index, label, lead: 0, trail: 0, size: Some(size.map(|v| (v * scale).round())), room };
             }
             let (lead, trail) = (pm.lead(p.style.icon.is_some()), pm.trail());
             let (lead, trail) = if starts_rtl(direction, &label) { (0.0, lead + trail) } else { (lead, trail) };
-            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32, size: None, above: 0.0 }
+            LabelRoom { index, label, lead: (lead * scale).round() as u32, trail: (trail * scale).round() as u32, size: None, room: [0.0; 2] }
         })
         .collect();
     (direction, rooms)
@@ -47,13 +47,15 @@ pub(super) fn label_rooms(text: &str, pills: &[PillChip], size: f32, scale: f32)
 /// Boxes before and after each pill's label make room for its chip; they keep the pill's index
 /// in their id. The label may break like any text; `break_lines_with_blocks` moves a split pill
 /// whole to the next line and lets it wrap only when it is wider than a line, as a browser wraps
-/// a span. A sized pill's box sits on the baseline, so the line grows to its height, and its
-/// label takes no room.
+/// a span. A sized pill's box grows its line to its height and its label takes no room;
+/// [`fit_sized_boxes`] sets where the box meets the baseline. The empty box after a sized
+/// pill's label is as tall as the room below its box, so the caret beside it can end there.
 pub(super) fn push_label_rooms(b: &mut parley::RangedBuilder<'_, Ink>, rooms: &[LabelRoom]) {
     for room in rooms {
         let tag = if room.size.is_some() { PILL_BOX | PILL_SIZED } else { PILL_BOX };
-        let [width, height] = room.size.map_or([room.lead as f32, 0.0], |[w, h]| [w, h + room.above]);
-        for (side, index, width, height) in [(0, room.label.start, width, height), (1, room.label.end, room.trail as f32, 0.0)] {
+        let [width, height] = room.size.map_or([room.lead as f32, 0.0], |[w, h]| [w, h + room.room[0] + room.room[1]]);
+        let below = if room.size.is_some() { room.room[1] } else { 0.0 };
+        for (side, index, width, height) in [(0, room.label.start, width, height), (1, room.label.end, room.trail as f32, below)] {
             b.push_inline_box(parley::InlineBox {
                 id: tag | (room.index as u64) << 1 | side,
                 kind: parley::InlineBoxKind::InFlow,
@@ -85,24 +87,33 @@ pub(crate) fn sized_box_widths(line: &parley::Line<'_, Ink>) -> Vec<f32> {
 const HIDDEN_LABEL_SIZE: f32 = 0.01;
 
 /// Scales each sized pill's box in `layout` down to fit the room its paragraph's line has at
-/// `max_width` (device px), keeping its shape. `rooms` hold the boxes' full sizes.
-pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[LabelRoom], blocks: &[crate::edit::Block], font_size: f32, scale: f32, max_width: Option<f32>) {
-    let Some(max_width) = max_width else { return };
+/// `max_width` (device px), keeping its shape, and sets each box's baseline so its foot meets
+/// the foot of a line of text `line_px` tall: the room below the box is then its own margin.
+/// `rooms` hold the boxes' full sizes.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fit_sized_boxes(layout: &mut Layout<Ink>, text: &str, rooms: &[LabelRoom], blocks: &[crate::edit::Block], font_size: f32, line_px: f32, scale: f32, max_width: Option<f32>) {
     let sized: Vec<(u64, &LabelRoom, [f32; 2], f32)> = rooms
         .iter()
         .filter_map(|r| {
             let paragraph = text[..r.label.start].bytes().filter(|&c| c == b'\n').count();
             let indent = blocks.get(paragraph).map_or(0.0, |b| (b.indent_pt(font_size) * scale).round());
-            Some((PILL_BOX | PILL_SIZED | (r.index as u64) << 1, r, r.size?, (max_width - indent - scale).max(1.0)))
+            let room = max_width.map_or(f32::INFINITY, |max| (max - indent - scale).max(1.0));
+            Some((PILL_BOX | PILL_SIZED | (r.index as u64) << 1, r, r.size?, room))
         })
         .collect();
     if sized.is_empty() {
         return;
     }
+    let depth = layout.root_span_metrics().map_or(0.0, |font| {
+        let (ascent, descent) = (font.ascent, font.descent.abs());
+        ((line_px - ascent - descent) * 0.5 + descent).max(0.0)
+    });
     for b in layout.inline_boxes_mut() {
         if let Some(&(_, r, [w, h], room)) = sized.iter().find(|s| s.0 == b.id) {
             let k = (room / w).min(1.0);
-            (b.width, b.height) = ((w * k).floor().max(1.0), (h * k).round().max(1.0) + r.above);
+            let [above, below] = r.room;
+            (b.width, b.height) = ((w * k).floor().max(1.0), (h * k).round().max(1.0) + above + below);
+            b.baseline = Some((b.height - depth).max(0.0));
         }
     }
 }
@@ -236,8 +247,8 @@ fn chips(
             let Some(pill) = pills.get(i) else { continue };
             if pill.style.size.is_some() {
                 if let Some(b) = lead {
-                    let above = (pill.ring_reach() * scale).round();
-                    let rect = [origin[0] + b.x, origin[1] + b.y + above, b.width, b.height - above];
+                    let [above, below] = pill.room().map(|v| (v * scale).round());
+                    let rect = [origin[0] + b.x, origin[1] + b.y + above, b.width, b.height - above - below];
                     out(i, PaintedDeco::new(Deco { rect, color: pill.style.bg.unwrap_or(bg), radius: pill.radius(rect, scale) }, None, 0));
                 }
                 continue;

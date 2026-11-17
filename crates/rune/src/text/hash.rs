@@ -58,7 +58,7 @@ pub(crate) fn shape_key(text: &str, spans: &[Span], style: TextStyle, scale: f32
     let mut h = KeyHasher::default();
     (key, wrapping).hash(&mut h);
     for p in pills {
-        (p.start, p.end, p.style.icon.is_some(), p.style.size.map(|s| s.map(f32::to_bits)), p.ring_reach().to_bits()).hash(&mut h);
+        (p.start, p.end, p.style.icon.is_some(), p.style.size.map(|s| s.map(f32::to_bits)), p.room().map(f32::to_bits)).hash(&mut h);
     }
     h.finish()
 }
