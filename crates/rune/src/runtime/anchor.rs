@@ -40,13 +40,14 @@ pub(crate) fn anchor_position(a: &Anchor, t: [f32; 4], size: (f32, f32), vp: (f3
         Side::Left if x < margin && t[2] + a.gap + w <= vp.0 - margin => x = t[2] + a.gap,
         _ => {}
     }
-    // Flip the alignment when it overflows and the other end fits, then shift along the side.
     let vertical = matches!(a.side, Side::Top | Side::Bottom);
     let (pos, lo, hi, len, room) = if vertical { (&mut x, t[0], t[2], w, vp.0) } else { (&mut y, t[1], t[3], h, vp.1) };
-    match a.align {
-        Align::End if *pos < margin && lo + len <= room - margin => *pos = lo,
-        Align::Start if *pos + len > room - margin && hi - len >= margin => *pos = hi - len,
-        _ => {}
+    if vertical {
+        match a.align {
+            Align::End if *pos < margin && lo + len <= room - margin => *pos = lo,
+            Align::Start if *pos + len > room - margin && hi - len >= margin => *pos = hi - len,
+            _ => {}
+        }
     }
     *pos = pos.clamp(margin, (room - len - margin).max(margin));
     // Along the main axis only keep the start edge inside; a long list may run off the far end
@@ -105,7 +106,8 @@ impl<S: 'static> Measurement<'_, S> {
     }
 
     /// Bounds each placed `anchored_fit` overlay that fits on neither side of its anchor to the
-    /// larger room, through its style. True when any changed, so layout runs again.
+    /// larger room, and one beside its anchor to the window's height, through its style. True
+    /// when any changed, so layout runs again.
     pub(super) fn fit_anchored(&self, taffy: &mut LayoutEngine, nodes: &[Node]) -> bool {
         let mut changed = false;
         for (i, n) in nodes.iter().enumerate() {
@@ -119,12 +121,19 @@ impl<S: 'static> Measurement<'_, S> {
             let a = if k == 1.0 { a } else { zoomed = zoomed_gap(a, k); &zoomed };
             let vertical = matches!(a.side, Side::Top | Side::Bottom);
             let len = if vertical { n.local.h } else { n.local.w };
-            let Some(bound) = fit_bound(a, target, len * k, self.viewport) else { continue };
+            let main = fit_bound(a, target, len * k, self.viewport);
+            let along = (!vertical).then(|| (self.viewport.1 - 2.0 * MARGIN).floor().max(0.0)).filter(|&room| n.local.h * k > room);
+            if main.is_none() && along.is_none() {
+                continue;
+            }
             let mut style = taffy.style(n.taffy).clone();
-            if vertical {
-                style.set_max_height(length(bound / k));
-            } else {
-                style.set_max_width(length(bound / k));
+            match main {
+                Some(bound) if vertical => style.set_max_height(length(bound / k)),
+                Some(bound) => style.set_max_width(length(bound / k)),
+                None => {}
+            }
+            if let Some(room) = along {
+                style.set_max_height(length(room / k));
             }
             taffy.set_style_and_mark_ancestors(
                 n.taffy,

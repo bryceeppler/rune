@@ -60,3 +60,29 @@ fn a_long_list_with_more_room_below_stays_below() {
     let r = menu(S { top: 50.0, rows: 40, fit: true });
     assert_eq!((r[1], r[3]), (84.0, 207.0));
 }
+
+fn side_view(rows: &usize, _: &mut Cx<usize>) -> El {
+    let rows = col().key("rows").children((0..*rows).map(|i| el().key(format!("row{i}")).w(100.0).h(20.0)));
+    let list = col().key("scroll").shrink().min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(rows);
+    let menu = col().key("menu").w(100.0).child(list).anchored_fit("target", Side::Left, Align::Start, 0.0);
+    col().size(400.0, 300.0).child(el().key("target").absolute(250.0, 200.0).size(100.0, 20.0)).child(menu)
+}
+
+fn side_menu(rows: usize) -> [f32; 4] {
+    let mut rt = Runtime::new(rows, side_view, (400.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    for _ in 0..120 { rt.frame(1.0 / 120.0); }
+    rt.presented("menu").unwrap().0
+}
+
+#[test]
+fn a_long_list_beside_its_anchor_is_at_most_the_window_tall_and_scrolls() {
+    let r = side_menu(40);
+    assert_eq!((r[0], r[1], r[2], r[3]), (150.0, 8.0, 100.0, 284.0), "inside the window, 8 points from each edge");
+}
+
+#[test]
+fn a_short_list_beside_its_anchor_keeps_its_height() {
+    let r = side_menu(4);
+    assert_eq!((r[1], r[3]), (200.0, 80.0));
+}

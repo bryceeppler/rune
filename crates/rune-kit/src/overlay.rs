@@ -21,6 +21,7 @@ pub enum Placement {
     BottomStart,
     BottomEnd,
     Left,
+    LeftStart,
     Right,
     RightStart,
 }
@@ -58,7 +59,7 @@ fn anchor_origin(side: Side, align: Align) -> Vec2 {
 /// Positions `content` next to the element keyed `anchor` and gives it the overlay entrance:
 /// fade plus 0.96 scale from the trigger side.
 pub(crate) fn anchor_at(k: &Kit, content: El, anchor: &str, side: Side, align: Align, gap: f32) -> El {
-    fit(content, anchor, side, align, gap)
+    content.anchored_fit(anchor, side, align, gap)
         .transition(Transition::scale_anchor(0.96, anchor_origin(side, align)))
         .token_motion(k.motion.overlay)
 }
@@ -71,15 +72,6 @@ fn anchor_with(motion: Spring, content: El, anchor: &str, placement: Placement, 
         .token_motion(motion)
 }
 
-/// A dropdown surface above or below its anchor is at most as tall as the window leaves it
-/// (`El::anchored_fit`); one beside it (a submenu) only flips.
-fn fit(content: El, anchor: &str, side: Side, align: Align, gap: f32) -> El {
-    if matches!(side, Side::Top | Side::Bottom) {
-        content.anchored_fit(anchor, side, align, gap)
-    } else {
-        content.anchored(anchor, side, align, gap)
-    }
-}
 
 /// How far a dropdown's scrolling edge fades while rows are hidden under it: over half a row, so
 /// a list that scrolls reads as one even where the system hides scrollbars (hex#840).
@@ -120,7 +112,7 @@ pub(crate) fn menu_anchor(k: &Kit, content: El, anchor: &str, placement: Placeme
     };
     // The surface's identity entrance alone does not suppress nested default fades.
     // Land its contents too, so rows are opaque and hit-testable on the first frame.
-    fit(content, anchor, side, align, gap)
+    content.anchored_fit(anchor, side, align, gap)
         .transition(fade)
         .instant_changes()
         .motion_intent(rune::MotionIntent::CUT)

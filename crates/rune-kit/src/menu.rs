@@ -326,7 +326,8 @@ impl Menu {
         self.min_width = w;
         self
     }
-    /// A context menu: open at a window point (where the secondary press landed).
+    /// A context menu: open at a window point (where the secondary press landed), on the side
+    /// of it its placement names, below it by default.
     pub fn at(mut self, x: f32, y: f32) -> Self {
         self.at = Some((x, y));
         self
@@ -382,7 +383,7 @@ impl Menu {
             Some((x, y)) => {
                 let point = format!("{}-point", self.key);
                 layer.push(el().key(point.clone()).absolute(x, y).size(0.0, 0.0));
-                (Placement::BottomStart, 0.0, point)
+                (self.placement, 0.0, point)
             }
             None => (self.placement, self.gutter, anchor_key.clone()),
         };

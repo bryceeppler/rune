@@ -31,8 +31,10 @@ impl El {
     }
     /// Position an out-of-flow overlay on `side` of an earlier keyed element, aligned along that
     /// side, `gap` points away. It flips to the opposite side when it doesn't fit, and stays
-    /// 8 points inside the window. Attach it at the root (after the anchor) so it draws above
-    /// later siblings and escapes clipping ancestors.
+    /// 8 points inside the window. Above or below its anchor its alignment flips too when it
+    /// overflows; beside it, as a submenu beside its row, it shifts along the side instead.
+    /// Attach it at the root (after the anchor) so it draws above later siblings and escapes
+    /// clipping ancestors.
     ///
     /// It draws at its anchor's zoom: inside a page drawn at [`El::scale`]`(1.6)`, the overlay
     /// and its text draw 1.6 times their size too, growing away from the anchor. Its gap zooms
@@ -47,7 +49,9 @@ impl El {
     /// [`El::anchored`], sized to the window as Floating UI's `size` middleware sizes a
     /// dropdown: when the overlay fits on neither side, it goes to the side with more room and
     /// is at most that room long (tall beside a Top or Bottom anchor, wide beside Left or
-    /// Right), 8 points inside the window. Let a scroll viewport inside it shrink (`.shrink()`
+    /// Right), 8 points inside the window. Beside a Left or Right anchor it is also at most the
+    /// window's height less those margins, as it shifts along the side to fit. Let a scroll
+    /// viewport inside it shrink (`.shrink()`
     /// and `.min_h(0.0)` on it and on the columns around it), so a long list scrolls instead of
     /// running off the window.
     pub fn anchored_fit(self, key: impl Into<String>, side: Side, align: Align, gap: f32) -> Self {
@@ -70,13 +74,16 @@ impl El {
 /// Where an overlay of `size` (width, height) goes next to `trigger` (x0, y0, x1, y1) in a
 /// `window` of that size, as the rect (x0, y0, x1, y1) [`El::anchored`] would place it at: on
 /// `side` of the trigger, aligned along it, `gap` points away, flipped to the opposite side
-/// (and alignment) when it doesn't fit, then kept 8 points inside the window.
+/// (and, above or below it, alignment) when it doesn't fit, then kept 8 points inside the window.
 ///
 /// ```
 /// use rune::{Align, Side, anchor_rect};
 /// // A 100 x 80 menu under a trigger near the bottom of a 400 x 300 window flips above it.
 /// let r = anchor_rect([20.0, 250.0, 60.0, 270.0], (100.0, 80.0), Side::Bottom, Align::Start, 4.0, (400.0, 300.0));
 /// assert_eq!(r, [20.0, 166.0, 120.0, 246.0]);
+/// // A 100 x 120 submenu beside a row near the bottom rises only until it fits.
+/// let r = anchor_rect([200.0, 220.0, 300.0, 240.0], (100.0, 120.0), Side::Left, Align::Start, 0.0, (400.0, 300.0));
+/// assert_eq!(r, [100.0, 172.0, 200.0, 292.0]);
 /// ```
 pub fn anchor_rect(trigger: [f32; 4], size: (f32, f32), side: Side, align: Align, gap: f32, window: (f32, f32)) -> [f32; 4] {
     let a = Anchor { key: String::new(), side, align, gap, fit: false, unscaled: false };
