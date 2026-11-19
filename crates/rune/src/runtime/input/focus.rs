@@ -428,12 +428,12 @@ impl<S: 'static> Runtime<S> {
         false
     }
     pub(super) fn sync_modals(&mut self) {
-        // Modals removed or no longer modal restore in reverse nesting order. Exiting visuals are already inert.
         while self.modal_stack.last().is_some_and(|(p, _)| self.node(p).is_none_or(|n| n.handlers.get().is_none_or(|h| h.modal.is_none()))) {
             let (modal, restore) = self.modal_stack.pop().unwrap();
-            // Focus the closing commit moved elsewhere (a field outside, say) stays there.
             let inside = |f: &str| f.strip_prefix(modal.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
-            if self.focused.as_deref().is_some_and(|f| !inside(f) && self.node(f).is_some()) { continue; }
+            let still_usable = |f: &str| self.node(f).is_some_and(|n| !n.inert)
+                || (!inside(f) && self.virtual_inputs.get(f).is_some_and(|i| i.edit.focused));
+            if self.focused.as_deref().is_some_and(still_usable) { continue; }
             let restore = restore.filter(|p| self.node(p).is_some());
             self.set_focus(restore, self.keyboard_focus);
         }
