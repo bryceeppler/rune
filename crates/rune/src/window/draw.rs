@@ -300,6 +300,7 @@ impl<S: 'static> Host<S> {
             l.native.cloak.lift(&l.window);
         }
         let submitted = Instant::now();
+        self.clock.drawn(submitted);
         self.meter.presented();
         #[cfg(target_os = "macos")]
         if let Some(pacing) = &mut l.native.pacing { pacing.presented(submitted); }

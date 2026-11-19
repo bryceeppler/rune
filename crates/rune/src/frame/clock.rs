@@ -5,7 +5,9 @@
 //! real gap between this frame's target presentation time and the previous frame's, so after
 //! a 49 ms hitch it is where an unbroken cadence would have it. Motion that starts or is
 //! retargeted on the frame starts at the frame's time and shows one small step, so it never
-//! jumps by the gap. Both happen in one runtime pass ([`Runtime::frame_split`]).
+//! jumps by the gap. Both happen in one runtime pass ([`Runtime::frame_split`]). Motion a
+//! frame starts from rest counts its time from when that frame finished drawing, so a slow
+//! first frame (new text to rasterize, a pipeline to compile) delays it instead of eating it.
 
 use crate::time::Instant;
 use crate::runtime::Runtime;
@@ -60,11 +62,12 @@ pub(crate) fn advance_by<S: 'static>(rt: &mut Runtime<S>, gap: f64) -> bool {
 #[derive(Debug)]
 pub(crate) struct FrameClock {
     last: Instant,
+    started: bool,
 }
 
 impl FrameClock {
     pub(crate) fn new(now: Instant) -> Self {
-        Self { last: now }
+        Self { last: now, started: false }
     }
 
     /// The target time of the last frame the clock stepped to.
@@ -89,9 +92,18 @@ impl FrameClock {
     /// compositor's own animation was still running after the previous frame. Returns whether
     /// anything still animates and the seconds stepped.
     pub(crate) fn advance<S: 'static>(&mut self, rt: &mut Runtime<S>, at: Instant, compositing: bool) -> (bool, f64) {
-        let step = self.step(at, rt.animating || compositing);
+        let running = rt.animating || compositing;
+        let step = self.step(at, running);
         rt.frame_target = Some(at);
-        (rt.frame_split(step.catch_up, step.dt), step.total())
+        let animating = rt.frame_split(step.catch_up, step.dt);
+        self.started = !running && animating;
+        (animating, step.total())
+    }
+
+    /// The frame `advance` stepped finished drawing at `at`. Motion it started from rest
+    /// counts its time from then.
+    pub(crate) fn drawn(&mut self, at: Instant) {
+        if std::mem::take(&mut self.started) { self.hold(at); }
     }
 }
 
@@ -221,6 +233,30 @@ mod tests {
         let (a, b) = at(&run(&plain, LATE, |rt| rt.update(|s, _| s.b = 212.0)), LATE);
         assert!(expected < 211.0 && (a - expected).abs() < 0.01, "running motion catches up the whole gap: a={a}, expected={expected}");
         assert!((b - fresh).abs() < 0.01, "new motion takes one 1/120 s step, not the 49 ms gap: b={b}, one step={fresh}");
+    }
+
+    #[test]
+    fn motion_started_from_rest_on_a_slow_frame_counts_from_when_that_frame_was_drawn() {
+        let poses = |draw: Duration| {
+            let start = Instant::now();
+            let mut clock = FrameClock::new(start);
+            let mut rt = runtime();
+            clock.advance(&mut rt, start, false);
+            clock.drawn(start);
+            rt.update(|s, _| s.b = 212.0);
+            clock.advance(&mut rt, start + FRAME, false);
+            clock.drawn(start + FRAME + draw);
+            (1..=3).map(|k| {
+                clock.advance(&mut rt, start + FRAME + draw + k * FRAME, false);
+                width(&rt, "b")
+            }).collect::<Vec<_>>()
+        };
+        let quick = poses(Duration::ZERO);
+        let slow = poses(Duration::from_millis(117));
+        for (k, (got, expected)) in slow.iter().zip(&quick).enumerate() {
+            assert!((got - expected).abs() < 0.01, "frame {k} after a 117 ms first draw: b={got}, after a quick one {expected}");
+        }
+        assert!(quick[2] < 150.0, "the spring is still early in its travel: {quick:?}");
     }
 
     #[test]
