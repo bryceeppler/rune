@@ -472,7 +472,7 @@ impl ScrollBar for El {
 
 pub(crate) fn wrap(style: ScrollBarStyle, viewport: El, site: &'static Location<'static>) -> El {
     let (area, key, outer, viewport) = viewport.wrap_scroll_area((site.file(), site.line(), site.column()));
-    attach(style, &area, &key, outer, viewport)
+    attach(style, &area, &key, outer, viewport, Shown::AsTheSystemShowsThem)
 }
 
 /// `scroll_bar(&k, "rows-area", "scroll", viewport)`: `viewport`, a vertical scroll viewport
@@ -481,11 +481,24 @@ pub(crate) fn wrap(style: ScrollBarStyle, viewport: El, site: &'static Location<
 /// (`.grow(1.0)` or `.shrink()` with `.min_h(0.0)`), or call [`ScrollBar::scroll_bar`] /
 /// [`Kit::scroll_bar`] directly on the sized viewport.
 pub fn scroll_bar(k: &Kit, area: &str, key: &str, viewport: El) -> El {
-    attach(ScrollBarStyle::from_kit(k), area, key, col().key(area), viewport.key(key))
+    attach(ScrollBarStyle::from_kit(k), area, key, col().key(area), viewport.key(key), Shown::AsTheSystemShowsThem)
 }
 
-fn attach(style: ScrollBarStyle, area: &str, key: &str, outer: El, viewport: El) -> El {
-    let overlay = rune::system_scroll_bars().is_overlay(rune::system_scroller_overlay());
+pub(crate) fn menu_scroll_bar(k: &Kit, area: &str, key: &str, viewport: El) -> El {
+    attach(ScrollBarStyle::from_kit(k), area, key, col().key(area), viewport.key(key), Shown::WhileOverflowing)
+}
+
+#[derive(Clone, Copy)]
+enum Shown {
+    AsTheSystemShowsThem,
+    WhileOverflowing,
+}
+
+fn attach(style: ScrollBarStyle, area: &str, key: &str, outer: El, viewport: El, shown: Shown) -> El {
+    let overlay = match shown {
+        Shown::AsTheSystemShowsThem => rune::system_scroll_bars().is_overlay(rune::system_scroller_overlay()),
+        Shown::WhileOverflowing => false,
+    };
     let jumps = rune::system_scroller_jumps();
     let bar = kept(area);
     bar.restyle(style);

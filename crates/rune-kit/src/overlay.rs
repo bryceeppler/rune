@@ -36,6 +36,7 @@ impl Placement {
             Placement::BottomStart => (Side::Bottom, Align::Start),
             Placement::BottomEnd => (Side::Bottom, Align::End),
             Placement::Left => (Side::Left, Align::Center),
+            Placement::LeftStart => (Side::Left, Align::Start),
             Placement::Right => (Side::Right, Align::Center),
             Placement::RightStart => (Side::Right, Align::Start),
         }
@@ -93,10 +94,8 @@ pub(crate) fn fit_scroll(rows: El) -> El {
         .child(rows)
 }
 
-/// [`fit_scroll`] with a [`crate::scroll_bar`] over its right edge, in a column keyed
-/// `{key}-scroll-area` that shrinks in its place.
 pub(crate) fn fit_scroll_bar(k: &Kit, key: &str, rows: El) -> El {
-    crate::scroll_bar(k, &format!("{key}-scroll-area"), "scroll", fit_scroll(rows)).w_full().shrink().min_h(0.0)
+    crate::scroll_bar::menu_scroll_bar(k, &format!("{key}-scroll-area"), "scroll", fit_scroll(rows)).w_full().shrink().min_h(0.0)
 }
 
 /// Positions a menu surface next to `anchor` with no entrance: it is there on the next frame,
