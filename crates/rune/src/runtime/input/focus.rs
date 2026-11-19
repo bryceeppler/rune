@@ -428,8 +428,8 @@ impl<S: 'static> Runtime<S> {
         false
     }
     pub(super) fn sync_modals(&mut self) {
-        // Removed modals restore in reverse nesting order. Exiting visuals are already inert.
-        while self.modal_stack.last().is_some_and(|(p, _)| self.node(p).is_none()) {
+        // Modals removed or no longer modal restore in reverse nesting order. Exiting visuals are already inert.
+        while self.modal_stack.last().is_some_and(|(p, _)| self.node(p).is_none_or(|n| n.handlers.get().is_none_or(|h| h.modal.is_none()))) {
             let (modal, restore) = self.modal_stack.pop().unwrap();
             // Focus the closing commit moved elsewhere (a field outside, say) stays there.
             let inside = |f: &str| f.strip_prefix(modal.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
