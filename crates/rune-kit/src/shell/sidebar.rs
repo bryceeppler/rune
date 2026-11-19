@@ -501,8 +501,9 @@ impl SidebarRow {
         self
     }
     /// Edits the label in place, in the field bound to `edit` (`access` finds it in the app's
-    /// state). Set `edit.focused` and its text when renaming starts. Return calls `commit`,
-    /// Escape calls `cancel`; both should end the rename.
+    /// state), which takes the row's label as its accessible name. Set `edit.focused` and its
+    /// text when renaming starts. Return calls `commit`, Escape calls `cancel`; both should end
+    /// the rename.
     pub fn renaming<S: 'static>(
         mut self,
         edit: &TextEdit,
@@ -580,6 +581,7 @@ impl SidebarRow {
             Some((edit, bind)) => bind(
                 text_input(&edit, font)
                     .single_line()
+                    .label(self.label.clone())
                     .key("rename")
                     .focus_selected(true)
                     .focus_return("sidebar-list")
