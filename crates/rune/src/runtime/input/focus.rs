@@ -431,10 +431,10 @@ impl<S: 'static> Runtime<S> {
         while self.modal_stack.last().is_some_and(|(p, _)| self.node(p).is_none_or(|n| n.handlers.get().is_none_or(|h| h.modal.is_none()))) {
             let (modal, restore) = self.modal_stack.pop().unwrap();
             let inside = |f: &str| f.strip_prefix(modal.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
-            let still_usable = |f: &str| self.node(f).is_some_and(|n| !n.inert)
-                || (!inside(f) && self.virtual_inputs.get(f).is_some_and(|i| i.edit.focused));
+            let usable = |f: &str| self.node(f).is_some_and(|n| !n.inert);
+            let still_usable = |f: &str| usable(f) || (!inside(f) && self.virtual_inputs.get(f).is_some_and(|i| i.edit.focused));
             if self.focused.as_deref().is_some_and(still_usable) { continue; }
-            let restore = restore.filter(|p| self.node(p).is_some());
+            let restore = restore.filter(|p| usable(p));
             self.set_focus(restore, self.keyboard_focus);
         }
         let Some(i) = self.active_modal() else { return };
