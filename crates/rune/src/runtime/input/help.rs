@@ -96,6 +96,12 @@ impl<S: 'static> Runtime<S> {
 
     pub(super) fn clear_help_hits(&mut self) { self.help.hits.clear(); }
 
+    /// Each tooltip element's rect this frame (points, x0 y0 x1 y1), with how many press hits
+    /// were painted before it.
+    pub(super) fn help_rects(&self) -> impl Iterator<Item = ([f32; 4], usize)> + '_ {
+        self.help.hits.iter().map(|&(_, r, seq, _)| (r, seq))
+    }
+
     /// A press, scroll or key: hide the tooltip until the pointer leaves its element.
     pub(super) fn dismiss_help(&mut self) {
         if self.help.target.is_some() {

@@ -186,11 +186,11 @@ impl<S: 'static> Runtime<S> {
     }
 
     /// What Windows' hit test answers across the last frame's drag regions and caption buttons
-    /// (`crate::caption`), from the rects presses go to.
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    /// (`crate::caption`), from the rects presses go to and the rects that show a tooltip, which
+    /// stay content so the pointer resting on them reaches the view.
     pub(crate) fn caption_map(&self) -> crate::caption::CaptionMap {
         use crate::caption::CaptionHit;
-        let mut map: crate::caption::CaptionMap = self.hits.iter().filter_map(|&(id, r)| {
+        let presses = self.hits.iter().enumerate().filter_map(|(k, &(id, r))| {
             let i = *self.node_index.get(&id)?;
             if !(self.allowed(i) && self.takes_primary(i)) { return None; }
             let hit = match self.nodes[i].caption_button {
@@ -198,10 +198,20 @@ impl<S: 'static> Runtime<S> {
                 None if self.drags_window(i) => CaptionHit::Drag,
                 None => CaptionHit::Client,
             };
-            Some((r, hit))
-        }).collect();
+            Some(((k, 1), r, hit))
+        });
+        let tooltips = self.help_rects().map(|(r, seq)| ((seq, 0), r, CaptionHit::Client));
+        let mut painted: Vec<_> = presses.chain(tooltips).collect();
+        painted.sort_by_key(|&(order, ..)| order);
+        let mut map: crate::caption::CaptionMap = painted.into_iter().map(|(_, r, hit)| (r, hit)).collect();
         crate::caption::prune(&mut map);
         map
+    }
+
+    /// What Windows' hit test answers at window point (x, y) for the last frame: content, the
+    /// title bar's drag region, or a caption button.
+    pub fn caption_hit(&self, x: f32, y: f32) -> crate::CaptionHit {
+        crate::caption::hit(&self.caption_map(), x, y)
     }
 
     /// The element a press, hover or drag at (x, y) goes to. Selectable text passes them to the

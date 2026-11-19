@@ -67,6 +67,7 @@ pub use app::App;
 pub use app::AppHandle;
 pub use caption::Caption;
 pub use caption::CaptionButton;
+pub use caption::CaptionHit;
 pub use clipboard::ClipboardContent;
 pub use clipboard::ClipboardImage;
 pub use clipboard::ClipboardWrite;

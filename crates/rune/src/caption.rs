@@ -34,9 +34,9 @@ impl Caption {
     pub const BUTTON_WIDTH: f32 = 46.0;
 }
 
-/// What a spot of the window is to the system's hit test.
+/// What a spot of the window is to Windows' hit test, as [`Runtime::caption_hit`](crate::Runtime::caption_hit) reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CaptionHit {
+pub enum CaptionHit {
     /// Content: presses go to the view.
     Client,
     /// A `.window_drag()` region with nothing pressable over it: the system's title bar.
@@ -49,7 +49,6 @@ pub(crate) enum CaptionHit {
 pub(crate) type CaptionMap = Vec<([f32; 4], CaptionHit)>;
 
 /// What the topmost rect of `map` containing (x, y) says, else content.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn hit(map: &[([f32; 4], CaptionHit)], x: f32, y: f32) -> CaptionHit {
     map.iter().rev().find(|(r, _)| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]).map_or(CaptionHit::Client, |&(_, hit)| hit)
 }

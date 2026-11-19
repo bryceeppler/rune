@@ -64,3 +64,21 @@ fn the_view_lays_out_against_the_caption_band_and_rebuilds_when_it_changes() {
     rt.frame(5.0);
     assert_eq!(height(&rt), 31.0, "the system's title bar height");
 }
+
+fn band_with_tooltips(_: &State, _: &mut Cx<State>) -> El {
+    col().size(400.0, 300.0).child(
+        row().key("band").w_full().h(32.0).window_drag()
+            .child(el().key("status").size(60.0, 32.0).help("Not saved. Recent changes may not survive a crash."))
+            .child(crate::text("5:04 PM").key("time").w(120.0).truncate().help_when_truncated("5:04 PM"))
+            .child(el().key("spacer").grow(1.0)),
+    )
+}
+
+#[test]
+fn a_tooltip_in_the_title_bar_stays_content_so_hovering_it_shows_the_tip() {
+    let mut rt = Runtime::new(State { maximize_presses: 0 }, band_with_tooltips, (400.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    assert_eq!(rt.caption_hit(30.0, 16.0), CaptionHit::Client, "the status that shows a tooltip");
+    assert_eq!(rt.caption_hit(100.0, 16.0), CaptionHit::Drag, "whole text whose tooltip shows only when cut");
+    assert_eq!(rt.caption_hit(300.0, 16.0), CaptionHit::Drag, "the empty band");
+}
